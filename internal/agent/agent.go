@@ -4,6 +4,7 @@ package agent
 import (
 	"zlnew/monitor-agent/internal/collector/cpu"
 	"zlnew/monitor-agent/internal/collector/disk"
+	"zlnew/monitor-agent/internal/collector/gpu"
 	"zlnew/monitor-agent/internal/collector/memory"
 	"zlnew/monitor-agent/internal/core"
 	"zlnew/monitor-agent/internal/infra/config"
@@ -21,10 +22,12 @@ type Agent struct {
 func New(log logger.Logger, cfg *config.Config) *Agent {
 	reg := core.NewRegistry()
 	cpuCollector := cpu.NewCollector()
+	gpuCollector := gpu.NewCollector()
 	memoryCollector := memory.NewCollector()
 	diskCollector := disk.NewCollector()
 
 	reg.Register("cpu", cpuCollector)
+	reg.Register("gpu", gpuCollector)
 	reg.Register("memory", memoryCollector)
 	reg.Register("disk", diskCollector)
 

@@ -20,6 +20,20 @@ type CPUSpec struct {
 	MaxFreq  int    `json:"max_freq"`
 }
 
+type GPUMetric struct {
+	Spec      GPUSpec `json:"spec"`
+	Usage     float64 `json:"usage"`
+	VramTotal float64 `json:"vram_total"`
+	VramUsed  float64 `json:"vram_used"`
+	Temp      float64 `json:"temp"`
+	Watt      float64 `json:"watt"`
+}
+
+type GPUSpec struct {
+	Vendor string `json:"vendor"`
+	Model  string `json:"model"`
+}
+
 type MemoryMetric struct {
 	Specs        []MemorySpec `json:"specs"`
 	MemTotal     float64      `json:"mem_total"`
@@ -46,8 +60,23 @@ type DiskMetric struct {
 	Temp  float64 `json:"temp"`
 }
 
+type NetworkMetric struct {
+	Upload   float64 `json:"upload"`
+	Download float64 `json:"download"`
+}
+
+type SystemMetric struct {
+	Hostname string `json:"hostname"`
+	OS       string `json:"os"`
+	Kernel   string `json:"kernel"`
+	Uptime   string `json:"uptime"`
+}
+
 type Metrics struct {
-	CPU    CPUMetric    `json:"cpu"`
-	Memory MemoryMetric `json:"memory"`
-	Disk   DiskMetric   `json:"disk"`
+	CPU     CPUMetric     `json:"cpu"`
+	GPU     GPUMetric     `json:"gpu"`
+	Memory  MemoryMetric  `json:"memory"`
+	Disk    DiskMetric    `json:"disk"`
+	Network NetworkMetric `json:"network"`
+	System  SystemMetric  `json:"system"`
 }

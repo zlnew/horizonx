@@ -32,6 +32,8 @@ func (r *Registry) Update(name string, value any) {
 	switch name {
 	case "cpu":
 		r.snapshot.CPU = value.(CPUMetric)
+	case "gpu":
+		r.snapshot.GPU = value.(GPUMetric)
 	case "memory":
 		r.snapshot.Memory = value.(MemoryMetric)
 	case "disk":
