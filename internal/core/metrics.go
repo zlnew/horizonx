@@ -32,12 +32,19 @@ type MemoryMetric struct {
 }
 
 type DiskMetric struct {
-	Name        string  `json:"name"`
-	TotalGB     float64 `json:"total_gb"`
-	UsedGB      float64 `json:"used_gb"`
-	FreeGB      float64 `json:"free_gb"`
-	Percent     float64 `json:"percent"`
-	Temperature float64 `json:"temperature"`
+	Name        string            `json:"name"`
+	RawSizeGB   float64           `json:"raw_size_gb"`
+	Temperature float64           `json:"temperature"`
+	Filesystems []FilesystemUsage `json:"filesystems"`
+}
+
+type FilesystemUsage struct {
+	Device     string  `json:"device"`
+	Mountpoint string  `json:"mountpoint"`
+	TotalGB    float64 `json:"total_gb"`
+	UsedGB     float64 `json:"used_gb"`
+	FreeGB     float64 `json:"free_gb"`
+	Percent    float64 `json:"percent"`
 }
 
 type NetworkMetric struct {

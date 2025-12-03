@@ -8,20 +8,35 @@ func NewCollector() *Collector {
 }
 
 func (c *Collector) Collect(ctx context.Context) (any, error) {
-	err := c.readStat()
+	disks, parts, err := detectBlockDevices()
 	if err != nil {
-		return DiskMetric{}, err
+		return nil, err
 	}
 
-	totalGB := c.getTotalGB()
-	freeGB := c.getFreeGB()
-	usedGB := c.getUsedGB()
-	temperature := getTemperature()
+	var result []DiskMetric
 
-	return []DiskMetric{{
-		TotalGB:     totalGB,
-		FreeGB:      freeGB,
-		UsedGB:      usedGB,
-		Temperature: temperature,
-	}}, nil
+	for _, disk := range disks {
+		metric := DiskMetric{
+			Name:        disk,
+			RawSizeGB:   readRawSizeGiB(disk),
+			Temperature: readDiskTemperature(disk),
+		}
+
+		for _, part := range parts {
+			parent := getParentDisk(part)
+			if parent != disk {
+				continue
+			}
+
+			mounts := findMountpointsByDeviceName(part)
+			for _, mp := range mounts {
+				fs := readFSUsage(mp, part)
+				metric.Filesystems = append(metric.Filesystems, fs)
+			}
+		}
+
+		result = append(result, metric)
+	}
+
+	return result, nil
 }

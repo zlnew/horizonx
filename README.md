@@ -1,6 +1,6 @@
 # go-monitor-agent
 
-Lightweight Linux metrics agent that scrapes `/proc` and `/sys` once per second and exposes a JSON snapshot at `/metrics`.
+Lightweight Linux metrics agent that scrapes `/proc` and `/sys` once per second and exposes a JSON snapshot at `/metrics`. Collectors are defensive: unreadable files just zero the value so the agent keeps running.
 
 ## Requirements
 
@@ -25,9 +25,9 @@ Lightweight Linux metrics agent that scrapes `/proc` and `/sys` once per second 
 Collectors refresh every second and degrade gracefully when inputs are unreadable.
 
 - CPU: usage and per-core usage percent (averaged since boot from `/proc/stat`), temperature via hwmon CPU sensors, current frequency (MHz) from cpufreq, and `power_watt` from RAPL or hwmon when available.
-- GPU: first detected card; usage from `/sys/class/drm/*/gpu_busy_percent`, VRAM total/used in GB from `mem_info_vram_*`, temperature/power from hwmon GPU nodes; returned as a slice even if there is only one GPU.
+- GPU: best-effort single-card read. Usage from `/sys/class/drm/*/gpu_busy_percent`, VRAM total/used in GB from `mem_info_vram_*`, temperature/power from hwmon GPU nodes; returned as a slice even if there is only one GPU.
 - Memory: total, available, used, and swap total/free/used in GiB from `/proc/meminfo`.
-- Disk: root filesystem total/free/used in decimal GB from `statfs` and NVMe temperature from hwmon if present.
+- Disk: enumerates block devices under `/sys/class/block` (skips loop/ram/dm). For each disk it reports `raw_size_gb` and temperature via `/sys/block/<disk>/device` hwmon, plus per-filesystem usage for each mounted partition discovered in `/proc/self/mountinfo`. Filesystem entries include device name, mountpoint, total/used/free, and percent used.
 - Network: aggregate of non-loopback interfaces from `/proc/net/dev` with cumulative `rx_bytes`/`tx_bytes` and Mbps rates computed between samples (first sample reports `0` speeds).
 - Uptime: `uptime_seconds` from `/proc/uptime`.
 
@@ -68,12 +68,27 @@ Collectors refresh every second and degrade gracefully when inputs are unreadabl
   },
   "disk": [
     {
-      "name": "nvme",
-      "total_gb": 476.3,
-      "used_gb": 174.2,
-      "free_gb": 302.1,
-      "percent": 56,
-      "temperature": 41.5
+      "name": "nvme0n1",
+      "raw_size_gb": 953.8,
+      "temperature": 41.5,
+      "filesystems": [
+        {
+          "device": "nvme0n1p2",
+          "mountpoint": "/",
+          "total_gb": 476.3,
+          "used_gb": 174.2,
+          "free_gb": 302.1,
+          "percent": 56.0
+        },
+        {
+          "device": "nvme0n1p3",
+          "mountpoint": "/home",
+          "total_gb": 447.5,
+          "used_gb": 120.2,
+          "free_gb": 327.3,
+          "percent": 26.8
+        }
+      ]
     }
   ],
   "network": {
