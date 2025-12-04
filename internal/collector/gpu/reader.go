@@ -92,7 +92,7 @@ func readPower(card string) float64 {
 	hwmons, _ := os.ReadDir(hwmon)
 
 	for _, hw := range hwmons {
-		file := hwmon + "/" + hw.Name() + "/power1_average"
+		file := hwmon + "/" + hw.Name() + "/power1_input"
 		b, err := os.ReadFile(file)
 		if err == nil {
 			v, _ := strconv.ParseFloat(strings.TrimSpace(string(b)), 64)
