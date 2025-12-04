@@ -15,7 +15,7 @@ func detectGPUs() []string {
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, "card") && !strings.Contains(name, "-") {
-			cards = append(cards, name) // card0, card1, ...
+			cards = append(cards, name)
 		}
 	}
 

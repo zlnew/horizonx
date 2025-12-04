@@ -10,17 +10,25 @@ import (
 	"zlnew/monitor-agent/pkg"
 )
 
-func (c *Collector) getPowerWatt() float64 {
-	if watt, err := c.getRAPL(); err == nil && watt > 0 {
-		return watt
+func (c *Collector) readPowerWatt() float64 {
+	var raw float64 = 0
+
+	if watt, err := c.readRAPL(); err == nil && watt > 0 {
+		raw = watt
+	} else if watt, err := readHwmon(); err == nil && watt > 0 {
+		raw = watt
 	}
-	if watt, err := getHwmon(); err == nil && watt > 0 {
-		return watt
+
+	ema := c.powerEMA
+
+	if raw > 0 {
+		ema.Add(raw)
 	}
-	return 0
+
+	return ema.Value()
 }
 
-func (c *Collector) getRAPL() (float64, error) {
+func (c *Collector) readRAPL() (float64, error) {
 	b, err := os.ReadFile("/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj")
 	if err != nil {
 		return 0, err
@@ -38,6 +46,10 @@ func (c *Collector) getRAPL() (float64, error) {
 	deltaEnergy := float64(energy - c.lastEnergy)
 	deltaTime := now.Sub(c.lastTime).Seconds()
 
+	if energy < c.lastEnergy {
+		deltaEnergy = float64((^uint64(0) - c.lastEnergy) + energy)
+	}
+
 	c.lastEnergy = energy
 	c.lastTime = now
 
@@ -46,7 +58,7 @@ func (c *Collector) getRAPL() (float64, error) {
 	return watt, nil
 }
 
-func getHwmon() (float64, error) {
+func readHwmon() (float64, error) {
 	matches, _ := filepath.Glob("/sys/class/hwmon/hwmon*/power*_input")
 	targets := []string{
 		"zenpower",

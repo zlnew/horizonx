@@ -9,6 +9,7 @@ import (
 type Collector struct {
 	lastEnergy uint64
 	lastTime   time.Time
+	powerEMA   *core.EMA
 }
 
 type CPUMetric = core.CPUMetric

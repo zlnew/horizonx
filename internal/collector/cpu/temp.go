@@ -9,7 +9,7 @@ import (
 	"zlnew/monitor-agent/pkg"
 )
 
-func getTemperature() float64 {
+func readTemperature() float64 {
 	matches, _ := filepath.Glob("/sys/class/hwmon/hwmon*/temp*_input")
 	targets := []string{
 		"coretemp",

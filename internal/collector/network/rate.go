@@ -15,8 +15,8 @@ func (c *Collector) collectMetric() (NetworkMetric, error) {
 	if !c.lastTime.IsZero() {
 		elapsed := now.Sub(c.lastTime).Seconds()
 		if elapsed > 0 && rx >= c.lastRxBytes && tx >= c.lastTxBytes {
-			rxSpeed = float64(rx-c.lastRxBytes) * 8 / elapsed / 1_000_000
-			txSpeed = float64(tx-c.lastTxBytes) * 8 / elapsed / 1_000_000
+			rxSpeed = float64(rx-c.lastRxBytes) * 8 / elapsed / 1e6
+			txSpeed = float64(tx-c.lastTxBytes) * 8 / elapsed / 1e6
 		}
 	}
 

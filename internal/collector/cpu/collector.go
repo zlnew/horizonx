@@ -3,17 +3,21 @@ package cpu
 
 import (
 	"context"
+
+	"zlnew/monitor-agent/internal/core"
 )
 
 func NewCollector() *Collector {
-	return &Collector{}
+	return &Collector{
+		powerEMA: core.NewEMA(0.3),
+	}
 }
 
 func (c *Collector) Collect(ctx context.Context) (CPUMetric, error) {
-	usage, perCore := getUsage()
-	temperature := getTemperature()
-	frequency := getFrequency()
-	powerWatt := c.getPowerWatt()
+	usage, perCore := readUsage()
+	temperature := readTemperature()
+	frequency := readFrequency()
+	powerWatt := c.readPowerWatt()
 
 	return CPUMetric{
 		Usage:       usage,
