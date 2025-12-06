@@ -1,4 +1,3 @@
-// Package http
 package http
 
 import (
@@ -33,6 +32,8 @@ func NewServer(cfg *config.Config, store *core.SnapshotStore, log logger.Logger,
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	go s.hub.Run()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/ws", s.handleWs)
@@ -84,37 +85,5 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWs(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		s.log.Error("upgrade", "error", err)
-		return
-	}
-
-	subscribedRooms := make(map[string]*Room)
-	defer func() {
-		for _, room := range subscribedRooms {
-			room.unregister <- conn
-		}
-	}()
-
-	for {
-		_, message, err := conn.ReadMessage()
-		if err != nil {
-			s.log.Info("client disconnected", "remote_addr", conn.RemoteAddr())
-			break
-		}
-
-		var msg ClientMessage
-		if err := json.Unmarshal(message, &msg); err != nil {
-			s.log.Error("unmarshal message", "error", err)
-			continue
-		}
-
-		if msg.Type == "subscribe" {
-			room := s.hub.GetOrCreateRoom(msg.Channel)
-			room.register <- conn
-			subscribedRooms[msg.Channel] = room
-			s.log.Info("client subscribed", "channel", msg.Channel, "remote_addr", conn.RemoteAddr())
-		}
-	}
+	ServeWs(s.hub, w, r, s.log)
 }

@@ -12,6 +12,8 @@ type Collector struct {
 	lastRxBytes uint64
 	lastTxBytes uint64
 	lastTime    time.Time
+	rxSpeedEMA  *core.EMA
+	txSpeedEMA  *core.EMA
 }
 
 type NetworkMetric = core.NetworkMetric

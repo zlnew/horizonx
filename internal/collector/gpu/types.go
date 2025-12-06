@@ -6,8 +6,10 @@ import (
 )
 
 type Collector struct {
-	log      logger.Logger
-	powerEMA map[string]*core.EMA
+	log         logger.Logger
+	powerEMA    map[string]*core.EMA
+	usageEMA    map[string]*core.EMA
+	fanSpeedEMA map[string]*core.EMA
 }
 
 type GPUMetric = core.GPUMetric

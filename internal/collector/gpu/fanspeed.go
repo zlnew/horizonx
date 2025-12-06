@@ -52,7 +52,7 @@ func (c *Collector) readFanSpeedPercent(card string) float64 {
 				continue
 			}
 			if val > 0 {
-				return 1 // Not really a percentage, but indicates fan is on.
+				return 1
 			}
 		}
 	}

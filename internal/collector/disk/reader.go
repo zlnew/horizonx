@@ -42,6 +42,11 @@ func (c *Collector) readFSUsage(mountpoint string, devName string) FilesystemUsa
 	free := float64(fs.Bfree) * float64(fs.Bsize)
 	used := total - free
 
+	var percent float64
+	if total > 0 {
+		percent = (used / total) * 100
+	}
+
 	const gib = 1024 * 1024 * 1024
 
 	return FilesystemUsage{
@@ -50,6 +55,6 @@ func (c *Collector) readFSUsage(mountpoint string, devName string) FilesystemUsa
 		TotalGB:    total / gib,
 		UsedGB:     used / gib,
 		FreeGB:     free / gib,
-		Percent:    (used / total) * 100,
+		Percent:    percent,
 	}
 }

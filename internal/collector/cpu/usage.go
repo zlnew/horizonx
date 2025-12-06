@@ -14,44 +14,104 @@ func (c *Collector) readUsage() (float64, []float64) {
 	}
 
 	lines := strings.Split(string(data), "\n")
+	newStats := make(map[string]cpuStat)
 
 	var totalUsage float64
 	var perCore []float64
 
 	for _, line := range lines {
-		if strings.HasPrefix(line, "cpu ") {
-			if usage, err := c.parseCPUStat(line); err != nil {
-				c.log.Warn("failed to parse cpu usage", "error", err, "line", line)
-			} else {
-				totalUsage = usage
+		if !strings.HasPrefix(line, "cpu") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		cpuName := fields[0]
+
+		if cpuName == "cpu" || (strings.HasPrefix(cpuName, "cpu") && len(fields) > 1) {
+			currentStat, err := c.parseCPUStat(fields[1:])
+			if err != nil {
+				c.log.Warn("failed to parse cpu stat", "error", err, "line", line)
+				continue
 			}
-		} else if strings.HasPrefix(line, "cpu") {
-			if usage, err := c.parseCPUStat(line); err != nil {
-				c.log.Warn("failed to parse per-cpu usage", "error", err, "line", line)
-			} else {
-				perCore = append(perCore, usage)
+			newStats[cpuName] = currentStat
+
+			if prevStat, ok := c.prevCPUStats[cpuName]; ok {
+				usage := calculateUsage(prevStat, currentStat)
+				if cpuName == "cpu" {
+					totalUsage = usage
+				} else {
+					perCore = append(perCore, usage)
+				}
 			}
 		}
 	}
 
+	c.prevCPUStats = newStats
 	return totalUsage, perCore
 }
 
-func (c *Collector) parseCPUStat(line string) (float64, error) {
-	fields := strings.Fields(line)[1:]
+func (c *Collector) parseCPUStat(fields []string) (cpuStat, error) {
+	var stat cpuStat
+	var err error
+	var user, nice, system, idle, iowait, irq, softirq, steal uint64
 
-	var idle, total uint64
-	for i, val := range fields {
-		v, err := strconv.ParseUint(val, 10, 64)
+	user, err = strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return stat, err
+	}
+	nice, err = strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		return stat, err
+	}
+	system, err = strconv.ParseUint(fields[2], 10, 64)
+	if err != nil {
+		return stat, err
+	}
+	idle, err = strconv.ParseUint(fields[3], 10, 64)
+	if err != nil {
+		return stat, err
+	}
+	if len(fields) > 4 {
+		iowait, err = strconv.ParseUint(fields[4], 10, 64)
 		if err != nil {
-			return 0, err
+			return stat, err
 		}
-		total += v
-		if i == 3 {
-			idle = v
+	}
+	if len(fields) > 5 {
+		irq, err = strconv.ParseUint(fields[5], 10, 64)
+		if err != nil {
+			return stat, err
+		}
+	}
+	if len(fields) > 6 {
+		softirq, err = strconv.ParseUint(fields[6], 10, 64)
+		if err != nil {
+			return stat, err
+		}
+	}
+	if len(fields) > 7 {
+		steal, err = strconv.ParseUint(fields[7], 10, 64)
+		if err != nil {
+			return stat, err
 		}
 	}
 
-	usage := float64(total-idle) / float64(total) * 100
-	return usage, nil
+	stat.idle = idle + iowait
+	stat.total = user + nice + system + stat.idle + irq + softirq + steal
+	return stat, nil
+}
+
+func calculateUsage(prev, current cpuStat) float64 {
+	totalDiff := float64(current.total - prev.total)
+	idleDiff := float64(current.idle - prev.idle)
+
+	if totalDiff == 0 {
+		return 0
+	}
+
+	usage := (1 - idleDiff/totalDiff) * 100
+	if usage < 0 {
+		usage = 0
+	}
+	return usage
 }

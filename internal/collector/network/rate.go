@@ -24,10 +24,13 @@ func (c *Collector) collectMetric() (NetworkMetric, error) {
 	c.lastTxBytes = tx
 	c.lastTime = now
 
+	c.rxSpeedEMA.Add(rxSpeed)
+	c.txSpeedEMA.Add(txSpeed)
+
 	return NetworkMetric{
 		RXBytes: rx,
 		TXBytes: tx,
-		RXSpeed: rxSpeed,
-		TXSpeed: txSpeed,
+		RXSpeed: c.rxSpeedEMA.Value(),
+		TXSpeed: c.txSpeedEMA.Value(),
 	}, nil
 }
