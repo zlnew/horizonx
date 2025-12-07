@@ -10,7 +10,7 @@ LOG_DIR="/var/log/horizonx-server"
 USER="horizonx"
 GROUP="horizonx"
 BINARY_PATH="./bin/${APP_NAME}"
-ENV_PATH="./.env"
+ENV_PATH="./.env.production"
 
 echo "=== HorizonX Deployment Script (Root Mode) ==="
 
