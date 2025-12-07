@@ -15,14 +15,25 @@ func (c *Collector) readPowerRaw(card string) float64 {
 	}
 
 	for _, hw := range hwmons {
-		file := hwmon + "/" + hw.Name() + "/power1_input"
-		b, err := os.ReadFile(file)
-		if err == nil {
+		base := hwmon + "/" + hw.Name()
+
+		paths := []string{
+			base + "/power1_average",
+			base + "/power1_input",
+		}
+
+		for _, file := range paths {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+
 			v, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64)
 			if err != nil {
 				c.log.Warn("failed to parse gpu power", "file", file, "error", err)
 				continue
 			}
+
 			return v / 1e6
 		}
 	}
