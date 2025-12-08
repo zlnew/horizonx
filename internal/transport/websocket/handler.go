@@ -1,28 +1,30 @@
 package websocket
 
 import (
-	"errors"
 	"net/http"
 	"slices"
 
 	"horizonx-server/internal/config"
+	"horizonx-server/internal/core/auth"
 	"horizonx-server/internal/logger"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 )
 
 type Handler struct {
 	hub      *Hub
 	upgrader websocket.Upgrader
+	cfg      *config.Config
 	log      logger.Logger
-	verify   func(token string) error
 }
 
-func NewHandler(hub *Hub, log logger.Logger, cfg *config.Config) *Handler {
+func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger) *Handler {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
 
 			allowed := slices.Contains(cfg.AllowedOrigins, origin)
 			if !allowed {
@@ -34,65 +36,46 @@ func NewHandler(hub *Hub, log logger.Logger, cfg *config.Config) *Handler {
 		},
 	}
 
-	verify := func(token string) error {
-		if token == "" {
-			return errors.New("empty token")
-		}
-
-		parsed, err := jwt.Parse(token, func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, errors.New("unexpected signing method")
-			}
-			return []byte(cfg.JWTSecret), nil
-		})
-		if err != nil {
-			log.Warn("websocket jwt parse failed", "error", err)
-			return err
-		}
-
-		if !parsed.Valid {
-			log.Warn("websocket jwt invalid token")
-			return errors.New("invalid token")
-		}
-
-		return nil
-	}
-
 	return &Handler{
 		hub:      hub,
 		upgrader: upgrader,
+		cfg:      cfg,
 		log:      log,
-		verify:   verify,
 	}
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
-	token := ""
-	authHeader := r.Header.Get("Authorization")
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		token = authHeader[7:]
+	var tokenString string
+
+	if cookie, err := r.Cookie("access_token"); err == nil {
+		tokenString = cookie.Value
 	}
 
-	if token == "" {
+	if tokenString == "" {
+		h.log.Warn("websocket unauthorized: no token found")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	if err := h.verify(token); err != nil {
-		h.log.Warn("jwt verification failed", "error", err)
+	claims, err := auth.ValidateToken(tokenString, h.cfg.JWTSecret)
+	if err != nil {
+		h.log.Warn("websocket jwt verification failed", "error", err)
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
 
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.log.Error("upgrade failed", "error", err)
+		h.log.Error("websocket upgrade failed", "error", err)
 		return
 	}
+
+	userID := claims["sub"]
+	h.log.Info("ws client authenticated", "user_id", userID)
 
 	client := NewClient(h.hub, conn, h.log)
 	go client.writePump()
 	go client.readPump()
 
-	h.log.Info("client connected", "remote_addr", conn.RemoteAddr())
+	h.log.Info("ws client connected", "remote_addr", conn.RemoteAddr())
 }

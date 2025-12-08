@@ -1,5 +1,11 @@
+bin*
+
 .env
 .env.production
-bin*
+
+app.db
+app.db-shm
+app.db-wal
+
 AGENTS.md
 GEMINI.md

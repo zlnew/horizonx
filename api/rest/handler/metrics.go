@@ -8,10 +8,16 @@ import (
 	"horizonx-server/internal/storage/snapshot"
 )
 
-func HandleMetrics(ms *snapshot.MetricsStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		data := ms.Get()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(data)
-	}
+type MetricsHandler struct {
+	ms *snapshot.MetricsStore
+}
+
+func NewMetricsHandler(ms *snapshot.MetricsStore) *MetricsHandler {
+	return &MetricsHandler{ms: ms}
+}
+
+func (h *MetricsHandler) Get(w http.ResponseWriter, r *http.Request) {
+	data := h.ms.Get()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }

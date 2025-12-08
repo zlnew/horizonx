@@ -14,6 +14,7 @@ import (
 	"horizonx-server/internal/core/metrics"
 	"horizonx-server/internal/logger"
 	"horizonx-server/internal/storage/snapshot"
+	"horizonx-server/internal/storage/sqlite"
 	"horizonx-server/internal/transport/websocket"
 	"horizonx-server/pkg/types"
 )
@@ -36,10 +37,24 @@ func main() {
 	go sched.Start(ctx)
 	go hub.Run()
 
-	router := rest.NewRouter(cfg, ms, hub, log)
+	db, err := sqlite.NewSqliteDB(cfg.DBPath, log)
+	if err != nil {
+		log.Error("sqlite", "connect", err)
+		return
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Error("sqlite", "close", err)
+		}
+	}()
+
+	router := rest.NewRouter(cfg, ms, hub, db, log)
 	srv := &http.Server{
-		Addr:    cfg.Address,
-		Handler: router,
+		Addr:         cfg.Address,
+		Handler:      router,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

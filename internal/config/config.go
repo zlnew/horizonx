@@ -16,6 +16,8 @@ type Config struct {
 	LogLevel       string
 	LogFormat      string
 	JWTSecret      string
+	JWTExpiry      time.Duration
+	DBPath         string
 }
 
 func Load() *Config {
@@ -56,6 +58,18 @@ func Load() *Config {
 
 	jwtSecret := os.Getenv("JWT_SECRET")
 
+	jwtExpiry := 24 * time.Hour
+	if raw := os.Getenv("JWT_EXPIRY"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			jwtExpiry = parsed
+		}
+	}
+
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "./app.db"
+	}
+
 	return &Config{
 		Address:        addr,
 		AllowedOrigins: origins,
@@ -63,5 +77,7 @@ func Load() *Config {
 		LogLevel:       logLevel,
 		LogFormat:      logFormat,
 		JWTSecret:      jwtSecret,
+		JWTExpiry:      jwtExpiry,
+		DBPath:         dbPath,
 	}
 }

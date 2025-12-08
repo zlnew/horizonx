@@ -1,36 +1,39 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
-	"strings"
 
 	"horizonx-server/internal/config"
-
-	"github.com/golang-jwt/jwt/v5"
+	"horizonx-server/internal/core/auth"
 )
 
-func JWT(cfg *config.Config) Middleware {
+type contextKey string
+
+const UserIDKey contextKey = "user_id"
+
+func JWT(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			auth := r.Header.Get("Authorization")
-
-			if !strings.HasPrefix(auth, "Bearer ") {
-				http.Error(w, "missing or invalid token", http.StatusUnauthorized)
+			cookie, err := r.Cookie("access_token")
+			if err != nil {
+				http.Error(w, "Unauthorized: No token found", http.StatusUnauthorized)
 				return
 			}
 
-			tokenStr := strings.TrimPrefix(auth, "Bearer ")
-
-			token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
-				return []byte(cfg.JWTSecret), nil
-			})
-
-			if err != nil || !token.Valid {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+			claims, err := auth.ValidateToken(cookie.Value, cfg.JWTSecret)
+			if err != nil {
+				http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), UserIDKey, claims["sub"])
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func GetUserID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(UserIDKey).(string)
+	return id, ok
 }
