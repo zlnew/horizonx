@@ -18,7 +18,7 @@ import (
 func NewRouter(cfg *config.Config, ms *snapshot.MetricsStore, hub *websocket.Hub, db *sql.DB, log logger.Logger) http.Handler {
 	userRepo := sqlite.NewUserRepository(db)
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
-	authHandler := handler.NewAuthHandler(authService)
+	authHandler := handler.NewAuthHandler(authService, cfg)
 	wsHandler := websocket.NewHandler(hub, cfg, log)
 	metricsHandler := handler.NewMetricsHandler(ms)
 
@@ -31,11 +31,13 @@ func NewRouter(cfg *config.Config, ms *snapshot.MetricsStore, hub *websocket.Hub
 	authMw := middleware.New()
 	authMw.Use(middleware.JWT(cfg))
 
-	mux.HandleFunc("POST /auth/register", authHandler.Register)
-	mux.HandleFunc("POST /auth/login", authHandler.Login)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	})
+
+	mux.HandleFunc("POST /auth/register", authHandler.Register)
+	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.HandleFunc("POST /auth/logout", authHandler.Logout)
 
 	mux.HandleFunc("/ws", wsHandler.Serve)
 	mux.Handle("GET /metrics", authMw.Then(http.HandlerFunc(metricsHandler.Get)))
