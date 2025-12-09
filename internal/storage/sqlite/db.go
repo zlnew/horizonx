@@ -29,24 +29,5 @@ func NewSqliteDB(dbPath string, log logger.Logger) (*sql.DB, error) {
 
 	log.Info("sqlite connection established successfully")
 
-	if err := runMigration(db); err != nil {
-		return nil, err
-	}
-
 	return db, nil
-}
-
-func runMigration(db *sql.DB) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS users (
-		id INTEGER PRIMARY KEY,
-		email TEXT NOT NULL UNIQUE,
-		password TEXT NOT NULL
-	);
-	`
-	_, err := db.Exec(query)
-	if err != nil {
-		return fmt.Errorf("failed to migrate users table: %w", err)
-	}
-	return nil
 }

@@ -6,6 +6,9 @@ bin*
 app.db
 app.db-shm
 app.db-wal
+horizonx.db
+horizonx.db-shm
+horizonx.db-wal
 
 AGENTS.md
 GEMINI.md

@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,11 +16,17 @@ type APIResponse struct {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	buf := &bytes.Buffer{}
+	if err := json.NewEncoder(buf).Encode(payload); err != nil {
+		http.Error(w, "internal server error: failed to encode response", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		http.Error(w, "internal server error: failed to encode response", http.StatusInternalServerError)
+	if _, err := buf.WriteTo(w); err != nil {
+		fmt.Printf("failed to write response: %v\n", err)
 	}
 }
 
@@ -55,11 +62,12 @@ func JSONValidationError(w http.ResponseWriter, errors map[string]string) {
 	remaining := len(errors) - 1
 
 	var finalMessage string
-	if remaining == 0 {
+	switch remaining {
+	case 0:
 		finalMessage = mainMessage
-	} else if remaining == 1 {
+	case 1:
 		finalMessage = fmt.Sprintf("%s (and 1 more error)", mainMessage)
-	} else {
+	default:
 		finalMessage = fmt.Sprintf("%s (and %d more errors)", mainMessage, remaining)
 	}
 
