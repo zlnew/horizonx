@@ -1,8 +1,9 @@
 package auth
 
 import (
-	"errors"
 	"fmt"
+
+	"horizonx-server/internal/domain"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -22,5 +23,5 @@ func ValidateToken(tokenString, secret string) (jwt.MapClaims, error) {
 		return claims, nil
 	}
 
-	return nil, errors.New("invalid token")
+	return nil, domain.ErrInvalidToken
 }

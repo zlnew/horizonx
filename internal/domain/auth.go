@@ -2,6 +2,12 @@ package domain
 
 import (
 	"context"
+	"errors"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrInvalidToken       = errors.New("invalid token")
 )
 
 type LoginRequest struct {
