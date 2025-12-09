@@ -73,7 +73,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 
 	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "Login successful",
+		Message: "OK",
 		Data:    res.User,
 	})
 }

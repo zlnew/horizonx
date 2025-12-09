@@ -1,6 +1,8 @@
 package rest
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -48,8 +50,71 @@ func (h *UserHandler) Index(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *UserHandler) Store(w http.ResponseWriter, r *http.Request) {}
+func (h *UserHandler) Store(w http.ResponseWriter, r *http.Request) {
+	var req domain.UserSaveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
 
-func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {}
+	if err := h.svc.Create(r.Context(), req); err != nil {
+		if errors.Is(err, domain.ErrEmailAlreadyExists) {
+			JSONError(w, http.StatusBadRequest, "Email already registered")
+			return
+		}
 
-func (h *UserHandler) Destroy(w http.ResponseWriter, r *http.Request) {}
+		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	JSONSuccess(w, http.StatusOK, APIResponse{
+		Message: "User created successfully",
+	})
+}
+
+func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+
+	var req domain.UserSaveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := h.svc.Update(r.Context(), req, userID); err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			JSONError(w, http.StatusNotFound, "User not found")
+			return
+		}
+
+		if errors.Is(err, domain.ErrEmailAlreadyExists) {
+			JSONError(w, http.StatusBadRequest, "Email already registered")
+			return
+		}
+
+		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	JSONSuccess(w, http.StatusOK, APIResponse{
+		Message: "User updated successfully",
+	})
+}
+
+func (h *UserHandler) Destroy(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+
+	if err := h.svc.Delete(r.Context(), userID); err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			JSONError(w, http.StatusBadRequest, "User not found")
+			return
+		}
+
+		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	JSONSuccess(w, http.StatusOK, APIResponse{
+		Message: "User deleted successfully",
+	})
+}

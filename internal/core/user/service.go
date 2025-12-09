@@ -3,6 +3,7 @@ package user
 
 import (
 	"context"
+	"strconv"
 
 	"horizonx-server/internal/config"
 	"horizonx-server/internal/domain"
@@ -67,9 +68,14 @@ func (s *service) Create(ctx context.Context, req domain.UserSaveRequest) error 
 	return s.repo.CreateUser(ctx, user)
 }
 
-func (s *service) Update(ctx context.Context, req domain.UserSaveRequest, userID int64) error {
+func (s *service) Update(ctx context.Context, req domain.UserSaveRequest, userID string) error {
+	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
+		return err
+	}
+
 	if user, _ := s.repo.GetUserByEmail(ctx, req.Email); user != nil {
-		if user.ID != userID {
+		if user.ID != parsedUserID {
 			return domain.ErrEmailAlreadyExists
 		}
 	}
@@ -84,13 +90,18 @@ func (s *service) Update(ctx context.Context, req domain.UserSaveRequest, userID
 		Password: string(hashedPwd),
 	}
 
-	return s.repo.UpdateUser(ctx, user, userID)
+	return s.repo.UpdateUser(ctx, user, parsedUserID)
 }
 
-func (s *service) Delete(ctx context.Context, userID int64) error {
-	if _, err := s.repo.GetUserByID(ctx, userID); err != nil {
+func (s *service) Delete(ctx context.Context, userID string) error {
+	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
 		return err
 	}
 
-	return s.repo.DeleteUser(ctx, userID)
+	if _, err := s.repo.GetUserByID(ctx, parsedUserID); err != nil {
+		return err
+	}
+
+	return s.repo.DeleteUser(ctx, parsedUserID)
 }
