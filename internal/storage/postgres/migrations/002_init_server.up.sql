@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS servers (
     is_online BOOLEAN DEFAULT false,
     os_info JSONB,
     created_at TIMESTAMP(0) DEFAULT NOW(),
-    updated_at TIMESTAMP(0) DEFAULT NOW()
+    updated_at TIMESTAMP(0) DEFAULT NOW(),
+    deleted_at TIMESTAMP(0) DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS server_metrics (

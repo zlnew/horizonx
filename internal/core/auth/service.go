@@ -26,7 +26,7 @@ func NewService(repo domain.UserRepository, jwtSecret string, jwtExpiry time.Dur
 }
 
 func (s *service) Login(ctx context.Context, req domain.LoginRequest) (*domain.AuthResponse, error) {
-	user, err := s.repo.GetUserByEmail(ctx, req.Email)
+	user, err := s.repo.GetByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, domain.ErrInvalidCredentials
 	}

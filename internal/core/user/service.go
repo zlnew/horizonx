@@ -3,7 +3,6 @@ package user
 
 import (
 	"context"
-	"strconv"
 
 	"horizonx-server/internal/domain"
 
@@ -50,7 +49,7 @@ func (s *service) Create(ctx context.Context, req domain.UserSaveRequest) error 
 		return err
 	}
 
-	if user, _ := s.repo.GetUserByEmail(ctx, req.Email); user != nil {
+	if user, _ := s.repo.GetByEmail(ctx, req.Email); user != nil {
 		return domain.ErrEmailAlreadyExists
 	}
 
@@ -69,13 +68,8 @@ func (s *service) Create(ctx context.Context, req domain.UserSaveRequest) error 
 	return s.repo.Create(ctx, user)
 }
 
-func (s *service) Update(ctx context.Context, req domain.UserSaveRequest, userID string) error {
-	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
-	if err != nil {
-		return err
-	}
-
-	existingUser, err := s.repo.GetUserByID(ctx, parsedUserID)
+func (s *service) Update(ctx context.Context, req domain.UserSaveRequest, userID int64) error {
+	existingUser, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -87,7 +81,7 @@ func (s *service) Update(ctx context.Context, req domain.UserSaveRequest, userID
 	}
 
 	if req.Email != existingUser.Email {
-		if userCheck, _ := s.repo.GetUserByEmail(ctx, req.Email); userCheck != nil {
+		if userCheck, _ := s.repo.GetByEmail(ctx, req.Email); userCheck != nil {
 			return domain.ErrEmailAlreadyExists
 		}
 	}
@@ -103,25 +97,20 @@ func (s *service) Update(ctx context.Context, req domain.UserSaveRequest, userID
 	}
 
 	user := &domain.User{
-		ID:       parsedUserID,
+		ID:       userID,
 		Name:     req.Name,
 		Email:    req.Email,
 		Password: passwordToSave,
 		RoleID:   req.RoleID,
 	}
 
-	return s.repo.Update(ctx, user, parsedUserID)
+	return s.repo.Update(ctx, user, userID)
 }
 
-func (s *service) Delete(ctx context.Context, userID string) error {
-	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
-	if err != nil {
+func (s *service) Delete(ctx context.Context, userID int64) error {
+	if _, err := s.repo.GetByID(ctx, userID); err != nil {
 		return err
 	}
 
-	if _, err := s.repo.GetUserByID(ctx, parsedUserID); err != nil {
-		return err
-	}
-
-	return s.repo.Delete(ctx, parsedUserID)
+	return s.repo.Delete(ctx, userID)
 }

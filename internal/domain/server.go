@@ -2,8 +2,11 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrServerNotFound = errors.New("server not found")
 
 type Server struct {
 	ID        int64     `json:"id"`
@@ -16,19 +19,24 @@ type Server struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-type ServerCreateRequest struct {
+type ServerSaveRequest struct {
 	Name      string `json:"name" validate:"required"`
 	IPAddress string `json:"ip_address" validate:"required"`
 }
 
 type ServerRepository interface {
-	GetByToken(ctx context.Context, token string) (*Server, error)
-	Create(ctx context.Context, s *Server) error
 	List(ctx context.Context) ([]Server, error)
-	UpdateStatus(ctx context.Context, id int64, isOnline bool) error
+	Create(ctx context.Context, s *Server) error
+	Update(ctx context.Context, s *Server, serverID int64) error
+	Delete(ctx context.Context, serverID int64) error
+	GetByID(ctx context.Context, serverID int64) (*Server, error)
+	GetByToken(ctx context.Context, token string) (*Server, error)
+	UpdateStatus(ctx context.Context, serverID int64, isOnline bool) error
 }
 
 type ServerService interface {
-	Register(ctx context.Context, name, ip string) (*Server, string, error)
-	List(ctx context.Context) ([]Server, error)
+	Get(ctx context.Context) ([]Server, error)
+	Register(ctx context.Context, req ServerSaveRequest) (*Server, string, error)
+	Update(ctx context.Context, req ServerSaveRequest, serverID int64) error
+	Delete(ctx context.Context, serverID int64) error
 }

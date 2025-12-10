@@ -84,5 +84,5 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	JSONSuccess(w, http.StatusNoContent, APIResponse{})
+	JSONSuccess(w, http.StatusOK, APIResponse{})
 }

@@ -90,7 +90,73 @@ func (r *UserRepository) List(ctx context.Context, opts domain.ListOptions) ([]*
 	return users, total, nil
 }
 
-func (r *UserRepository) GetUserByID(ctx context.Context, ID int64) (*domain.User, error) {
+func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
+	query := `
+		INSERT INTO users (name, email, password, role_id, created_at, updated_at) 
+		VALUES ($1, $2, $3, $4, $5, $6) 
+		RETURNING id
+	`
+
+	now := time.Now().UTC()
+
+	err := r.db.QueryRow(ctx, query,
+		user.Name,
+		user.Email,
+		user.Password,
+		user.RoleID,
+		now,
+		now,
+	).Scan(&user.ID)
+	if err != nil {
+		return fmt.Errorf("failed to insert user: %w", err)
+	}
+
+	return nil
+}
+
+func (r *UserRepository) Update(ctx context.Context, user *domain.User, userID int64) error {
+	query := `
+		UPDATE users 
+		SET name = $1, email = $2, password = $3, role_id = $4, updated_at = $5
+		WHERE id = $6 AND deleted_at IS NULL
+	`
+
+	now := time.Now().UTC()
+	ct, err := r.db.Exec(ctx, query,
+		user.Name,
+		user.Email,
+		user.Password,
+		user.RoleID,
+		now,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("user with ID %d not found or deleted", userID)
+	}
+
+	return nil
+}
+
+func (r *UserRepository) Delete(ctx context.Context, userID int64) error {
+	query := `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`
+
+	ct, err := r.db.Exec(ctx, query, time.Now().UTC(), userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("user with ID %d not found or already deleted", userID)
+	}
+
+	return nil
+}
+
+func (r *UserRepository) GetByID(ctx context.Context, userID int64) (*domain.User, error) {
 	query := `
 		SELECT 
 			u.id, u.name, u.email, u.password, u.role_id, u.created_at, u.updated_at,
@@ -100,7 +166,7 @@ func (r *UserRepository) GetUserByID(ctx context.Context, ID int64) (*domain.Use
 		WHERE u.id = $1 AND u.deleted_at IS NULL
 	`
 
-	row := r.db.QueryRow(ctx, query, ID)
+	row := r.db.QueryRow(ctx, query, userID)
 
 	var user domain.User
 	var role domain.Role
@@ -120,7 +186,7 @@ func (r *UserRepository) GetUserByID(ctx context.Context, ID int64) (*domain.Use
 	return &user, nil
 }
 
-func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
 	query := `
 		SELECT 
 			u.id, u.name, u.email, u.password, u.role_id, u.created_at, u.updated_at,
@@ -163,75 +229,4 @@ func (r *UserRepository) GetRoleByID(ctx context.Context, roleID int64) (*domain
 	}
 
 	return &role, nil
-}
-
-func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
-	query := `
-		INSERT INTO users (name, email, password, role_id, created_at, updated_at) 
-		VALUES ($1, $2, $3, $4, $5, $6) 
-		RETURNING id
-	`
-
-	now := time.Now().UTC()
-
-	err := r.db.QueryRow(ctx, query,
-		user.Name,
-		user.Email,
-		user.Password,
-		user.RoleID,
-		now,
-		now,
-	).Scan(&user.ID)
-	if err != nil {
-		return fmt.Errorf("failed to insert user: %w", err)
-	}
-
-	user.CreatedAt = now
-	user.UpdatedAt = now
-
-	return nil
-}
-
-func (r *UserRepository) Update(ctx context.Context, user *domain.User, userID int64) error {
-	query := `
-		UPDATE users 
-		SET name = $1, email = $2, password = $3, role_id = $4, updated_at = $5
-		WHERE id = $6 AND deleted_at IS NULL
-	`
-
-	now := time.Now().UTC()
-	ct, err := r.db.Exec(ctx, query,
-		user.Name,
-		user.Email,
-		user.Password,
-		user.RoleID,
-		now,
-		userID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to execute update query: %w", err)
-	}
-
-	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("user with ID %d not found or deleted", userID)
-	}
-
-	user.UpdatedAt = now
-
-	return nil
-}
-
-func (r *UserRepository) Delete(ctx context.Context, userID int64) error {
-	query := `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`
-
-	ct, err := r.db.Exec(ctx, query, time.Now().UTC(), userID)
-	if err != nil {
-		return fmt.Errorf("failed to execute soft delete query: %w", err)
-	}
-
-	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("user with ID %d not found or already deleted", userID)
-	}
-
-	return nil
 }

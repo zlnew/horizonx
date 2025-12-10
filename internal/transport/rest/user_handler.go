@@ -90,7 +90,13 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Update(r.Context(), req, userID); err != nil {
+	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	if err := h.svc.Update(r.Context(), req, parsedUserID); err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
 			JSONError(w, http.StatusNotFound, "User not found")
 			return
@@ -117,9 +123,15 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("id")
 
-	if err := h.svc.Delete(r.Context(), userID); err != nil {
+	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	if err := h.svc.Delete(r.Context(), parsedUserID); err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
-			JSONError(w, http.StatusBadRequest, "User not found")
+			JSONError(w, http.StatusNotFound, "User not found")
 			return
 		}
 

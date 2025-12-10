@@ -45,8 +45,8 @@ type UserSaveRequest struct {
 
 type UserRepository interface {
 	List(ctx context.Context, opts ListOptions) ([]*User, int64, error)
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
-	GetUserByID(ctx context.Context, ID int64) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	GetByID(ctx context.Context, ID int64) (*User, error)
 	GetRoleByID(ctx context.Context, roleID int64) (*Role, error)
 	Create(ctx context.Context, user *User) error
 	Update(ctx context.Context, user *User, userID int64) error
@@ -56,6 +56,6 @@ type UserRepository interface {
 type UserService interface {
 	Get(ctx context.Context, opts ListOptions) (*ListResult[*User], error)
 	Create(ctx context.Context, req UserSaveRequest) error
-	Update(ctx context.Context, req UserSaveRequest, userID string) error
-	Delete(ctx context.Context, userID string) error
+	Update(ctx context.Context, req UserSaveRequest, userID int64) error
+	Delete(ctx context.Context, userID int64) error
 }
