@@ -33,6 +33,10 @@ func NewService(repo domain.MetricsRepository, snapshot *snapshot.MetricsStore, 
 }
 
 func (s *Service) Ingest(ctx context.Context, m domain.Metrics) error {
+	if m.RecordedAt.IsZero() {
+		m.RecordedAt = time.Now().UTC()
+	}
+
 	s.snapshot.Set(m.ServerID, m)
 
 	channel := fmt.Sprintf("server:%d:metrics", m.ServerID)

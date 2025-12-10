@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"horizonx-server/internal/domain"
 
@@ -49,7 +50,7 @@ func (r *ServerRepository) GetByToken(ctx context.Context, token string) (*domai
 func (r *ServerRepository) Create(ctx context.Context, s *domain.Server) error {
 	query := `
 		INSERT INTO servers (name, ip_address, api_token, is_online, created_at, updated_at)
-		VALUES ($1, $2::inet, $3, $4, NOW(), NOW())
+		VALUES ($1, $2::inet, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -58,7 +59,9 @@ func (r *ServerRepository) Create(ctx context.Context, s *domain.Server) error {
 		ipParam = s.IPAddress
 	}
 
-	err := r.db.QueryRow(ctx, query, s.Name, ipParam, s.APIToken, s.IsOnline).Scan(
+	now := time.Now().UTC()
+
+	err := r.db.QueryRow(ctx, query, s.Name, ipParam, s.APIToken, s.IsOnline, now, now).Scan(
 		&s.ID,
 		&s.CreatedAt,
 		&s.UpdatedAt,
@@ -105,7 +108,8 @@ func (r *ServerRepository) List(ctx context.Context) ([]domain.Server, error) {
 }
 
 func (r *ServerRepository) UpdateStatus(ctx context.Context, id int64, isOnline bool) error {
-	query := `UPDATE servers SET is_online = $1, updated_at = NOW() WHERE id = $2`
-	_, err := r.db.Exec(ctx, query, isOnline, id)
+	now := time.Now().UTC()
+	query := `UPDATE servers SET is_online = $1, updated_at = $2 WHERE id = $3`
+	_, err := r.db.Exec(ctx, query, isOnline, now, id)
 	return err
 }

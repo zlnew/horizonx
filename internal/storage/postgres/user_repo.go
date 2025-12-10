@@ -172,7 +172,7 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
 		RETURNING id
 	`
 
-	now := time.Now()
+	now := time.Now().UTC()
 
 	err := r.db.QueryRow(ctx, query,
 		user.Name,
@@ -199,7 +199,7 @@ func (r *UserRepository) Update(ctx context.Context, user *domain.User, userID i
 		WHERE id = $6 AND deleted_at IS NULL
 	`
 
-	now := time.Now()
+	now := time.Now().UTC()
 	ct, err := r.db.Exec(ctx, query,
 		user.Name,
 		user.Email,
@@ -224,7 +224,7 @@ func (r *UserRepository) Update(ctx context.Context, user *domain.User, userID i
 func (r *UserRepository) Delete(ctx context.Context, userID int64) error {
 	query := `UPDATE users SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`
 
-	ct, err := r.db.Exec(ctx, query, time.Now(), userID)
+	ct, err := r.db.Exec(ctx, query, time.Now().UTC(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to execute soft delete query: %w", err)
 	}
