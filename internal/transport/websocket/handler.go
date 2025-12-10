@@ -1,10 +1,12 @@
 package websocket
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 
 	"horizonx-server/internal/config"
+	"horizonx-server/internal/domain"
 	"horizonx-server/internal/logger"
 	"horizonx-server/pkg"
 
@@ -12,13 +14,14 @@ import (
 )
 
 type Handler struct {
-	hub      *Hub
-	upgrader websocket.Upgrader
-	cfg      *config.Config
-	log      logger.Logger
+	hub        *Hub
+	upgrader   websocket.Upgrader
+	cfg        *config.Config
+	log        logger.Logger
+	serverRepo domain.ServerRepository
 }
 
-func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger) *Handler {
+func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger, serverRepo domain.ServerRepository) *Handler {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
@@ -28,7 +31,7 @@ func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger) *Handler {
 
 			allowed := slices.Contains(cfg.AllowedOrigins, origin)
 			if !allowed {
-				log.Warn("websocket origin rejected", "origin", origin)
+				log.Warn("ws origin rejected", "origin", origin)
 				return false
 			}
 
@@ -37,43 +40,75 @@ func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger) *Handler {
 	}
 
 	return &Handler{
-		hub:      hub,
-		upgrader: upgrader,
-		cfg:      cfg,
-		log:      log,
+		hub:        hub,
+		upgrader:   upgrader,
+		cfg:        cfg,
+		log:        log,
+		serverRepo: serverRepo,
 	}
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
-	var tokenString string
+	var clientID string
+	var clientType string
 
-	if cookie, err := r.Cookie("access_token"); err == nil {
-		tokenString = cookie.Value
+	// Authorize for browser
+	cookie, err := r.Cookie("access_token")
+	if err == nil {
+		tokenString := cookie.Value
+		claims, err := pkg.ValidateToken(tokenString, h.cfg.JWTSecret)
+		if err == nil {
+			if sub, ok := claims["sub"]; ok && sub != nil {
+				clientID = fmt.Sprintf("%v", sub)
+				clientType = TypeUser
+				h.log.Debug("ws auth: user authenticated", "id", clientID)
+			} else {
+				h.log.Warn("ws auth: sub claim missing or nil")
+			}
+		} else {
+			h.log.Warn("ws auth: invalid token", "err", err)
+		}
+	} else {
+		h.log.Debug("ws auth: no access_token cookie found")
 	}
 
-	if tokenString == "" {
-		h.log.Warn("websocket unauthorized: no token found")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	// Authorize for agents
+	if clientID == "" {
+		token := ""
+
+		authHeader := r.Header.Get("Authorization")
+		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			token = authHeader[7:]
+		}
+
+		if token != "" {
+			server, err := h.serverRepo.GetByToken(r.Context(), token)
+			if err == nil {
+				clientID = fmt.Sprintf("%d", server.ID)
+				clientType = TypeAgent
+				h.log.Debug("ws auth: agent authenticated", "server_id", clientID)
+			} else {
+				h.log.Warn("ws auth: invalid agent token")
+			}
+		}
 	}
 
-	claims, err := pkg.ValidateToken(tokenString, h.cfg.JWTSecret)
-	if err != nil {
-		h.log.Warn("websocket jwt verification failed", "error", err)
-		http.Error(w, "invalid token", http.StatusUnauthorized)
+	if clientID == "" {
+		h.log.Warn("ws unauthorized: no valid credentials")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.log.Error("websocket upgrade failed", "error", err)
+		h.log.Error("ws upgrade failed", "error", err)
 		return
 	}
 
-	userID := claims["sub"]
-	h.log.Info("ws client authenticated", "user_id", userID)
+	client := NewClient(h.hub, conn, h.log, clientID, clientType)
 
-	client := NewClient(h.hub, conn, h.log)
+	h.hub.register <- client
+
 	go client.writePump()
 	go client.readPump()
 

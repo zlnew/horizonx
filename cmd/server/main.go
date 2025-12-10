@@ -50,7 +50,7 @@ func main() {
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
 
-	wsHandler := websocket.NewHandler(hub, cfg, log)
+	wsHandler := websocket.NewHandler(hub, cfg, log, serverRepo)
 	metricsHandler := rest.NewMetricsHandler(metricsService)
 	serverHandler := rest.NewServerHandler(serverService)
 	authHandler := rest.NewAuthHandler(authService, cfg)

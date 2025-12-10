@@ -21,7 +21,15 @@ type Client struct {
 	conn *websocket.Conn
 	send chan []byte
 	log  logger.Logger
+
+	ID   string
+	Type string
 }
+
+const (
+	TypeUser  = "USER"
+	TypeAgent = "AGENT"
+)
 
 type ClientMessage struct {
 	Type    string          `json:"type"`
@@ -30,21 +38,20 @@ type ClientMessage struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, log logger.Logger) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, log logger.Logger, id, clientType string) *Client {
 	return &Client{
 		hub:  hub,
 		conn: conn,
 		send: make(chan []byte, 256),
 		log:  log,
+		ID:   id,
+		Type: clientType,
 	}
 }
 
 func (c *Client) readPump() {
-	subscribedChannels := make(map[string]bool)
 	defer func() {
-		for channel := range subscribedChannels {
-			c.hub.unregister <- &Subscription{client: c, channel: channel}
-		}
+		c.hub.unregister <- c
 		c.conn.Close()
 	}()
 
@@ -58,7 +65,9 @@ func (c *Client) readPump() {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			c.log.Warn("client disconnected", "error", err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				c.log.Warn("client disconnected unexpected", "error", err)
+			}
 			break
 		}
 
@@ -70,19 +79,9 @@ func (c *Client) readPump() {
 
 		switch msg.Type {
 		case "subscribe":
-			if !subscribedChannels[msg.Channel] {
-				subscribedChannels[msg.Channel] = true
-				c.hub.register <- &Subscription{client: c, channel: msg.Channel}
-				c.log.Info("client subscribed", "channel", msg.Channel)
-			}
-
+			c.hub.subscribe <- &Subscription{client: c, channel: msg.Channel}
 		case "unsubscribe":
-			if subscribedChannels[msg.Channel] {
-				delete(subscribedChannels, msg.Channel)
-				c.hub.unregister <- &Subscription{client: c, channel: msg.Channel}
-				c.log.Info("client unsubscribed", "channel", msg.Channel)
-			}
-
+			c.hub.unsubscribe <- &Subscription{client: c, channel: msg.Channel}
 		default:
 			c.log.Warn("unknown message type", "type", msg.Type)
 		}
