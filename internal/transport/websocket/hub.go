@@ -4,6 +4,7 @@ package websocket
 import (
 	"encoding/json"
 
+	"horizonx-server/internal/domain"
 	"horizonx-server/internal/logger"
 )
 
@@ -18,6 +19,8 @@ type Hub struct {
 
 	events   chan *ServerEvent
 	commands chan *CommandEvent
+
+	serverService domain.ServerService
 
 	log logger.Logger
 }
@@ -39,17 +42,18 @@ type CommandEvent struct {
 	Payload        any
 }
 
-func NewHub(log logger.Logger) *Hub {
+func NewHub(log logger.Logger, serverService domain.ServerService) *Hub {
 	return &Hub{
-		rooms:       make(map[string]map[*Client]bool),
-		agents:      make(map[string]*Client),
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
-		subscribe:   make(chan *Subscription),
-		unsubscribe: make(chan *Subscription),
-		events:      make(chan *ServerEvent, 100),
-		commands:    make(chan *CommandEvent, 100),
-		log:         log,
+		rooms:         make(map[string]map[*Client]bool),
+		agents:        make(map[string]*Client),
+		register:      make(chan *Client),
+		unregister:    make(chan *Client),
+		subscribe:     make(chan *Subscription),
+		unsubscribe:   make(chan *Subscription),
+		events:        make(chan *ServerEvent, 100),
+		commands:      make(chan *CommandEvent, 100),
+		serverService: serverService,
+		log:           log,
 	}
 }
 
@@ -59,8 +63,8 @@ func (h *Hub) Run() {
 		case client := <-h.register:
 			if client.Type == TypeAgent {
 				h.agents[client.ID] = client
-				h.InitializeAgent(client.ID, client)
-
+				h.initAgent(client.ID, client)
+				h.updateAgentStatus(client.ID, true)
 				h.log.Info("agent online", "server_id", client.ID)
 			}
 
@@ -72,6 +76,7 @@ func (h *Hub) Run() {
 			if client.Type == TypeAgent {
 				if _, ok := h.agents[client.ID]; ok {
 					delete(h.agents, client.ID)
+					h.updateAgentStatus(client.ID, false)
 					h.log.Info("agent offline", "server_id", client.ID)
 				}
 			}
@@ -81,6 +86,7 @@ func (h *Hub) Run() {
 					if len(clients) == 0 {
 						delete(h.rooms, roomName)
 					}
+					h.log.Info("user offline", "user_id", client.ID)
 				}
 			}
 
@@ -138,24 +144,6 @@ func (h *Hub) Run() {
 				h.log.Error("agent send buffer full", "target_id", cmd.TargetServerID)
 			}
 		}
-	}
-}
-
-func (h *Hub) InitializeAgent(serverID string, client *Client) {
-	payload := map[string]any{
-		"type":    "command",
-		"command": "init",
-		"payload": map[string]string{
-			"server_id": serverID,
-		},
-	}
-	bytes, _ := json.Marshal(payload)
-
-	select {
-	case client.send <- bytes:
-		h.log.Info("sent init command to agent", "server_id", serverID)
-	default:
-		h.log.Info("agent send buffer full during init", "server_id", serverID)
 	}
 }
 

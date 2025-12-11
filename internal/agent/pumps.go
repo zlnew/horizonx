@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"horizonx-server/internal/domain"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -104,7 +106,8 @@ func (a *Agent) writePump(ctx context.Context) error {
 				return nil
 			}
 
-			channel := fmt.Sprintf("server:%d:metrics", metric.ServerID)
+			channel := domain.GetServerMetricsChannel(metric.ServerID)
+			event := domain.EventMetricsReport
 			msg := struct {
 				Type    string `json:"type"`
 				Channel string `json:"channel"`
@@ -113,7 +116,7 @@ func (a *Agent) writePump(ctx context.Context) error {
 			}{
 				Type:    "event",
 				Channel: channel,
-				Event:   "report",
+				Event:   event,
 				Payload: metric,
 			}
 

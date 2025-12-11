@@ -39,4 +39,6 @@ type ServerService interface {
 	Register(ctx context.Context, req ServerSaveRequest) (*Server, string, error)
 	Update(ctx context.Context, req ServerSaveRequest, serverID int64) error
 	Delete(ctx context.Context, serverID int64) error
+	AuthorizeAgent(ctx context.Context, token string) (*Server, error)
+	UpdateStatus(ctx context.Context, serverID int64, status bool) error
 }

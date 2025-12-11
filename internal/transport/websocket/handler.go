@@ -14,14 +14,15 @@ import (
 )
 
 type Handler struct {
-	hub        *Hub
-	upgrader   websocket.Upgrader
-	cfg        *config.Config
-	log        logger.Logger
-	serverRepo domain.ServerRepository
+	hub      *Hub
+	upgrader websocket.Upgrader
+	cfg      *config.Config
+	log      logger.Logger
+
+	serverService domain.ServerService
 }
 
-func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger, serverRepo domain.ServerRepository) *Handler {
+func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger, serverService domain.ServerService) *Handler {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
@@ -40,11 +41,11 @@ func NewHandler(hub *Hub, cfg *config.Config, log logger.Logger, serverRepo doma
 	}
 
 	return &Handler{
-		hub:        hub,
-		upgrader:   upgrader,
-		cfg:        cfg,
-		log:        log,
-		serverRepo: serverRepo,
+		hub:           hub,
+		upgrader:      upgrader,
+		cfg:           cfg,
+		log:           log,
+		serverService: serverService,
 	}
 }
 
@@ -82,7 +83,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if token != "" {
-			server, err := h.serverRepo.GetByToken(r.Context(), token)
+			server, err := h.serverService.AuthorizeAgent(r.Context(), token)
 			if err == nil {
 				clientID = fmt.Sprintf("%d", server.ID)
 				clientType = TypeAgent

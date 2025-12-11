@@ -26,8 +26,6 @@ func main() {
 
 	cfg := config.Load()
 	log := logger.New(cfg)
-	hub := websocket.NewHub(log)
-	go hub.Run()
 
 	if cfg.JWTSecret == "" {
 		panic("FATAL: JWT_SECRET is mandatory for Server!")
@@ -41,7 +39,6 @@ func main() {
 
 	metricsRepo := postgres.NewMetricsRepository(dbPool)
 	metricsStore := snapshot.NewMetricsStore()
-	metrics.NewService(metricsRepo, metricsStore, hub, log)
 
 	serverRepo := postgres.NewServerRepository(dbPool)
 	userRepo := postgres.NewUserRepository(dbPool)
@@ -50,7 +47,12 @@ func main() {
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
 
-	wsHandler := websocket.NewHandler(hub, cfg, log, serverRepo)
+	hub := websocket.NewHub(log, serverService)
+	go hub.Run()
+
+	metrics.NewService(metricsRepo, metricsStore, hub, log)
+
+	wsHandler := websocket.NewHandler(hub, cfg, log, serverService)
 	serverHandler := rest.NewServerHandler(serverService)
 	authHandler := rest.NewAuthHandler(authService, cfg)
 	userHandler := rest.NewUserHandler(userService)

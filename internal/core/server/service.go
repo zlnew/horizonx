@@ -61,3 +61,16 @@ func (s *Service) Delete(ctx context.Context, serverID int64) error {
 
 	return s.repo.Delete(ctx, serverID)
 }
+
+func (s *Service) AuthorizeAgent(ctx context.Context, token string) (*domain.Server, error) {
+	server, err := s.repo.GetByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	return server, nil
+}
+
+func (s *Service) UpdateStatus(ctx context.Context, serverID int64, status bool) error {
+	return s.repo.UpdateStatus(ctx, serverID, status)
+}
