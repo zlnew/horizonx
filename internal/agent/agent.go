@@ -29,8 +29,9 @@ type Agent struct {
 	serverURL string
 	token     string
 
-	initCh    chan int64
-	metricsCh chan domain.Metrics
+	initCh       chan int64
+	metricsCh    chan domain.Metrics
+	sessionCtxCh chan context.Context
 }
 
 var ErrUnauthorized = errors.New("connection failed: unauthorized (check token)")
@@ -41,10 +42,15 @@ func NewAgent(serverURL, token string, log logger.Logger) *Agent {
 		token:     token,
 		log:       log,
 
-		serverID:  0,
-		initCh:    make(chan int64, 1),
-		metricsCh: make(chan domain.Metrics, 10),
+		serverID:     0,
+		initCh:       make(chan int64, 1),
+		metricsCh:    make(chan domain.Metrics, 10),
+		sessionCtxCh: make(chan context.Context, 1),
 	}
+}
+
+func (a *Agent) GetSessionContextChannel() chan context.Context {
+	return a.sessionCtxCh
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -104,7 +110,8 @@ func (a *Agent) start(ctx context.Context) error {
 	a.conn = conn
 	a.log.Info("websocket connected to server", "url", a.serverURL)
 
-	ctx, cancel := context.WithCancel(ctx)
+	sessionCtx, cancel := context.WithCancel(ctx)
+
 	pumpDone := make(chan error, 1)
 
 	defer func() {
@@ -114,11 +121,17 @@ func (a *Agent) start(ctx context.Context) error {
 		a.log.Info("websocket connection closed and resources cleaned up")
 	}()
 
-	go func() { pumpDone <- a.readPump(ctx) }()
-	go func() { pumpDone <- a.writePump(ctx) }()
+	go func() { pumpDone <- a.readPump(sessionCtx) }()
+	go func() { pumpDone <- a.writePump(sessionCtx) }()
+
+	select {
+	case a.sessionCtxCh <- sessionCtx:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	a.log.Info("waiting for server initialization command...")
-	if err := a.waitForInit(ctx); err != nil {
+	if err := a.waitForInit(sessionCtx); err != nil {
 		return err
 	}
 

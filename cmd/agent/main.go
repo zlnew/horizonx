@@ -16,6 +16,21 @@ import (
 	"horizonx-server/internal/logger"
 )
 
+func mainMetricsScheduler(agentClient *agent.Agent, cfg *config.Config, appLog logger.Logger) {
+	metricsSampler := metrics.NewSampler(appLog)
+	metricsSink := func(m domain.Metrics) { agentClient.SendMetric(m) }
+
+	for sessionCtx := range agentClient.GetSessionContextChannel() {
+		appLog.Info("Starting metrics scheduler for new session")
+		metricsScheduler := metrics.NewScheduler(cfg.Interval, appLog, metricsSampler.Collect, metricsSink)
+
+		metricsScheduler.Start(sessionCtx)
+
+		appLog.Info("Metrics scheduler stopped as session context was cancelled")
+	}
+	appLog.Info("Metrics scheduler controller shutting down.")
+}
+
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Info: No .env file found, relying on system environment variables")
@@ -41,10 +56,7 @@ func main() {
 
 	agentClient := agent.NewAgent(serverURL, agentToken, appLog)
 
-	metricsSampler := metrics.NewSampler(appLog)
-	metricsSink := func(m domain.Metrics) { agentClient.SendMetric(m) }
-	metricsScheduler := metrics.NewScheduler(cfg.Interval, appLog, metricsSampler.Collect, metricsSink)
-	go metricsScheduler.Start(ctx)
+	go mainMetricsScheduler(agentClient, cfg, appLog)
 
 	if err := agentClient.Run(ctx); err != nil && err != context.Canceled {
 		appLog.Error("agent run failed unexpectedly", "error", err)
