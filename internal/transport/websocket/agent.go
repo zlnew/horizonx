@@ -27,21 +27,19 @@ func (h *Hub) initAgent(serverID string, client *Client) {
 }
 
 func (h *Hub) updateAgentServerStatus(serverID string, isOnline bool) {
-	go func(serverID string, isOnline bool) {
-		parsedID, err := strconv.ParseInt(serverID, 10, 64)
-		if err != nil {
-			h.log.Error("ws: failed to parse server ID for status update", "id", serverID, "error", err)
-			return
-		}
+	parsedID, err := strconv.ParseInt(serverID, 10, 64)
+	if err != nil {
+		h.log.Error("ws: failed to parse server ID for status update", "id", serverID, "error", err)
+		return
+	}
 
-		err = h.serverService.UpdateStatus(context.Background(), parsedID, isOnline)
-		if err != nil {
-			h.log.Error("ws: failed to update agent server status", "error", err, "server_id", parsedID, "online", isOnline)
-		}
+	err = h.serverService.UpdateStatus(context.Background(), parsedID, isOnline)
+	if err != nil {
+		h.log.Error("ws: failed to update agent server status", "error", err, "server_id", parsedID, "online", isOnline)
+	}
 
-		h.Emit(domain.ChannelServerStatus, domain.EventServerStatusUpdated, domain.ServerStatusPayload{
-			ServerID: parsedID,
-			IsOnline: isOnline,
-		})
-	}(serverID, isOnline)
+	h.Emit(domain.ChannelServerStatus, domain.EventServerStatusUpdated, domain.ServerStatusPayload{
+		ServerID: parsedID,
+		IsOnline: isOnline,
+	})
 }

@@ -86,7 +86,7 @@ func (c *Client) readPump() {
 					Payload: agentMsg.Payload,
 				}
 			case "ready":
-				c.hub.updateAgentServerStatus(c.ID, true)
+				go c.hub.updateAgentServerStatus(c.ID, true)
 				c.log.Info("ws: agent signalled ready, status updated and broadcasted", "server_id", c.ID)
 			default:
 				c.log.Warn("ws: unknown agent message type", "type", agentMsg.Type)

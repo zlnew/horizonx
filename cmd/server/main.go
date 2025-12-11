@@ -39,6 +39,7 @@ func main() {
 
 	metricsRepo := postgres.NewMetricsRepository(dbPool)
 	metricsStore := snapshot.NewMetricsStore()
+	metricsService := metrics.NewService(metricsRepo, metricsStore, log)
 
 	serverRepo := postgres.NewServerRepository(dbPool)
 	userRepo := postgres.NewUserRepository(dbPool)
@@ -47,10 +48,8 @@ func main() {
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
 
-	hub := websocket.NewHub(log, serverService)
+	hub := websocket.NewHub(log, serverService, metricsService)
 	go hub.Run()
-
-	metrics.NewService(metricsRepo, metricsStore, hub, log)
 
 	wsHandler := websocket.NewHandler(hub, cfg, log, serverService)
 	serverHandler := rest.NewServerHandler(serverService)

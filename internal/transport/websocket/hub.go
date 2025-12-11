@@ -3,7 +3,10 @@ package websocket
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 
+	"horizonx-server/internal/core/metrics"
 	"horizonx-server/internal/domain"
 	"horizonx-server/internal/logger"
 )
@@ -20,7 +23,8 @@ type Hub struct {
 	events   chan *ServerEvent
 	commands chan *CommandEvent
 
-	serverService domain.ServerService
+	serverService  domain.ServerService
+	metricsService *metrics.Service
 
 	log logger.Logger
 }
@@ -42,18 +46,19 @@ type CommandEvent struct {
 	Payload        any
 }
 
-func NewHub(log logger.Logger, serverService domain.ServerService) *Hub {
+func NewHub(log logger.Logger, serverService domain.ServerService, metricsService *metrics.Service) *Hub {
 	return &Hub{
-		rooms:         make(map[string]map[*Client]bool),
-		agents:        make(map[string]*Client),
-		register:      make(chan *Client),
-		unregister:    make(chan *Client),
-		subscribe:     make(chan *Subscription),
-		unsubscribe:   make(chan *Subscription),
-		events:        make(chan *ServerEvent, 100),
-		commands:      make(chan *CommandEvent, 100),
-		serverService: serverService,
-		log:           log,
+		rooms:          make(map[string]map[*Client]bool),
+		agents:         make(map[string]*Client),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		subscribe:      make(chan *Subscription),
+		unsubscribe:    make(chan *Subscription),
+		events:         make(chan *ServerEvent, 100),
+		commands:       make(chan *CommandEvent, 100),
+		serverService:  serverService,
+		metricsService: metricsService,
+		log:            log,
 	}
 }
 
@@ -68,8 +73,9 @@ func (h *Hub) Run() {
 
 		case client := <-h.unregister:
 			if client.Type == TypeAgent {
-				if _, ok := h.agents[client.ID]; ok {
+				if currentAgent, ok := h.agents[client.ID]; ok && currentAgent == client {
 					delete(h.agents, client.ID)
+					go h.updateAgentServerStatus(client.ID, false)
 					h.log.Info("ws: agent offline", "server_id", client.ID)
 				}
 			}
@@ -99,21 +105,52 @@ func (h *Hub) Run() {
 			}
 
 		case evt := <-h.events:
+			if h.metricsService != nil && strings.HasSuffix(evt.Channel, ":metrics") && evt.Event == domain.EventServerMetricsReport {
+				rawJSON, ok := evt.Payload.(json.RawMessage)
+				if !ok {
+					h.log.Error("metric payload is not json.RawMessage", "type", fmt.Sprintf("%T", evt.Payload))
+					continue
+				}
+
+				var m domain.Metrics
+				if err := json.Unmarshal(rawJSON, &m); err != nil {
+					h.log.Error("failed to unmarshal domain.Metrics payload in hub", "error", err)
+					continue
+				}
+
+				if err := h.metricsService.Ingest(m); err != nil {
+					h.log.Error("failed to process ingested metric from hub", "error", err)
+				}
+
+				h.Emit(evt.Channel, domain.EventServerMetricsReceived, m)
+				continue
+			}
+
+			h.log.Debug("ws: processing event for broadcast", "channel", evt.Channel, "event", evt.Event)
 			data := map[string]any{
 				"type":    "event",
 				"event":   evt.Event,
 				"channel": evt.Channel,
 				"payload": evt.Payload,
 			}
-			bytes, _ := json.Marshal(data)
+			bytes, err := json.Marshal(data)
+			if err != nil {
+				h.log.Error("ws: failed to marshal event for broadcast", "error", err)
+				continue
+			}
 
 			if clients, ok := h.rooms[evt.Channel]; ok {
+				h.log.Debug("ws: found room for channel", "channel", evt.Channel, "clients_count", len(clients))
 				for client := range clients {
 					select {
 					case client.send <- bytes:
+						h.log.Debug("ws: sent event to client", "channel", evt.Channel, "client_id", client.ID, "client_type", client.Type)
 					default:
+						h.log.Warn("ws: DROPPED event, client send buffer full", "channel", evt.Channel, "client_id", client.ID)
 					}
 				}
+			} else {
+				h.log.Warn("ws: no room found for channel, event not broadcasted", "channel", evt.Channel)
 			}
 
 		case cmd := <-h.commands:
