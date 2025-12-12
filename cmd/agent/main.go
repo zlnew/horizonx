@@ -41,7 +41,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h := agent.NewHub(appLog)
+	h := agent.NewHub(ctx, appLog)
 	go h.Run()
 	a := agent.NewAgent(h, appLog, serverURL, agentToken)
 	h.SetAgent(a)
@@ -62,6 +62,8 @@ func main() {
 	} else if agent.IsFatalError(err) {
 		appLog.Error("agent failed fatally, exiting", "error", err)
 	}
+
+	h.Stop()
 
 	appLog.Info("agent stopped gracefully.")
 }

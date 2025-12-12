@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 
@@ -9,6 +10,9 @@ import (
 )
 
 type Hub struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	agent        *Agent
 	agentEvents  chan *domain.WsInternalEvent
 	serverEvents chan *domain.WsClientMessage
@@ -16,8 +20,12 @@ type Hub struct {
 	log          logger.Logger
 }
 
-func NewHub(log logger.Logger) *Hub {
+func NewHub(parent context.Context, log logger.Logger) *Hub {
+	ctx, cancel := context.WithCancel(parent)
+
 	return &Hub{
+		ctx:          ctx,
+		cancel:       cancel,
 		agentEvents:  make(chan *domain.WsInternalEvent, 16),
 		serverEvents: make(chan *domain.WsClientMessage, 64),
 		commands:     make(chan *domain.WsAgentCommand, 64),
@@ -32,6 +40,9 @@ func (h *Hub) SetAgent(a *Agent) {
 func (h *Hub) Run() {
 	for {
 		select {
+		case <-h.ctx.Done():
+			h.log.Info("hub shutting down...")
+			return
 		case cmd := <-h.commands:
 			h.handleCommand(cmd)
 		case ev := <-h.serverEvents:
@@ -40,12 +51,22 @@ func (h *Hub) Run() {
 	}
 }
 
+func (h *Hub) Stop() {
+	h.cancel()
+}
+
 func (h *Hub) BroadcastToServer(ev *domain.WsClientMessage) {
-	h.serverEvents <- ev
+	select {
+	case <-h.ctx.Done():
+		return
+	case h.serverEvents <- ev:
+	}
 }
 
 func (h *Hub) SendToAgent(ev *domain.WsInternalEvent) {
 	select {
+	case <-h.ctx.Done():
+		return
 	case h.agentEvents <- ev:
 	default:
 		h.log.Warn("agent events buffer full, dropping internal event", "event", ev.Event)
@@ -65,6 +86,8 @@ func (h *Hub) handleServerEvent(ev *domain.WsClientMessage) {
 	}
 
 	select {
+	case <-h.ctx.Done():
+		return
 	case h.agent.send <- msg:
 	default:
 		h.log.Warn("agent send buffer full, dropping server event", "event", ev.Event)
