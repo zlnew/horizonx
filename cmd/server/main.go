@@ -9,14 +9,12 @@ import (
 
 	"horizonx-server/internal/config"
 	"horizonx-server/internal/core/auth"
-	"horizonx-server/internal/core/metrics"
 	"horizonx-server/internal/core/server"
 	"horizonx-server/internal/core/user"
 	"horizonx-server/internal/logger"
 	"horizonx-server/internal/storage/postgres"
-	"horizonx-server/internal/storage/snapshot"
 	"horizonx-server/internal/transport/rest"
-	"horizonx-server/internal/transport/websocket"
+	"horizonx-server/internal/transport/ws"
 )
 
 func main() {
@@ -36,10 +34,6 @@ func main() {
 	}
 	defer dbPool.Close()
 
-	metricsRepo := postgres.NewMetricsRepository(dbPool)
-	metricsStore := snapshot.NewMetricsStore()
-	metricsService := metrics.NewService(metricsRepo, metricsStore, log)
-
 	serverRepo := postgres.NewServerRepository(dbPool)
 	userRepo := postgres.NewUserRepository(dbPool)
 
@@ -47,19 +41,24 @@ func main() {
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
 
-	hub := websocket.NewHub(ctx, log, serverService, metricsService)
-	go hub.Run()
-
-	wsHandler := websocket.NewHandler(hub, cfg, log, serverService)
 	serverHandler := rest.NewServerHandler(serverService)
 	authHandler := rest.NewAuthHandler(authService, cfg)
 	userHandler := rest.NewUserHandler(userService)
 
+	wsWebHub := ws.NewHub(ctx, log)
+	go wsWebHub.Run()
+	wsWebHandler := ws.NewWebHandler(wsWebHub, log, cfg.JWTSecret, cfg.AllowedOrigins)
+
+	wsAgentHub := ws.NewHub(ctx, log)
+	go wsAgentHub.Run()
+	wsAgentHandler := ws.NewAgentHandler(wsAgentHub, log, serverService)
+
 	router := rest.NewRouter(cfg, &rest.RouterDeps{
-		WS:     wsHandler,
-		Server: serverHandler,
-		Auth:   authHandler,
-		User:   userHandler,
+		WsWeb:   wsWebHandler,
+		WsAgent: wsAgentHandler,
+		Server:  serverHandler,
+		Auth:    authHandler,
+		User:    userHandler,
 
 		ServerRepo: serverRepo,
 	})
@@ -75,7 +74,7 @@ func main() {
 
 	select {
 	case <-ctx.Done():
-		hub.Stop()
+		wsWebHub.Stop()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

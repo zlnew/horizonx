@@ -6,6 +6,9 @@ import (
 
 	"horizonx-server/internal/domain"
 	"horizonx-server/pkg"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
@@ -26,35 +29,41 @@ func (s *Service) Register(ctx context.Context, req domain.ServerSaveRequest) (*
 		return nil, "", err
 	}
 
-	srv := &domain.Server{
+	hashedToken, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, "", err
+	}
+
+	data := &domain.Server{
 		Name:      req.Name,
 		IPAddress: req.IPAddress,
-		APIToken:  token,
+		APIToken:  string(hashedToken),
 		IsOnline:  false,
 	}
 
-	if err := s.repo.Create(ctx, srv); err != nil {
+	srv, err := s.repo.Create(ctx, data)
+	if err != nil {
 		return nil, "", err
 	}
 
 	return srv, token, nil
 }
 
-func (s *Service) Update(ctx context.Context, req domain.ServerSaveRequest, serverID int64) error {
+func (s *Service) Update(ctx context.Context, req domain.ServerSaveRequest, serverID uuid.UUID) error {
 	_, err := s.repo.GetByID(ctx, serverID)
 	if err != nil {
 		return err
 	}
 
-	server := &domain.Server{
+	data := &domain.Server{
 		Name:      req.Name,
 		IPAddress: req.IPAddress,
 	}
 
-	return s.repo.Update(ctx, server, serverID)
+	return s.repo.Update(ctx, data, serverID)
 }
 
-func (s *Service) Delete(ctx context.Context, serverID int64) error {
+func (s *Service) Delete(ctx context.Context, serverID uuid.UUID) error {
 	if _, err := s.repo.GetByID(ctx, serverID); err != nil {
 		return err
 	}
@@ -62,15 +71,22 @@ func (s *Service) Delete(ctx context.Context, serverID int64) error {
 	return s.repo.Delete(ctx, serverID)
 }
 
-func (s *Service) AuthorizeAgent(ctx context.Context, token string) (*domain.Server, error) {
-	server, err := s.repo.GetByToken(ctx, token)
+func (s *Service) AuthorizeAgent(ctx context.Context, serverID uuid.UUID, secret string) (*domain.Server, error) {
+	server, err := s.repo.GetByID(ctx, serverID)
 	if err != nil {
-		return nil, err
+		return nil, domain.ErrInvalidCredentials
+	}
+
+	if err := bcrypt.CompareHashAndPassword(
+		[]byte(server.APIToken),
+		[]byte(secret),
+	); err != nil {
+		return nil, domain.ErrInvalidCredentials
 	}
 
 	return server, nil
 }
 
-func (s *Service) UpdateStatus(ctx context.Context, serverID int64, status bool) error {
+func (s *Service) UpdateStatus(ctx context.Context, serverID uuid.UUID, status bool) error {
 	return s.repo.UpdateStatus(ctx, serverID, status)
 }

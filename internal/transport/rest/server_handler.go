@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"horizonx-server/internal/domain"
+
+	"github.com/google/uuid"
 )
 
 type ServerHandler struct {
@@ -58,7 +59,7 @@ func (h *ServerHandler) Store(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ServerHandler) Update(w http.ResponseWriter, r *http.Request) {
-	serverID := r.PathValue("id")
+	paramID := r.PathValue("id")
 
 	var req domain.ServerSaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -71,13 +72,12 @@ func (h *ServerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parsedServerID, err := strconv.ParseInt(serverID, 10, 64)
+	serverID, err := uuid.Parse(paramID)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
-		return
+		JSONError(w, http.StatusBadRequest, "Invalid server ID")
 	}
 
-	if err := h.svc.Update(r.Context(), req, parsedServerID); err != nil {
+	if err := h.svc.Update(r.Context(), req, serverID); err != nil {
 		if errors.Is(err, domain.ErrServerNotFound) {
 			JSONError(w, http.StatusNotFound, "Server not found")
 			return
@@ -93,15 +93,15 @@ func (h *ServerHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ServerHandler) Destroy(w http.ResponseWriter, r *http.Request) {
-	serverID := r.PathValue("id")
+	paramID := r.PathValue("id")
 
-	parsedServerID, err := strconv.ParseInt(serverID, 10, 64)
+	serverID, err := uuid.Parse(paramID)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		JSONError(w, http.StatusBadRequest, "Invalid server ID")
 		return
 	}
 
-	if err := h.svc.Delete(r.Context(), parsedServerID); err != nil {
+	if err := h.svc.Delete(r.Context(), serverID); err != nil {
 		if errors.Is(err, domain.ErrServerNotFound) {
 			JSONError(w, http.StatusNotFound, "Server not found")
 			return

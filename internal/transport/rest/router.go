@@ -7,14 +7,15 @@ import (
 	"horizonx-server/internal/config"
 	"horizonx-server/internal/domain"
 	"horizonx-server/internal/transport/rest/middleware"
-	"horizonx-server/internal/transport/websocket"
+	"horizonx-server/internal/transport/ws"
 )
 
 type RouterDeps struct {
-	WS     *websocket.Handler
-	Server *ServerHandler
-	Auth   *AuthHandler
-	User   *UserHandler
+	WsWeb   *ws.WebHandler
+	WsAgent *ws.AgentHandler
+	Server  *ServerHandler
+	Auth    *AuthHandler
+	User    *UserHandler
 
 	ServerRepo domain.ServerRepository
 }
@@ -33,7 +34,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 		w.Write([]byte("OK"))
 	})
 
-	mux.HandleFunc("GET /ws", deps.WS.Serve)
+	mux.HandleFunc("GET /ws/web", deps.WsWeb.Serve)
+	mux.HandleFunc("GET /ws/agent", deps.WsAgent.Serve)
+
 	mux.HandleFunc("POST /auth/login", deps.Auth.Login)
 
 	mux.Handle("POST /auth/logout", userStack.Then(http.HandlerFunc(deps.Auth.Logout)))

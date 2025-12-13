@@ -39,7 +39,7 @@ type WsClientMessage struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-type WsInternalEvent struct {
+type WsServerEvent struct {
 	Channel string `json:"channel"`
 	Event   string `json:"event"`
 	Payload any    `json:"payload,omitempty"`

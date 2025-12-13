@@ -1,4 +1,5 @@
-package websocket
+// Package ws
+package ws
 
 import (
 	"context"
@@ -32,7 +33,7 @@ type Client struct {
 	Type string
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, log logger.Logger, clientID, clientType string) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, log logger.Logger, cID string, cType string) *Client {
 	ctx, cancel := context.WithCancel(hub.ctx)
 
 	return &Client{
@@ -45,8 +46,8 @@ func NewClient(hub *Hub, conn *websocket.Conn, log logger.Logger, clientID, clie
 
 		log: log,
 
-		ID:   clientID,
-		Type: clientType,
+		ID:   cID,
+		Type: cType,
 	}
 }
 
@@ -84,40 +85,16 @@ func (c *Client) readPump() {
 			}
 
 			switch msg.Type {
-			case domain.WsAgentReport:
-				if msg.Event == domain.WsEventAgentReady {
-					select {
-					case c.hub.agentReady <- c:
-					case <-c.ctx.Done():
-						return
-					}
-					continue
+			case "subscribe":
+				c.hub.subscribe <- &Subscription{
+					client:  c,
+					channel: msg.Channel,
 				}
-
-				select {
-				case c.hub.events <- &domain.WsInternalEvent{
-					Channel: msg.Channel,
-					Event:   msg.Event,
-					Payload: msg.Payload,
-				}:
-				case <-c.ctx.Done():
-					return
+			case "unsubscribe":
+				c.hub.unsubscribe <- &Subscription{
+					client:  c,
+					channel: msg.Channel,
 				}
-
-			case domain.WsSubscribe:
-				select {
-				case c.hub.subscribe <- &Subscription{client: c, channel: msg.Channel}:
-				case <-c.ctx.Done():
-					return
-				}
-
-			case domain.WsUnsubscribe:
-				select {
-				case c.hub.unsubscribe <- &Subscription{client: c, channel: msg.Channel}:
-				case <-c.ctx.Done():
-					return
-				}
-
 			default:
 				c.log.Debug("ws: unknown client message type", "type", msg.Type)
 			}

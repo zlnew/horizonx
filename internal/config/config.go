@@ -6,25 +6,36 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
 	Address        string
 	AllowedOrigins []string
-	Interval       time.Duration
-	LogLevel       string
-	LogFormat      string
+	DatabaseURL    string
 	JWTSecret      string
 	JWTExpiry      time.Duration
-	DatabaseURL    string
+	LogLevel       string
+	LogFormat      string
+
+	AgentTargetAPIURL      string
+	AgentTargetWsURL       string
+	AgentServerAPIToken    string
+	AgentServerID          uuid.UUID
+	AgentMetricsInterval   time.Duration
+	AgentHeartbeatInterval time.Duration
+	AgentLogLevel          string
+	AgentLogFormat         string
 }
 
 func Load() *Config {
 	_ = godotenv.Load()
 
+	// Server HTTP Address
 	addr := getEnv("HTTP_ADDR", ":3000")
 
+	// Server Allowed Origins
 	var origins []string
 	rawOrigins := os.Getenv("ALLOWED_ORIGINS")
 	if rawOrigins != "" {
@@ -36,29 +47,70 @@ func Load() *Config {
 		}
 	}
 
-	interval := 3 * time.Second
-	if raw := os.Getenv("SCRAPE_INTERVAL"); raw != "" {
-		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
-			interval = parsed
+	// Database URL
+	databaseURL := getEnv("DATABASE_URL", "postgres://user:pass@localhost:5432/horizonx")
+
+	// JWT Secret and Expiry
+	jwtSecret := getEnv("JWT_SECRET", "")
+	jwtExpiry := 24 * time.Hour
+	if raw := os.Getenv("JWT_EXPIRY"); raw != "" {
+		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+			jwtExpiry = duration
 		}
 	}
 
-	jwtExpiry := 24 * time.Hour
-	if raw := os.Getenv("JWT_EXPIRY"); raw != "" {
-		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
-			jwtExpiry = parsed
+	// Logs
+	logLevel := getEnv("LOG_LEVEL", "info")
+	logFormat := getEnv("LOG_FORMAT", "text")
+
+	// AGENT Target URL
+	agentTargetAPIURL := getEnv("HORIZONX_API_URL", "http://localhost:3000")
+	agentTargetWsURL := getEnv("HORIZONX_WS_URL", "ws://localhost:3000/ws/agent")
+
+	// AGENT Server Credentials
+	agentServerAPIToken := getEnv("HORIZONX_SERVER_API_TOKEN", "")
+	var agentServerID uuid.UUID
+	if raw := os.Getenv("HORIZONX_SERVER_ID"); raw != "" {
+		if serverID, err := uuid.Parse(raw); err == nil {
+			agentServerID = serverID
 		}
 	}
+
+	// AGENT Intervals
+	agentMetricsInterval := 5 * time.Minute
+	if raw := os.Getenv("AGENT_METRICS_INTERVAL"); raw != "" {
+		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+			agentMetricsInterval = duration
+		}
+	}
+	agentHeartbeatInterval := 30 * time.Second
+	if raw := os.Getenv("AGENT_HEARTBEAT_INTERVAL"); raw != "" {
+		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+			agentHeartbeatInterval = duration
+		}
+	}
+
+	// AGENT Logs
+	agentLogLevel := getEnv("AGENT_LOG_LEVEL", "info")
+	agentLogFormat := getEnv("AGENT_LOG_FORMAT", "text")
 
 	return &Config{
 		Address:        addr,
 		AllowedOrigins: origins,
-		Interval:       interval,
-		LogLevel:       getEnv("LOG_LEVEL", "info"),
-		LogFormat:      getEnv("LOG_FORMAT", "text"),
-		JWTSecret:      os.Getenv("JWT_SECRET"),
+		DatabaseURL:    databaseURL,
+		JWTSecret:      jwtSecret,
 		JWTExpiry:      jwtExpiry,
-		DatabaseURL:    getEnv("DATABASE_URL", "postgres://user:pass@localhost:5432/horizonx"),
+		LogLevel:       logLevel,
+		LogFormat:      logFormat,
+
+		AgentTargetAPIURL:      agentTargetAPIURL,
+		AgentTargetWsURL:       agentTargetWsURL,
+		AgentServerAPIToken:    agentServerAPIToken,
+		AgentServerID:          agentServerID,
+		AgentMetricsInterval:   agentMetricsInterval,
+		AgentHeartbeatInterval: agentHeartbeatInterval,
+		AgentLogLevel:          agentLogLevel,
+		AgentLogFormat:         agentLogFormat,
 	}
 }
 

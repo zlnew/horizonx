@@ -8,6 +8,7 @@ import (
 
 	"horizonx-server/internal/domain"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -55,7 +56,7 @@ func (r *ServerRepository) List(ctx context.Context) ([]domain.Server, error) {
 	return servers, nil
 }
 
-func (r *ServerRepository) Create(ctx context.Context, s *domain.Server) error {
+func (r *ServerRepository) Create(ctx context.Context, s *domain.Server) (*domain.Server, error) {
 	query := `
 		INSERT INTO servers (name, ip_address, api_token, is_online, created_at, updated_at)
 		VALUES ($1, $2::inet, $3, $4, $5, $6)
@@ -69,19 +70,28 @@ func (r *ServerRepository) Create(ctx context.Context, s *domain.Server) error {
 
 	now := time.Now().UTC()
 
-	err := r.db.QueryRow(ctx, query, s.Name, ipParam, s.APIToken, s.IsOnline, now, now).Scan(
+	err := r.db.QueryRow(
+		ctx,
+		query,
+		s.Name,
+		ipParam,
+		s.APIToken,
+		s.IsOnline,
+		now,
+		now,
+	).Scan(
 		&s.ID,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create server: %w", err)
+		return nil, fmt.Errorf("failed to create server: %w", err)
 	}
 
-	return nil
+	return s, nil
 }
 
-func (r *ServerRepository) Update(ctx context.Context, s *domain.Server, serverID int64) error {
+func (r *ServerRepository) Update(ctx context.Context, s *domain.Server, serverID uuid.UUID) error {
 	query := `
 		UPDATE servers
 		SET name = $1, ip_address = $2, updated_at = $3
@@ -99,13 +109,13 @@ func (r *ServerRepository) Update(ctx context.Context, s *domain.Server, serverI
 		return fmt.Errorf("failed to update server: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("server with ID %d not found or deleted", serverID)
+		return fmt.Errorf("server with ID %s not found or deleted", serverID.String())
 	}
 
 	return nil
 }
 
-func (r *ServerRepository) Delete(ctx context.Context, serverID int64) error {
+func (r *ServerRepository) Delete(ctx context.Context, serverID uuid.UUID) error {
 	query := `UPDATE servers SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL`
 
 	ct, err := r.db.Exec(ctx, query, time.Now().UTC(), serverID)
@@ -113,15 +123,15 @@ func (r *ServerRepository) Delete(ctx context.Context, serverID int64) error {
 		return fmt.Errorf("failed to delete server: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("server with ID %d not found or already deleted", serverID)
+		return fmt.Errorf("server with ID %s not found or already deleted", serverID.String())
 	}
 
 	return nil
 }
 
-func (r *ServerRepository) GetByID(ctx context.Context, serverID int64) (*domain.Server, error) {
+func (r *ServerRepository) GetByID(ctx context.Context, serverID uuid.UUID) (*domain.Server, error) {
 	query := `
-		SELECT id, name, COALESCE(ip_address::text, ''), is_online, os_info, created_at, updated_at
+		SELECT id, name, COALESCE(ip_address::text, ''), api_token, is_online, os_info, created_at, updated_at
 		FROM servers
 		WHERE id = $1 AND deleted_at IS NULL LIMIT 1
 	`
@@ -131,6 +141,7 @@ func (r *ServerRepository) GetByID(ctx context.Context, serverID int64) (*domain
 		&s.ID,
 		&s.Name,
 		&s.IPAddress,
+		&s.APIToken,
 		&s.IsOnline,
 		&s.OSInfo,
 		&s.CreatedAt,
@@ -173,9 +184,9 @@ func (r *ServerRepository) GetByToken(ctx context.Context, token string) (*domai
 	return &s, nil
 }
 
-func (r *ServerRepository) UpdateStatus(ctx context.Context, id int64, isOnline bool) error {
+func (r *ServerRepository) UpdateStatus(ctx context.Context, serverID uuid.UUID, isOnline bool) error {
 	now := time.Now().UTC()
 	query := `UPDATE servers SET is_online = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`
-	_, err := r.db.Exec(ctx, query, isOnline, now, id)
+	_, err := r.db.Exec(ctx, query, isOnline, now, serverID)
 	return err
 }
