@@ -74,7 +74,7 @@ func (c *Client) readPump() {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					c.log.Warn("ws: client disconnected unexpected", "error", err)
 				}
-				break
+				return
 			}
 
 			var msg domain.WsClientMessage
@@ -86,25 +86,36 @@ func (c *Client) readPump() {
 			switch msg.Type {
 			case domain.WsAgentReport:
 				if msg.Event == domain.WsEventAgentReady {
-					c.hub.agentReady <- c
+					select {
+					case c.hub.agentReady <- c:
+					case <-c.ctx.Done():
+						return
+					}
 					continue
 				}
-				c.hub.events <- &domain.WsInternalEvent{
+
+				select {
+				case c.hub.events <- &domain.WsInternalEvent{
 					Channel: msg.Channel,
 					Event:   msg.Event,
 					Payload: msg.Payload,
+				}:
+				case <-c.ctx.Done():
+					return
 				}
 
 			case domain.WsSubscribe:
-				c.hub.subscribe <- &Subscription{
-					client:  c,
-					channel: msg.Channel,
+				select {
+				case c.hub.subscribe <- &Subscription{client: c, channel: msg.Channel}:
+				case <-c.ctx.Done():
+					return
 				}
 
 			case domain.WsUnsubscribe:
-				c.hub.unsubscribe <- &Subscription{
-					client:  c,
-					channel: msg.Channel,
+				select {
+				case c.hub.unsubscribe <- &Subscription{client: c, channel: msg.Channel}:
+				case <-c.ctx.Done():
+					return
 				}
 
 			default:

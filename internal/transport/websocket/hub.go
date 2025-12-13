@@ -71,7 +71,6 @@ func (h *Hub) Run() {
 		select {
 		case <-h.ctx.Done():
 			h.log.Info("ws: hub shutting down")
-
 			for client := range h.clients {
 				close(client.send)
 			}
@@ -92,25 +91,27 @@ func (h *Hub) Run() {
 			}
 
 		case client := <-h.unregister:
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-				h.log.Info("ws: client unregistered", "id", client.ID, "type", client.Type, "total_clients", len(h.clients))
+			if !h.clients[client] {
+				continue
+			}
 
-				if client.Type == domain.WsClientAgent {
-					if _, agentOk := h.agents[client.ID]; agentOk {
-						delete(h.agents, client.ID)
-						go h.updateAgentServerStatus(client.ID, false)
-						h.log.Info("ws: agent unregistered", "server_id", client.ID, "total_agents", len(h.agents))
-					}
+			delete(h.clients, client)
+			close(client.send)
+			h.log.Info("ws: client unregistered", "id", client.ID, "type", client.Type, "total_clients", len(h.clients))
+
+			if client.Type == domain.WsClientAgent {
+				if _, agentOk := h.agents[client.ID]; agentOk {
+					delete(h.agents, client.ID)
+					go h.updateAgentServerStatus(client.ID, false)
+					h.log.Info("ws: agent unregistered", "server_id", client.ID, "total_agents", len(h.agents))
 				}
+			}
 
-				for channelID, subs := range h.channels {
-					if _, subscribed := subs[client]; subscribed {
-						delete(subs, client)
-						if len(subs) == 0 {
-							delete(h.channels, channelID)
-						}
+			for channelID, subs := range h.channels {
+				if _, subscribed := subs[client]; subscribed {
+					delete(subs, client)
+					if len(subs) == 0 {
+						delete(h.channels, channelID)
 					}
 				}
 			}
