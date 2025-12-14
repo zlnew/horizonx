@@ -10,19 +10,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type AgentHandlerDeps struct {
-	Server domain.ServerService
-	Job    domain.JobService
-}
-
 type AgentHandler struct {
 	hub      *AgentHub
 	upgrader websocket.Upgrader
 	log      logger.Logger
-	deps     *AgentHandlerDeps
+	svc      domain.ServerService
 }
 
-func NewAgentHandler(hub *AgentHub, log logger.Logger, deps *AgentHandlerDeps) *AgentHandler {
+func NewAgentHandler(hub *AgentHub, log logger.Logger, svc domain.ServerService) *AgentHandler {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true
@@ -33,7 +28,7 @@ func NewAgentHandler(hub *AgentHub, log logger.Logger, deps *AgentHandlerDeps) *
 		hub:      hub,
 		upgrader: upgrader,
 		log:      log,
-		deps:     deps,
+		svc:      svc,
 	}
 }
 
@@ -56,7 +51,7 @@ func (h *AgentHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.deps.Server.AuthorizeAgent(r.Context(), serverID, secret); err != nil {
+	if _, err := h.svc.AuthorizeAgent(r.Context(), serverID, secret); err != nil {
 		h.log.Warn("ws auth: invalid agent credentials")
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
@@ -68,7 +63,13 @@ func (h *AgentHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a := NewAgent(h.hub, conn, h.log, serverID)
+	if err := h.svc.UpdateStatus(r.Context(), serverID, true); err != nil {
+		h.log.Error("ws: failed to set server online", "server_id", serverID.String())
+		_ = conn.Close()
+		return
+	}
+
+	a := NewAgent(h.hub, conn, h.log, h.svc, serverID)
 	a.hub.register <- a
 
 	go a.writePump()

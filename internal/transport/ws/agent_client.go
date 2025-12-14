@@ -5,6 +5,7 @@ import (
 	"context"
 	"time"
 
+	"horizonx-server/internal/domain"
 	"horizonx-server/internal/logger"
 
 	"github.com/google/uuid"
@@ -20,11 +21,12 @@ type Agent struct {
 	send chan []byte
 
 	log logger.Logger
+	svc domain.ServerService
 
 	ID uuid.UUID
 }
 
-func NewAgent(hub *AgentHub, conn *websocket.Conn, log logger.Logger, cID uuid.UUID) *Agent {
+func NewAgent(hub *AgentHub, conn *websocket.Conn, log logger.Logger, svc domain.ServerService, cID uuid.UUID) *Agent {
 	ctx, cancel := context.WithCancel(hub.ctx)
 
 	return &Agent{
@@ -36,6 +38,7 @@ func NewAgent(hub *AgentHub, conn *websocket.Conn, log logger.Logger, cID uuid.U
 		send: make(chan []byte, 256),
 
 		log: log,
+		svc: svc,
 
 		ID: cID,
 	}
@@ -45,6 +48,11 @@ func (a *Agent) readPump() {
 	defer func() {
 		a.cancel()
 		a.hub.unregister <- a
+
+		if err := a.svc.UpdateStatus(context.Background(), a.ID, false); err != nil {
+			a.log.Error("ws: failed to set server offline", "server_id", a.ID.String())
+		}
+
 		a.conn.Close()
 	}()
 

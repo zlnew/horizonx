@@ -4,19 +4,19 @@ package job
 import (
 	"context"
 
-	"horizonx-server/internal/core/event"
 	"horizonx-server/internal/domain"
+	"horizonx-server/internal/event"
 )
 
 type JobService struct {
-	repo   domain.JobRepository
-	events *event.Bus
+	repo domain.JobRepository
+	bus  *event.Bus
 }
 
 func NewService(repo domain.JobRepository, events *event.Bus) domain.JobService {
 	return &JobService{
-		repo:   repo,
-		events: events,
+		repo: repo,
+		bus:  events,
 	}
 }
 
@@ -30,8 +30,8 @@ func (s *JobService) Create(ctx context.Context, j *domain.Job) (*domain.Job, er
 		return nil, err
 	}
 
-	if s.events != nil {
-		s.events.Publish(domain.EventJobCreated{
+	if s.bus != nil {
+		s.bus.Publish("job_created", domain.EventJobCreated{
 			JobID:    job.ID,
 			ServerID: job.ServerID,
 			JobType:  job.JobType,
@@ -55,8 +55,8 @@ func (s *JobService) Finish(ctx context.Context, jobID int64, status domain.JobS
 		return nil, err
 	}
 
-	if s.events != nil {
-		s.events.Publish(domain.EventJobFinished{
+	if s.bus != nil {
+		s.bus.Publish("job_finished", domain.EventJobFinished{
 			JobID:    job.ID,
 			ServerID: job.ServerID,
 			JobType:  job.JobType,

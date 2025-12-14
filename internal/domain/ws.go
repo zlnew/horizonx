@@ -2,36 +2,8 @@ package domain
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/google/uuid"
-)
-
-const (
-	WsClientUser  = "USER"
-	WsClientAgent = "AGENT"
-)
-
-const (
-	WsChannelServerStatus          = "server_status"
-	WsChannelServerMetricsTemplate = "server:%d:metrics"
-)
-
-const (
-	WsEventAgentReady            = "agent_ready"
-	WsEventServerStatusUpdated   = "server_status_updated"
-	WsEventServerMetricsReport   = "server_metrics_report"
-	WsEventServerMetricsReceived = "server_metrics_received"
-)
-
-const (
-	WsCommandAgentInit = "agent_init"
-)
-
-const (
-	WsAgentReport = "agent_report"
-	WsSubscribe   = "subscribe"
-	WsUnsubscribe = "unsubscribe"
 )
 
 type WsClientMessage struct {
@@ -53,11 +25,7 @@ type WsAgentCommand struct {
 	Payload        JobCommandPayload `json:"payload"`
 }
 
-type ServerStatusPayload struct {
+type ServerStatusChanged struct {
 	ServerID uuid.UUID `json:"server_id"`
 	IsOnline bool      `json:"is_online"`
-}
-
-func GetServerMetricsChannel(serverID int64) string {
-	return fmt.Sprintf(WsChannelServerMetricsTemplate, serverID)
 }

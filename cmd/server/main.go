@@ -9,11 +9,11 @@ import (
 
 	"horizonx-server/internal/config"
 	"horizonx-server/internal/core/auth"
-	"horizonx-server/internal/core/event"
 	"horizonx-server/internal/core/job"
 	"horizonx-server/internal/core/server"
 	"horizonx-server/internal/core/user"
 	"horizonx-server/internal/domain"
+	"horizonx-server/internal/event"
 	"horizonx-server/internal/logger"
 	"horizonx-server/internal/storage/postgres"
 	"horizonx-server/internal/transport/rest"
@@ -37,16 +37,16 @@ func main() {
 	}
 	defer dbPool.Close()
 
-	eventBus := event.New(log)
+	bus := event.New()
 
 	serverRepo := postgres.NewServerRepository(dbPool)
 	userRepo := postgres.NewUserRepository(dbPool)
 	jobRepo := postgres.NewJobRepository(dbPool)
 
-	serverService := server.NewService(serverRepo)
+	serverService := server.NewService(serverRepo, bus)
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
-	jobService := job.NewService(jobRepo, eventBus)
+	jobService := job.NewService(jobRepo, bus)
 
 	serverHandler := rest.NewServerHandler(serverService)
 	authHandler := rest.NewAuthHandler(authService, cfg)
@@ -54,21 +54,15 @@ func main() {
 	jobHandler := rest.NewJobHandler(jobService)
 
 	hub := ws.NewHub(ctx, log)
-	agentHub := ws.NewAgentHub(ctx, log)
-
-	jobDispatcher := job.NewJobDispatcher(agentHub, log)
-	jobBroker := job.NewJobBroker(hub, log, &job.JobBrokerDeps{
-		Server: serverService,
-	})
-
-	eventBus.Subscribe(domain.EventJobCreated{}, jobDispatcher.OnJobCreated)
-	eventBus.Subscribe(domain.EventJobFinished{}, jobBroker.OnJobFinished)
-
 	wsHandler := ws.NewHandler(hub, log, cfg.JWTSecret, cfg.AllowedOrigins)
-	wsAgentHandler := ws.NewAgentHandler(agentHub, log, &ws.AgentHandlerDeps{
-		Server: serverService,
-		Job:    jobService,
+
+	serverSubs := ws.NewServerStatusSubscriber(hub)
+	bus.Subscribe("server_status_changed", func(e any) {
+		serverSubs.Handle(e.(domain.ServerStatusChanged))
 	})
+
+	agentHub := ws.NewAgentHub(ctx, log)
+	wsAgentHandler := ws.NewAgentHandler(agentHub, log, serverService)
 
 	go hub.Run()
 	go agentHub.Run()

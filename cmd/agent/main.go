@@ -9,8 +9,8 @@ import (
 	"github.com/joho/godotenv"
 	"golang.org/x/sync/errgroup"
 
+	"horizonx-server/internal/agent"
 	"horizonx-server/internal/config"
-	"horizonx-server/internal/core/agent"
 	"horizonx-server/internal/logger"
 )
 

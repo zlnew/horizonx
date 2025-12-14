@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"horizonx-server/internal/domain"
+	"horizonx-server/internal/event"
 	"horizonx-server/pkg"
 
 	"github.com/google/uuid"
@@ -13,10 +14,14 @@ import (
 
 type Service struct {
 	repo domain.ServerRepository
+	bus  *event.Bus
 }
 
-func NewService(repo domain.ServerRepository) domain.ServerService {
-	return &Service{repo: repo}
+func NewService(repo domain.ServerRepository, bus *event.Bus) domain.ServerService {
+	return &Service{
+		repo: repo,
+		bus:  bus,
+	}
 }
 
 func (s *Service) Get(ctx context.Context) ([]domain.Server, error) {
@@ -88,5 +93,14 @@ func (s *Service) AuthorizeAgent(ctx context.Context, serverID uuid.UUID, secret
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, serverID uuid.UUID, status bool) error {
-	return s.repo.UpdateStatus(ctx, serverID, status)
+	if err := s.repo.UpdateStatus(ctx, serverID, status); err != nil {
+		return err
+	}
+
+	s.bus.Publish("server_status_changed", domain.ServerStatusChanged{
+		ServerID: serverID,
+		IsOnline: status,
+	})
+
+	return nil
 }
