@@ -51,7 +51,7 @@ func (h *AgentHub) Run() {
 	for {
 		select {
 		case <-h.ctx.Done():
-			h.log.Info("ws: hub shutting down...")
+			h.log.Info("ws: agent hub shutting down...")
 			for _, agent := range h.agents {
 				close(agent.send)
 			}

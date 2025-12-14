@@ -54,14 +54,14 @@ func (h *AgentHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.svc.AuthorizeAgent(r.Context(), serverID, secret); err != nil {
-		h.log.Warn("ws auth: invalid credentials")
+		h.log.Warn("ws auth: invalid agent credentials")
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.log.Error("ws auth: upgrade failed", "error", err)
+		h.log.Error("ws auth: agent upgrade failed", "error", err)
 		return
 	}
 
