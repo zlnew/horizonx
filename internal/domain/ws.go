@@ -50,12 +50,12 @@ type WsServerEvent struct {
 type WsAgentCommand struct {
 	TargetServerID uuid.UUID         `json:"target_server_id"`
 	CommandType    string            `json:"command_type"`
-	Payload        JobCommandPayload `json:"payload,omitempty"`
+	Payload        JobCommandPayload `json:"payload"`
 }
 
 type ServerStatusPayload struct {
-	ServerID int64 `json:"server_id"`
-	IsOnline bool  `json:"is_online"`
+	ServerID uuid.UUID `json:"server_id"`
+	IsOnline bool      `json:"is_online"`
 }
 
 func GetServerMetricsChannel(serverID int64) string {

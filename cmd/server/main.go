@@ -9,6 +9,7 @@ import (
 
 	"horizonx-server/internal/config"
 	"horizonx-server/internal/core/auth"
+	"horizonx-server/internal/core/event"
 	"horizonx-server/internal/core/job"
 	"horizonx-server/internal/core/server"
 	"horizonx-server/internal/core/user"
@@ -36,6 +37,8 @@ func main() {
 	}
 	defer dbPool.Close()
 
+	eventBus := event.New(log)
+
 	serverRepo := postgres.NewServerRepository(dbPool)
 	userRepo := postgres.NewUserRepository(dbPool)
 	jobRepo := postgres.NewJobRepository(dbPool)
@@ -43,26 +46,25 @@ func main() {
 	serverService := server.NewService(serverRepo)
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
+	jobService := job.NewService(jobRepo, eventBus)
 
 	serverHandler := rest.NewServerHandler(serverService)
 	authHandler := rest.NewAuthHandler(authService, cfg)
 	userHandler := rest.NewUserHandler(userService)
+	jobHandler := rest.NewJobHandler(jobService)
 
 	hub := ws.NewHub(ctx, log)
-	wsHandler := ws.NewHandler(hub, log, cfg.JWTSecret, cfg.AllowedOrigins)
-
 	agentHub := ws.NewAgentHub(ctx, log)
 
-	retryCfg := domain.JobRetryConfig{
-		MaxAttempts: 5,
-		BaseDelay:   100 * time.Millisecond,
-	}
+	jobDispatcher := job.NewJobDispatcher(agentHub, log)
+	jobBroker := job.NewJobBroker(hub, log, &job.JobBrokerDeps{
+		Server: serverService,
+	})
 
-	jobService := job.NewService(jobRepo, func(cmd *domain.WsAgentCommand, retryCfg domain.JobRetryConfig) {
-		agentHub.SendCommand(cmd, retryCfg)
-	}, retryCfg)
+	eventBus.Subscribe(domain.EventJobCreated{}, jobDispatcher.OnJobCreated)
+	eventBus.Subscribe(domain.EventJobFinished{}, jobBroker.OnJobFinished)
 
-	jobHandler := rest.NewJobHandler(jobService)
+	wsHandler := ws.NewHandler(hub, log, cfg.JWTSecret, cfg.AllowedOrigins)
 	wsAgentHandler := ws.NewAgentHandler(agentHub, log, &ws.AgentHandlerDeps{
 		Server: serverService,
 		Job:    jobService,

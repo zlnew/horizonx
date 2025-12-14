@@ -35,6 +35,19 @@ const (
 	JobFailed  JobStatus = "failed"
 )
 
+type EventJobCreated struct {
+	JobID    int64
+	ServerID uuid.UUID
+	JobType  string
+}
+
+type EventJobFinished struct {
+	JobID    int64
+	ServerID uuid.UUID
+	JobType  string
+	Result   any
+}
+
 type JobCommandPayload struct {
 	JobID int64
 }
@@ -64,6 +77,4 @@ type JobService interface {
 	Delete(ctx context.Context, jobID int64) error
 	Start(ctx context.Context, jobID int64) (*Job, error)
 	Finish(ctx context.Context, jobID int64, status JobStatus, outputLog *string) (*Job, error)
-
-	InitAgent(ctx context.Context, serverID uuid.UUID) (*Job, error)
 }

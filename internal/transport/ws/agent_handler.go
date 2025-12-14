@@ -1,14 +1,12 @@
 package ws
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
 	"horizonx-server/internal/domain"
 	"horizonx-server/internal/logger"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -75,15 +73,4 @@ func (h *AgentHandler) Serve(w http.ResponseWriter, r *http.Request) {
 
 	go a.writePump()
 	go a.readPump()
-
-	go func(sID uuid.UUID) {
-		h.initAgent(a.hub.ctx, sID)
-	}(serverID)
-}
-
-func (h *AgentHandler) initAgent(ctx context.Context, serverID uuid.UUID) {
-	_, err := h.deps.Job.InitAgent(ctx, serverID)
-	if err != nil {
-		h.log.Error("failed to init job for agent", "server_id", serverID.String(), "error", err)
-	}
 }
