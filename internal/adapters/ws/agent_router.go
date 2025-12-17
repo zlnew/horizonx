@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type AgentHub struct {
+type AgentRouter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -23,10 +23,10 @@ type AgentHub struct {
 	log logger.Logger
 }
 
-func NewAgentHub(parent context.Context, log logger.Logger) *AgentHub {
+func NewAgentRouter(parent context.Context, log logger.Logger) *AgentRouter {
 	ctx, cancel := context.WithCancel(parent)
 
-	return &AgentHub{
+	return &AgentRouter{
 		ctx:        ctx,
 		cancel:     cancel,
 		agents:     make(map[uuid.UUID]*Agent),
@@ -37,7 +37,7 @@ func NewAgentHub(parent context.Context, log logger.Logger) *AgentHub {
 	}
 }
 
-func (h *AgentHub) Run() {
+func (h *AgentRouter) Run() {
 	for {
 		select {
 		case <-h.ctx.Done():
@@ -67,11 +67,11 @@ func (h *AgentHub) Run() {
 	}
 }
 
-func (h *AgentHub) Stop() {
+func (h *AgentRouter) Stop() {
 	h.cancel()
 }
 
-func (h *AgentHub) SendCommand(cmd *domain.WsAgentCommand) {
+func (h *AgentRouter) SendCommand(cmd *domain.WsAgentCommand) {
 	select {
 	case h.commands <- cmd:
 	case <-h.ctx.Done():
@@ -80,7 +80,7 @@ func (h *AgentHub) SendCommand(cmd *domain.WsAgentCommand) {
 	}
 }
 
-func (h *AgentHub) handleCommand(cmd *domain.WsAgentCommand) {
+func (h *AgentRouter) handleCommand(cmd *domain.WsAgentCommand) {
 	agent, ok := h.agents[cmd.TargetServerID]
 	if !ok {
 		h.log.Warn("ws: target agent not connected", "server_id", cmd.TargetServerID)

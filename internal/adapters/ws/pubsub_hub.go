@@ -12,11 +12,11 @@ type Hub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	clients  map[*Client]bool
-	channels map[string]map[*Client]bool
+	clients  map[*User]bool
+	channels map[string]map[*User]bool
 
-	register    chan *Client
-	unregister  chan *Client
+	register    chan *User
+	unregister  chan *User
 	subscribe   chan *Subscription
 	unsubscribe chan *Subscription
 	events      chan *domain.WsServerEvent
@@ -25,7 +25,7 @@ type Hub struct {
 }
 
 type Subscription struct {
-	client  *Client
+	client  *User
 	channel string
 }
 
@@ -36,11 +36,11 @@ func NewHub(parent context.Context, log logger.Logger) *Hub {
 		ctx:    ctx,
 		cancel: cancel,
 
-		clients:  make(map[*Client]bool),
-		channels: make(map[string]map[*Client]bool),
+		clients:  make(map[*User]bool),
+		channels: make(map[string]map[*User]bool),
 
-		register:    make(chan *Client, 64),
-		unregister:  make(chan *Client, 64),
+		register:    make(chan *User, 64),
+		unregister:  make(chan *User, 64),
 		subscribe:   make(chan *Subscription, 64),
 		unsubscribe: make(chan *Subscription, 64),
 		events:      make(chan *domain.WsServerEvent, 256),
@@ -83,7 +83,7 @@ func (h *Hub) Run() {
 
 		case sub := <-h.subscribe:
 			if h.channels[sub.channel] == nil {
-				h.channels[sub.channel] = make(map[*Client]bool)
+				h.channels[sub.channel] = make(map[*User]bool)
 			}
 			h.channels[sub.channel][sub.client] = true
 

@@ -11,13 +11,13 @@ import (
 )
 
 type AgentHandler struct {
-	hub      *AgentHub
+	hub      *AgentRouter
 	upgrader websocket.Upgrader
 	log      logger.Logger
 	svc      domain.ServerService
 }
 
-func NewAgentHandler(hub *AgentHub, log logger.Logger, svc domain.ServerService) *AgentHandler {
+func NewAgentHandler(hub *AgentRouter, log logger.Logger, svc domain.ServerService) *AgentHandler {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true

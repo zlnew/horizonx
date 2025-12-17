@@ -19,7 +19,7 @@ const (
 	maxMessageSize = 8192
 )
 
-type Client struct {
+type User struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -32,10 +32,10 @@ type Client struct {
 	ID string
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, log logger.Logger, cID string) *Client {
+func NewUser(hub *Hub, conn *websocket.Conn, log logger.Logger, cID string) *User {
 	ctx, cancel := context.WithCancel(hub.ctx)
 
-	return &Client{
+	return &User{
 		ctx:    ctx,
 		cancel: cancel,
 
@@ -49,7 +49,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, log logger.Logger, cID string) *C
 	}
 }
 
-func (c *Client) readPump() {
+func (c *User) readPump() {
 	defer func() {
 		c.cancel()
 		c.hub.unregister <- c
@@ -100,7 +100,7 @@ func (c *Client) readPump() {
 	}
 }
 
-func (c *Client) writePump() {
+func (c *User) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()

@@ -54,21 +54,21 @@ func main() {
 	jobHandler := http.NewJobHandler(jobService)
 
 	hub := ws.NewHub(ctx, log)
-	wsHandler := ws.NewHandler(hub, log, cfg.JWTSecret, cfg.AllowedOrigins)
+	wsUserHandler := ws.NewUserHandler(hub, log, cfg.JWTSecret, cfg.AllowedOrigins)
 
 	serverSubs := ws.NewServerStatusSubscriber(hub)
 	bus.Subscribe("server_status_changed", func(e any) {
 		serverSubs.Handle(e.(domain.ServerStatusChanged))
 	})
 
-	agentHub := ws.NewAgentHub(ctx, log)
-	wsAgentHandler := ws.NewAgentHandler(agentHub, log, serverService)
+	agentRouter := ws.NewAgentRouter(ctx, log)
+	wsAgentHandler := ws.NewAgentHandler(agentRouter, log, serverService)
 
 	go hub.Run()
-	go agentHub.Run()
+	go agentRouter.Run()
 
 	router := http.NewRouter(cfg, &http.RouterDeps{
-		WsWeb:   wsHandler,
+		WsUser:  wsUserHandler,
 		WsAgent: wsAgentHandler,
 		Server:  serverHandler,
 		Auth:    authHandler,
@@ -90,7 +90,7 @@ func main() {
 	select {
 	case <-ctx.Done():
 		hub.Stop()
-		agentHub.Stop()
+		agentRouter.Stop()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

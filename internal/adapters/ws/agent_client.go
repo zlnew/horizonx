@@ -16,7 +16,7 @@ type Agent struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	hub  *AgentHub
+	hub  *AgentRouter
 	conn *websocket.Conn
 	send chan []byte
 
@@ -26,7 +26,7 @@ type Agent struct {
 	ID uuid.UUID
 }
 
-func NewAgent(hub *AgentHub, conn *websocket.Conn, log logger.Logger, svc domain.ServerService, cID uuid.UUID) *Agent {
+func NewAgent(hub *AgentRouter, conn *websocket.Conn, log logger.Logger, svc domain.ServerService, cID uuid.UUID) *Agent {
 	ctx, cancel := context.WithCancel(hub.ctx)
 
 	return &Agent{

@@ -11,7 +11,7 @@ import (
 )
 
 type RouterDeps struct {
-	WsWeb   *ws.Handler
+	WsUser  *ws.UserHandler
 	WsAgent *ws.AgentHandler
 	Server  *ServerHandler
 	Auth    *AuthHandler
@@ -40,7 +40,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	})
 
 	// WEBSOCKET
-	mux.HandleFunc("GET /ws/web", deps.WsWeb.Serve)
+	mux.HandleFunc("GET /ws/user", deps.WsUser.Serve)
 	mux.HandleFunc("GET /ws/agent", deps.WsAgent.Serve)
 
 	// AUTH

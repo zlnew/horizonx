@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type Handler struct {
+type UserHandler struct {
 	hub      *Hub
 	upgrader websocket.Upgrader
 	log      logger.Logger
@@ -20,7 +20,7 @@ type Handler struct {
 	allowedOrigins []string
 }
 
-func NewHandler(hub *Hub, log logger.Logger, secret string, allowedOrigins []string) *Handler {
+func NewUserHandler(hub *Hub, log logger.Logger, secret string, allowedOrigins []string) *UserHandler {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
@@ -38,7 +38,7 @@ func NewHandler(hub *Hub, log logger.Logger, secret string, allowedOrigins []str
 		},
 	}
 
-	return &Handler{
+	return &UserHandler{
 		hub:      hub,
 		upgrader: upgrader,
 		log:      log,
@@ -48,7 +48,7 @@ func NewHandler(hub *Hub, log logger.Logger, secret string, allowedOrigins []str
 	}
 }
 
-func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	var clientID string
 
 	cookie, err := r.Cookie("access_token")
@@ -74,7 +74,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := NewClient(h.hub, conn, h.log, clientID)
+	c := NewUser(h.hub, conn, h.log, clientID)
 	c.hub.register <- c
 
 	go c.writePump()
