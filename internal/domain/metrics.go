@@ -3,10 +3,12 @@ package domain
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Metrics struct {
-	ServerID      int64         `json:"server_id"`
+	ServerID      uuid.UUID     `json:"server_id"`
 	OSInfo        OSInfo        `json:"os_info"`
 	CPU           CPUMetric     `json:"cpu"`
 	GPU           []GPUMetric   `json:"gpu"`
@@ -77,6 +79,10 @@ type NetworkMetric struct {
 	TXBytes uint64  `json:"tx_bytes"`
 	RXSpeed float64 `json:"rx_speed"`
 	TXSpeed float64 `json:"tx_speed"`
+}
+
+type MetricsPayload struct {
+	Metrics []Metrics `json:"metrics" validate:"required,dive"`
 }
 
 type MetricsService interface {

@@ -19,14 +19,15 @@ type Config struct {
 	LogLevel       string
 	LogFormat      string
 
-	AgentTargetAPIURL      string
-	AgentTargetWsURL       string
-	AgentServerAPIToken    string
-	AgentServerID          uuid.UUID
-	AgentMetricsInterval   time.Duration
-	AgentHeartbeatInterval time.Duration
-	AgentLogLevel          string
-	AgentLogFormat         string
+	AgentTargetAPIURL           string
+	AgentTargetWsURL            string
+	AgentServerAPIToken         string
+	AgentServerID               uuid.UUID
+	AgentMetricsCollectInterval time.Duration
+	AgentMetricsFlushInterval   time.Duration
+	AgentHeartbeatInterval      time.Duration
+	AgentLogLevel               string
+	AgentLogFormat              string
 }
 
 func Load() *Config {
@@ -77,10 +78,16 @@ func Load() *Config {
 	}
 
 	// AGENT Intervals
-	agentMetricsInterval := 5 * time.Minute
-	if raw := os.Getenv("AGENT_METRICS_INTERVAL"); raw != "" {
+	agentMetricsCollectInterval := 10 * time.Second
+	if raw := os.Getenv("AGENT_METRICS_COLLECT_INTERVAL"); raw != "" {
 		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
-			agentMetricsInterval = duration
+			agentMetricsCollectInterval = duration
+		}
+	}
+	agentMetricsFlushInterval := 10 * time.Second
+	if raw := os.Getenv("AGENT_METRICS_FLUSH_INTERVAL"); raw != "" {
+		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+			agentMetricsFlushInterval = duration
 		}
 	}
 	agentHeartbeatInterval := 30 * time.Second
@@ -103,14 +110,15 @@ func Load() *Config {
 		LogLevel:       logLevel,
 		LogFormat:      logFormat,
 
-		AgentTargetAPIURL:      agentTargetAPIURL,
-		AgentTargetWsURL:       agentTargetWsURL,
-		AgentServerAPIToken:    agentServerAPIToken,
-		AgentServerID:          agentServerID,
-		AgentMetricsInterval:   agentMetricsInterval,
-		AgentHeartbeatInterval: agentHeartbeatInterval,
-		AgentLogLevel:          agentLogLevel,
-		AgentLogFormat:         agentLogFormat,
+		AgentTargetAPIURL:           agentTargetAPIURL,
+		AgentTargetWsURL:            agentTargetWsURL,
+		AgentServerAPIToken:         agentServerAPIToken,
+		AgentServerID:               agentServerID,
+		AgentMetricsCollectInterval: agentMetricsCollectInterval,
+		AgentMetricsFlushInterval:   agentMetricsFlushInterval,
+		AgentHeartbeatInterval:      agentHeartbeatInterval,
+		AgentLogLevel:               agentLogLevel,
+		AgentLogFormat:              agentLogFormat,
 	}
 }
 

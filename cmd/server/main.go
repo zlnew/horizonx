@@ -14,6 +14,7 @@ import (
 	"horizonx-server/internal/adapters/ws/userws/subscribers"
 	"horizonx-server/internal/application/auth"
 	"horizonx-server/internal/application/job"
+	"horizonx-server/internal/application/metrics"
 	"horizonx-server/internal/application/server"
 	"horizonx-server/internal/application/user"
 	"horizonx-server/internal/config"
@@ -40,19 +41,23 @@ func main() {
 
 	bus := event.New()
 
+	// Repositories
 	serverRepo := postgres.NewServerRepository(dbPool)
 	userRepo := postgres.NewUserRepository(dbPool)
 	jobRepo := postgres.NewJobRepository(dbPool)
+	metricsRepo := postgres.NewMetricsRepository(dbPool)
 
 	serverService := server.NewService(serverRepo, bus)
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, bus)
+	metricsService := metrics.NewService(metricsRepo, bus, log)
 
 	serverHandler := http.NewServerHandler(serverService)
 	authHandler := http.NewAuthHandler(authService, cfg)
 	userHandler := http.NewUserHandler(userService)
 	jobHandler := http.NewJobHandler(jobService)
+	metricsHandler := http.NewMetricsHandler(metricsService, log)
 
 	wsUserhub := userws.NewHub(ctx, log)
 	wsUserHandler := userws.NewHandler(wsUserhub, log, cfg.JWTSecret, cfg.AllowedOrigins)
@@ -72,6 +77,7 @@ func main() {
 		Auth:    authHandler,
 		User:    userHandler,
 		Job:     jobHandler,
+		Metrics: metricsHandler,
 
 		ServerService: serverService,
 	})

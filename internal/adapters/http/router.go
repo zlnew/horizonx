@@ -15,10 +15,11 @@ type RouterDeps struct {
 	WsUser  *userws.Handler
 	WsAgent *agentws.Handler
 
-	Server *ServerHandler
-	Auth   *AuthHandler
-	User   *UserHandler
-	Job    *JobHandler
+	Auth    *AuthHandler
+	Job     *JobHandler
+	Metrics *MetricsHandler
+	Server  *ServerHandler
+	User    *UserHandler
 
 	ServerService domain.ServerService
 }
@@ -49,7 +50,8 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.HandleFunc("POST /auth/login", deps.Auth.Login)
 	mux.Handle("POST /auth/logout", userStack.Then(http.HandlerFunc(deps.Auth.Logout)))
 
-	// AGENT JOBS
+	// AGENT ENDPOINTS
+	mux.Handle("POST /agent/metrics", agentStack.Then(http.HandlerFunc(deps.Metrics.Ingest)))
 	mux.Handle("GET /agent/jobs", agentStack.Then(http.HandlerFunc(deps.Job.Index)))
 	mux.Handle("POST /agent/jobs/{id}/start", agentStack.Then(http.HandlerFunc(deps.Job.Start)))
 	mux.Handle("POST /agent/jobs/{id}/finish", agentStack.Then(http.HandlerFunc(deps.Job.Finish)))

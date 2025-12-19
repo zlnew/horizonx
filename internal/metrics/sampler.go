@@ -13,6 +13,8 @@ import (
 	"horizonx-server/internal/metrics/collector/network"
 	"horizonx-server/internal/metrics/collector/os"
 	"horizonx-server/internal/metrics/collector/uptime"
+
+	"github.com/google/uuid"
 )
 
 type Sampler struct {
@@ -24,6 +26,8 @@ type Sampler struct {
 	network *network.Collector
 	uptime  *uptime.Collector
 	log     logger.Logger
+
+	serverID uuid.UUID
 }
 
 func NewSampler(log logger.Logger) *Sampler {
@@ -39,8 +43,14 @@ func NewSampler(log logger.Logger) *Sampler {
 	}
 }
 
+func (s *Sampler) SetServerID(serverID uuid.UUID) {
+	s.serverID = serverID
+}
+
 func (s *Sampler) Collect(ctx context.Context) domain.Metrics {
 	var metrics domain.Metrics
+
+	metrics.ServerID = s.serverID
 
 	if val, err := s.os.Collect(ctx); err != nil {
 		s.log.Error("collector", "name", "os", "error", err)
