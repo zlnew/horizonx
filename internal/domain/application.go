@@ -35,7 +35,7 @@ type Application struct {
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 
-	EnvVars *[]EnvironmentVariable `json:"environment_vars,omitempty"`
+	EnvVars *[]EnvironmentVariable `json:"env_vars,omitempty"`
 	Volumes *[]Volume              `json:"volumes,omitempty"`
 }
 
