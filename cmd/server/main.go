@@ -14,6 +14,7 @@ import (
 	"horizonx-server/internal/adapters/ws/userws/subscribers"
 	"horizonx-server/internal/application/application"
 	"horizonx-server/internal/application/auth"
+	"horizonx-server/internal/application/deployment"
 	"horizonx-server/internal/application/job"
 	"horizonx-server/internal/application/metrics"
 	"horizonx-server/internal/application/server"
@@ -48,6 +49,7 @@ func main() {
 	jobRepo := postgres.NewJobRepository(dbPool)
 	metricsRepo := postgres.NewMetricsRepository(dbPool)
 	applicationRepo := postgres.NewApplicationRepository(dbPool)
+	deploymentRepo := postgres.NewDeploymentRepository(dbPool)
 
 	// Services
 	serverService := server.NewService(serverRepo, bus)
@@ -55,11 +57,15 @@ func main() {
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, bus)
 	metricsService := metrics.NewService(metricsRepo, bus, log)
-	applicationService := application.NewService(applicationRepo, serverService, jobService, bus)
+	deploymentService := deployment.NewService(deploymentRepo, bus)
+	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus)
 
 	// Event Listeners
 	statusListener := application.NewStatusListener(applicationRepo, log)
 	statusListener.Register(bus)
+
+	deploymentListener := deployment.NewListener(deploymentRepo, log)
+	deploymentListener.Register(bus)
 
 	// HTTP Handlers
 	serverHandler := http.NewServerHandler(serverService)
@@ -68,6 +74,7 @@ func main() {
 	jobHandler := http.NewJobHandler(jobService)
 	metricsHandler := http.NewMetricsHandler(metricsService, log)
 	applicationHandler := http.NewApplicationHandler(applicationService)
+	deploymentHandler := http.NewDeploymentHandler(deploymentService, deploymentRepo, bus, log)
 
 	// WebSocket Handlers
 	wsUserhub := userws.NewHub(ctx, log)
@@ -91,6 +98,7 @@ func main() {
 		Job:         jobHandler,
 		Metrics:     metricsHandler,
 		Application: applicationHandler,
+		Deployment:  deploymentHandler,
 
 		ServerService: serverService,
 	})

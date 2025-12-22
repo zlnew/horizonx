@@ -12,23 +12,26 @@ import (
 )
 
 type Service struct {
-	repo      domain.ApplicationRepository
-	serverSvc domain.ServerService
-	jobSvc    domain.JobService
-	bus       *event.Bus
+	repo          domain.ApplicationRepository
+	serverSvc     domain.ServerService
+	jobSvc        domain.JobService
+	deploymentSvc domain.DeploymentService
+	bus           *event.Bus
 }
 
 func NewService(
 	repo domain.ApplicationRepository,
 	serverSvc domain.ServerService,
 	jobSvc domain.JobService,
+	deploymentSvc domain.DeploymentService,
 	bus *event.Bus,
 ) domain.ApplicationService {
 	return &Service{
-		repo:      repo,
-		serverSvc: serverSvc,
-		jobSvc:    jobSvc,
-		bus:       bus,
+		repo:          repo,
+		serverSvc:     serverSvc,
+		jobSvc:        jobSvc,
+		deploymentSvc: deploymentSvc,
+		bus:           bus,
 	}
 }
 
@@ -184,6 +187,15 @@ func (s *Service) Deploy(ctx context.Context, appID int64) error {
 		}
 	}
 
+	deployment, err := s.deploymentSvc.Create(ctx, domain.DeploymentCreateRequest{
+		ApplicationID: appID,
+		Branch:        app.Branch,
+		Environment:   "production", // TODO: Make this configurable
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create deployment record: %w", err)
+	}
+
 	if err := s.repo.UpdateStatus(ctx, appID, domain.AppStatusStarting); err != nil {
 		return err
 	}
@@ -194,6 +206,7 @@ func (s *Service) Deploy(ctx context.Context, appID int64) error {
 		JobType:       domain.JobTypeDeployApp,
 		CommandPayload: map[string]any{
 			"application_id":     appID,
+			"deployment_id":      deployment.ID,
 			"repo_url":           app.RepoURL,
 			"branch":             app.Branch,
 			"docker_compose_raw": app.DockerComposeRaw,
@@ -202,11 +215,17 @@ func (s *Service) Deploy(ctx context.Context, appID int64) error {
 		},
 	}
 
-	_, err = s.jobSvc.Create(ctx, job)
+	createdJob, err := s.jobSvc.Create(ctx, job)
 	if err != nil {
 		s.repo.UpdateStatus(ctx, appID, domain.AppStatusFailed)
 		return fmt.Errorf("failed to create deployment job: %w", err)
 	}
+
+	s.bus.Publish("deployment_started", map[string]any{
+		"deployment_id":  deployment.ID,
+		"application_id": appID,
+		"job_id":         createdJob.ID,
+	})
 
 	return nil
 }

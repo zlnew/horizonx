@@ -124,7 +124,17 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 		return err
 	}
 
-	output, execErr := w.executor.Execute(ctx, &job)
+	var deploymentID *int64
+	if job.JobType == domain.JobTypeDeployApp {
+		if payload, ok := job.CommandPayload.(map[string]any); ok {
+			if id, ok := payload["deployment_id"].(float64); ok {
+				idInt := int64(id)
+				deploymentID = &idInt
+			}
+		}
+	}
+
+	output, execErr := w.executeWithLogStreaming(ctx, &job, deploymentID)
 
 	status := domain.JobSuccess
 	if execErr != nil {
@@ -140,7 +150,68 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 		return err
 	}
 
+	if deploymentID != nil {
+		w.sendDeploymentLogs(ctx, *deploymentID, output, false)
+	}
+
 	return execErr
+}
+
+func (w *JobWorker) executeWithLogStreaming(ctx context.Context, job *domain.Job, deploymentID *int64) (string, error) {
+	// If this is a deployment job, stream logs in real-time
+	if job.JobType == domain.JobTypeDeployApp && deploymentID != nil {
+		// Create a custom logger that also streams to server
+		logBuffer := &bytes.Buffer{}
+
+		// Execute job
+		output, err := w.executor.Execute(ctx, job)
+		logBuffer.WriteString(output)
+
+		// Stream logs during execution (simplified - in production you'd stream progressively)
+		if err == nil {
+			w.sendDeploymentLogs(ctx, *deploymentID, output, true)
+		}
+
+		return output, err
+	}
+
+	// Normal execution for non-deployment jobs
+	return w.executor.Execute(ctx, job)
+}
+
+func (w *JobWorker) sendDeploymentLogs(ctx context.Context, deploymentID int64, logs string, isPartial bool) {
+	url := fmt.Sprintf("%s/agent/deployments/%d/logs", w.cfg.AgentTargetAPIURL, deploymentID)
+
+	payload := map[string]any{
+		"logs":       logs,
+		"is_partial": isPartial,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		w.log.Error("failed to marshal deployment logs", "error", err)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		w.log.Error("failed to create log request", "error", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+w.cfg.AgentServerID.String()+"."+w.cfg.AgentServerAPIToken)
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		w.log.Error("failed to send deployment logs", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		w.log.Warn("server returned error for deployment logs", "status", resp.StatusCode)
+	}
 }
 
 func (w *JobWorker) markJobRunning(ctx context.Context, jobID int64) error {

@@ -21,6 +21,7 @@ type RouterDeps struct {
 	Server      *ServerHandler
 	User        *UserHandler
 	Application *ApplicationHandler
+	Deployment  *DeploymentHandler
 
 	ServerService domain.ServerService
 }
@@ -86,6 +87,11 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /applications/{id}/start", userStack.Then(http.HandlerFunc(deps.Application.Start)))
 	mux.Handle("POST /applications/{id}/stop", userStack.Then(http.HandlerFunc(deps.Application.Stop)))
 	mux.Handle("POST /applications/{id}/restart", userStack.Then(http.HandlerFunc(deps.Application.Restart)))
+
+	// DEPLOYMENTS
+	mux.Handle("GET /applications/{id}/deployments", userStack.Then(http.HandlerFunc(deps.Deployment.List)))
+	mux.Handle("GET /applications/{id}/deployments/latest", userStack.Then(http.HandlerFunc(deps.Deployment.GetLatest)))
+	mux.Handle("GET /deployments/{deployment_id}", userStack.Then(http.HandlerFunc(deps.Deployment.Show)))
 
 	// ENVIRONMENT VARIABLES
 	mux.Handle("GET /applications/{id}/env", userStack.Then(http.HandlerFunc(deps.Application.ListEnvVars)))

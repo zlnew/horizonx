@@ -23,4 +23,13 @@ func Register(bus EventBus, hub *userws.Hub) {
 	jobStatusChanged := NewJobStatusChanged(hub)
 
 	bus.Subscribe("job_status_changed", jobStatusChanged.Handle)
+
+	// Deployment Events
+	deploymentStatusChanged := NewDeploymentStatusChanged(hub)
+	deploymentLogsUpdated := NewDeploymentLogsUpdated(hub)
+	deploymentCompleted := NewDeploymentCompleted(hub)
+
+	bus.Subscribe("deployment_status_changed", deploymentStatusChanged.Handle)
+	bus.Subscribe("deployment_logs_updated", deploymentLogsUpdated.Handle)
+	bus.Subscribe("deployment_completed", deploymentCompleted.Handle)
 }
