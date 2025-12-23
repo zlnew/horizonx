@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS deployments (
 
     deployed_by BIGINT,
 
-    started_at TIMESTAMPTZ DEFAULT NOW(),
+    triggered_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
 
     CONSTRAINT fk_deployment_app FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE,

@@ -28,14 +28,9 @@ func (s *Service) GetByID(ctx context.Context, deploymentID int64) (*domain.Depl
 	return s.repo.GetByID(ctx, deploymentID)
 }
 
-func (s *Service) GetLatest(ctx context.Context, appID int64) (*domain.Deployment, error) {
-	return s.repo.GetLatest(ctx, appID)
-}
-
 func (s *Service) Create(ctx context.Context, req domain.DeploymentCreateRequest) (*domain.Deployment, error) {
 	deployment := &domain.Deployment{
 		ApplicationID: req.ApplicationID,
-		JobID:         req.JobID,
 		Branch:        req.Branch,
 		DeployedBy:    req.DeployedBy,
 		Status:        domain.DeploymentPending,
@@ -57,6 +52,14 @@ func (s *Service) Create(ctx context.Context, req domain.DeploymentCreateRequest
 	return created, nil
 }
 
+func (s *Service) Start(ctx context.Context, deploymentID int64) error {
+	return s.repo.Start(ctx, deploymentID)
+}
+
+func (s *Service) Finish(ctx context.Context, deploymentID int64) error {
+	return s.repo.Finish(ctx, deploymentID)
+}
+
 func (s *Service) UpdateStatus(ctx context.Context, deploymentID int64, status domain.DeploymentStatus) error {
 	d, err := s.repo.UpdateStatus(ctx, deploymentID, status)
 	if err != nil {
@@ -74,12 +77,12 @@ func (s *Service) UpdateStatus(ctx context.Context, deploymentID int64, status d
 	return nil
 }
 
-func (s *Service) UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash, commitMessage string) error {
+func (s *Service) UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) error {
 	return s.repo.UpdateCommitInfo(ctx, deploymentID, commitHash, commitMessage)
 }
 
 func (s *Service) UpdateLogs(ctx context.Context, deploymentID int64, logs string, isPartial bool) error {
-	d, err := s.repo.UpdateLogs(ctx, deploymentID, logs)
+	d, err := s.repo.UpdateLogs(ctx, deploymentID, logs, isPartial)
 	if err != nil {
 		return err
 	}

@@ -176,10 +176,6 @@ func (s *Service) Deploy(ctx context.Context, appID int64, deployedBy int64) err
 		return fmt.Errorf("failed to create deployment record: %w", err)
 	}
 
-	if err := s.repo.UpdateStatus(ctx, appID, domain.AppStatusStarting); err != nil {
-		return err
-	}
-
 	job := &domain.Job{
 		ServerID:      app.ServerID,
 		ApplicationID: &appID,
@@ -194,17 +190,10 @@ func (s *Service) Deploy(ctx context.Context, appID int64, deployedBy int64) err
 		},
 	}
 
-	createdJob, err := s.jobSvc.Create(ctx, job)
-	if err != nil {
+	if _, err := s.jobSvc.Create(ctx, job); err != nil {
 		s.repo.UpdateStatus(ctx, appID, domain.AppStatusFailed)
 		return fmt.Errorf("failed to create deployment job: %w", err)
 	}
-
-	s.bus.Publish("deployment_started", map[string]any{
-		"deployment_id":  deployment.ID,
-		"application_id": appID,
-		"job_id":         createdJob.ID,
-	})
 
 	return nil
 }

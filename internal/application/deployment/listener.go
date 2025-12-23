@@ -42,12 +42,19 @@ func (l *Listener) handleJobStarted(event any) {
 	defer cancel()
 
 	_ = l.updateStatus(ctx, *evt.DeploymentID, domain.DeploymentDeploying)
+
+	if err := l.svc.Start(ctx, *evt.DeploymentID); err != nil {
+		l.log.Error("failed to start deployment", "deployment_id", *evt.DeploymentID)
+		return
+	}
+
+	l.log.Debug("deployment started", "deployment_id", *evt.DeploymentID)
 }
 
 func (l *Listener) handleJobFinished(event any) {
 	evt, ok := event.(domain.EventJobFinished)
 	if !ok {
-		l.log.Warn("invalid event payload for job_started", "event", event)
+		l.log.Warn("invalid event payload for job_finished", "event", event)
 		return
 	}
 
@@ -58,12 +65,19 @@ func (l *Listener) handleJobFinished(event any) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	status := domain.DeploymentSuccess
 	if evt.Status == domain.JobFailed {
-		_ = l.updateStatus(ctx, *evt.DeploymentID, domain.DeploymentFailed)
+		status = domain.DeploymentFailed
+	}
+
+	_ = l.updateStatus(ctx, *evt.DeploymentID, status)
+
+	if err := l.svc.Finish(ctx, *evt.DeploymentID); err != nil {
+		l.log.Error("failed to finish deployment", "deployment_id", *evt.DeploymentID)
 		return
 	}
 
-	_ = l.updateStatus(ctx, *evt.DeploymentID, domain.DeploymentSuccess)
+	l.log.Debug("deployment finished", "deployment_id", *evt.DeploymentID)
 }
 
 func (l *Listener) updateStatus(ctx context.Context, deploymentID int64, status domain.DeploymentStatus) error {

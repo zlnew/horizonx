@@ -88,7 +88,6 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// DEPLOYMENTS
 	mux.Handle("GET /applications/{id}/deployments", userStack.Then(http.HandlerFunc(deps.Deployment.List)))
-	mux.Handle("GET /applications/{id}/deployments/latest", userStack.Then(http.HandlerFunc(deps.Deployment.GetLatest)))
 	mux.Handle("GET /applications/{id}/deployments/{deployment_id}", userStack.Then(http.HandlerFunc(deps.Deployment.Show)))
 
 	// ENVIRONMENT VARIABLES

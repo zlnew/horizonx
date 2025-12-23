@@ -20,6 +20,11 @@ type Executor struct {
 	git    *git.Manager
 }
 
+type ExecuteHandler struct {
+	SendLog        func(string)
+	SendCommitInfo func(hash string, message string)
+}
+
 func NewExecutor(log logger.Logger, workDir string) *Executor {
 	return &Executor{
 		log:    log,
@@ -49,12 +54,12 @@ func (e *Executor) Initialize() error {
 	return nil
 }
 
-func (e *Executor) Execute(ctx context.Context, job *domain.Job) (string, error) {
+func (e *Executor) Execute(ctx context.Context, job *domain.Job, handler *ExecuteHandler) (string, error) {
 	e.log.Info("executing job", "id", job.ID, "type", job.JobType)
 
 	switch job.JobType {
 	case domain.JobTypeDeployApp:
-		return e.executeDeployApp(ctx, job)
+		return e.executeDeployApp(ctx, job, handler)
 	case domain.JobTypeStartApp:
 		return e.executeStartApp(ctx, job)
 	case domain.JobTypeStopApp:
@@ -66,7 +71,11 @@ func (e *Executor) Execute(ctx context.Context, job *domain.Job) (string, error)
 	}
 }
 
-func (e *Executor) executeDeployApp(ctx context.Context, job *domain.Job) (string, error) {
+func (e *Executor) executeDeployApp(ctx context.Context, job *domain.Job, handler *ExecuteHandler) (string, error) {
+	if handler == nil || handler.SendLog == nil || handler.SendCommitInfo == nil {
+		return "", fmt.Errorf("missing required deployment handler")
+	}
+
 	var payload domain.DeployAppPayload
 	payloadBytes, err := json.Marshal(job.CommandPayload)
 	if err != nil {
@@ -78,10 +87,15 @@ func (e *Executor) executeDeployApp(ctx context.Context, job *domain.Job) (strin
 
 	appID := payload.ApplicationID
 	var logs strings.Builder
-	logs.WriteString(fmt.Sprintf("=== Deploying Application %d ===\n\n", appID))
+
+	deployingApplicationLog := fmt.Sprintf("=== Deploying Application %d ===\n\n", appID)
+	logs.WriteString(deployingApplicationLog)
+	handler.SendLog(deployingApplicationLog)
 
 	if payload.RepoURL != nil && *payload.RepoURL != "" {
-		logs.WriteString("Step 1: Fetching source code...\n")
+		fetchingSourceCodeLog := "Step 1: Fetching source code...\n"
+		logs.WriteString(fetchingSourceCodeLog)
+		handler.SendLog(fetchingSourceCodeLog)
 
 		repoDir := filepath.Join(e.docker.GetAppDir(appID), "source")
 		var gitOutput string
@@ -95,67 +109,104 @@ func (e *Executor) executeDeployApp(ctx context.Context, job *domain.Job) (strin
 		}
 
 		if err != nil {
-			logs.WriteString(fmt.Sprintf("❌ Git operation failed: %v\n", err))
+			gitOperationFailedLog := fmt.Sprintf("❌ Git operation failed: %v\n", err)
+			logs.WriteString(gitOperationFailedLog)
+			handler.SendLog(gitOperationFailedLog)
 			return logs.String(), err
 		}
 
-		logs.WriteString(gitOutput)
-		logs.WriteString("✓ Source code ready\n\n")
+		sourceCodeReadyLog := fmt.Sprintf("%s ✓ Source code ready\n\n", gitOutput)
+		logs.WriteString(sourceCodeReadyLog)
+		handler.SendLog(sourceCodeReadyLog)
 
 		commitHash, _ := e.git.GetCurrentCommit(ctx, repoDir)
 		commitMsg, _ := e.git.GetCommitMessage(ctx, repoDir)
 		if commitHash != "" {
-			logs.WriteString(fmt.Sprintf("Commit: %s\n", commitHash[:8]))
-			logs.WriteString(fmt.Sprintf("Message: %s\n\n", commitMsg))
+			commitHashLog := fmt.Sprintf("Commit: %s\n", commitHash[:8])
+			commitMessageLog := fmt.Sprintf("Message: %s\n\n", commitMsg)
+
+			logs.WriteString(commitHashLog)
+			logs.WriteString(commitMessageLog)
+
+			handler.SendLog(commitHashLog)
+			handler.SendLog(commitMessageLog)
+
+			handler.SendCommitInfo(commitHash, commitMsg)
 		}
 	}
 
 	logs.WriteString("Step 2: Validating compose file...\n")
 	if err := e.docker.ValidateDockerComposeFile(appID); err != nil {
-		logs.WriteString(fmt.Sprintf("❌ Failed to validate compose file: %v\n", err))
+		failedToValidateComposeFileLog := fmt.Sprintf("❌ Failed to validate compose file: %v\n", err)
+		logs.WriteString(failedToValidateComposeFileLog)
+		handler.SendLog(failedToValidateComposeFileLog)
 		return logs.String(), err
 	}
-	logs.WriteString("✓ Compose file validated\n\n")
+	composeFileValidatedLog := "✓ Compose file validated\n\n"
+	logs.WriteString(composeFileValidatedLog)
+	handler.SendLog(composeFileValidatedLog)
 
 	if len(payload.EnvVars) > 0 {
-		logs.WriteString(fmt.Sprintf("Step 3: Writing environment variables (%d vars)...\n", len(payload.EnvVars)))
+		writingEnvVarsLog := fmt.Sprintf("Step 3: Writing environment variables (%d vars)...\n", len(payload.EnvVars))
+		logs.WriteString(writingEnvVarsLog)
+		handler.SendLog(writingEnvVarsLog)
 		if err := e.docker.WriteEnvFile(appID, payload.EnvVars); err != nil {
-			logs.WriteString(fmt.Sprintf("❌ Failed to write env file: %v\n", err))
+			failedToWriteEnvFileLog := fmt.Sprintf("❌ Failed to write env file: %v\n", err)
+			logs.WriteString(failedToWriteEnvFileLog)
+			handler.SendLog(failedToWriteEnvFileLog)
 			return logs.String(), err
 		}
-		logs.WriteString("✓ Environment configured\n\n")
+		envConfiguredLog := "✓ Environment configured\n\n"
+		logs.WriteString(envConfiguredLog)
+		handler.SendLog(envConfiguredLog)
 	}
 
-	logs.WriteString("Step 4: Stopping existing containers...\n")
+	stoppingExistingContainersLog := "Step 4: Stopping existing containers...\n"
+	logs.WriteString(stoppingExistingContainersLog)
+	handler.SendLog(stoppingExistingContainersLog)
 	stopOutput, err := e.docker.ComposeDown(ctx, appID, false)
 	if err != nil {
 		e.log.Warn("failed to stop existing containers (may not exist)", "error", err)
 	}
 	if stopOutput != "" {
-		logs.WriteString(stopOutput)
-		logs.WriteString("\n")
+		logs.WriteString(stopOutput + "\n")
+		handler.SendLog(stopOutput + "\n")
 	}
 
-	logs.WriteString("Step 5: Building and starting containers...\n")
+	buildingAndStartingContainersLog := "Step 5: Building and starting containers...\n"
+	logs.WriteString(buildingAndStartingContainersLog)
+	handler.SendLog(buildingAndStartingContainersLog)
 	upOutput, err := e.docker.ComposeUp(ctx, appID, true, true)
+	if upOutput != "" {
+		logs.WriteString(upOutput + "\n")
+		handler.SendLog(upOutput + "\n")
+	}
 	if err != nil {
-		logs.WriteString(fmt.Sprintf("❌ Docker compose up failed: %v\n", err))
-		logs.WriteString(upOutput)
+		failLog := fmt.Sprintf("❌ Docker compose up failed: %v\n", err)
+		logs.WriteString(failLog)
+		handler.SendLog(failLog)
 		return logs.String(), err
 	}
-	logs.WriteString(upOutput)
-	logs.WriteString("\n✓ Containers started\n\n")
+	logs.WriteString("✓ Containers started\n\n")
+	handler.SendLog("✓ Containers started\n\n")
 
-	logs.WriteString("Step 6: Verifying deployment...\n")
+	verifyingDeploymentLog := "Step 6: Verifying deployment...\n"
+	logs.WriteString(verifyingDeploymentLog)
+	handler.SendLog(verifyingDeploymentLog)
 	psOutput, err := e.docker.ComposePs(ctx, appID)
+	if psOutput != "" {
+		logs.WriteString(psOutput + "\n")
+		handler.SendLog(psOutput + "\n")
+	}
 	if err != nil {
-		logs.WriteString(fmt.Sprintf("⚠ Failed to check container status: %v\n", err))
-	} else {
-		logs.WriteString(psOutput)
-		logs.WriteString("\n")
+		warnLog := fmt.Sprintf("⚠ Failed to check container status: %v\n", err)
+		logs.WriteString(warnLog)
+		handler.SendLog(warnLog)
 	}
 
-	logs.WriteString("\n=== Deployment Complete ===\n")
+	deploymentCompleteLog := "\n=== Deployment Complete ===\n"
+	logs.WriteString(deploymentCompleteLog)
+	handler.SendLog(deploymentCompleteLog)
 	return logs.String(), nil
 }
 

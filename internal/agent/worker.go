@@ -150,41 +150,69 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 		return err
 	}
 
-	if deploymentID != nil {
-		w.sendDeploymentLogs(ctx, *deploymentID, output, false)
-	}
-
 	return execErr
 }
 
 func (w *JobWorker) executeWithLogStreaming(ctx context.Context, job *domain.Job, deploymentID *int64) (string, error) {
-	// If this is a deployment job, stream logs in real-time
 	if job.JobType == domain.JobTypeDeployApp && deploymentID != nil {
-		// Create a custom logger that also streams to server
-		logBuffer := &bytes.Buffer{}
-
-		// Execute job
-		output, err := w.executor.Execute(ctx, job)
-		logBuffer.WriteString(output)
-
-		// Stream logs during execution
-		if err == nil {
-			w.sendDeploymentLogs(ctx, *deploymentID, output, true)
+		sendLog := func(chunk string) {
+			w.sendDeploymentLogs(ctx, *deploymentID, chunk)
 		}
 
-		return output, err
+		sendCommitInfo := func(commitHash, commitMessage string) {
+			w.sendCommitInfo(ctx, *deploymentID, commitHash, commitMessage)
+		}
+
+		return w.executor.Execute(ctx, job, &executor.ExecuteHandler{
+			SendLog:        sendLog,
+			SendCommitInfo: sendCommitInfo,
+		})
 	}
 
-	// Normal execution for non-deployment jobs
-	return w.executor.Execute(ctx, job)
+	return w.executor.Execute(ctx, job, nil)
 }
 
-func (w *JobWorker) sendDeploymentLogs(ctx context.Context, deploymentID int64, logs string, isPartial bool) {
+func (w *JobWorker) sendCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) {
+	url := fmt.Sprintf("%s/agent/deployments/%d/commit-info", w.cfg.AgentTargetAPIURL, deploymentID)
+
+	payload := &domain.DeploymentCommitInfoRequest{
+		CommitHash:    commitHash,
+		CommitMessage: commitMessage,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		w.log.Error("failed to marshal deployment commit info", "error", err)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		w.log.Error("failed to create deployment commit info request", "error", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+w.cfg.AgentServerID.String()+"."+w.cfg.AgentServerAPIToken)
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		w.log.Error("failed to send deployment commit info", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		w.log.Warn("server returned error for deployment commit info", "status", resp.StatusCode)
+	}
+}
+
+func (w *JobWorker) sendDeploymentLogs(ctx context.Context, deploymentID int64, logs string) {
 	url := fmt.Sprintf("%s/agent/deployments/%d/logs", w.cfg.AgentTargetAPIURL, deploymentID)
 
-	payload := map[string]any{
-		"logs":       logs,
-		"is_partial": isPartial,
+	payload := &domain.DeploymentLogsRequest{
+		Logs:      logs,
+		IsPartial: true,
 	}
 
 	body, err := json.Marshal(payload)

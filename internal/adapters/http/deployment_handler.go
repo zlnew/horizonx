@@ -48,6 +48,13 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DeploymentHandler) Show(w http.ResponseWriter, r *http.Request) {
+	appIDStr := r.PathValue("id")
+	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	if err != nil {
+		JSONError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+
 	deploymentIDStr := r.PathValue("deployment_id")
 	deploymentID, err := strconv.ParseInt(deploymentIDStr, 10, 64)
 	if err != nil {
@@ -65,27 +72,8 @@ func (h *DeploymentHandler) Show(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "OK",
-		Data:    deployment,
-	})
-}
-
-func (h *DeploymentHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
-	appIDStr := r.PathValue("id")
-	appID, err := strconv.ParseInt(appIDStr, 10, 64)
-	if err != nil {
+	if deployment.ApplicationID != appID {
 		JSONError(w, http.StatusBadRequest, "invalid application id")
-		return
-	}
-
-	deployment, err := h.svc.GetLatest(r.Context(), appID)
-	if err != nil {
-		if errors.Is(err, domain.ErrDeploymentNotFound) {
-			JSONError(w, http.StatusNotFound, "no deployments found")
-			return
-		}
-		JSONError(w, http.StatusInternalServerError, "failed to get latest deployment")
 		return
 	}
 
