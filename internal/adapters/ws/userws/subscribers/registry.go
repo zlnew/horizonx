@@ -20,7 +20,9 @@ func Register(bus EventBus, hub *userws.Hub) {
 	// Deployment Events
 	deploymentStatusChanged := NewDeploymentStatusChanged(hub)
 	deploymentLogsUpdated := NewDeploymentLogsUpdated(hub)
+	deploymentCommitInfoReceived := NewDeploymentCommitInfoReceived(hub)
 
 	bus.Subscribe("deployment_status_changed", deploymentStatusChanged.Handle)
 	bus.Subscribe("deployment_logs_updated", deploymentLogsUpdated.Handle)
+	bus.Subscribe("deployment_commit_info_received", deploymentCommitInfoReceived.Handle)
 }

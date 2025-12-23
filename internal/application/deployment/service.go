@@ -78,7 +78,21 @@ func (s *Service) UpdateStatus(ctx context.Context, deploymentID int64, status d
 }
 
 func (s *Service) UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) error {
-	return s.repo.UpdateCommitInfo(ctx, deploymentID, commitHash, commitMessage)
+	d, err := s.repo.UpdateCommitInfo(ctx, deploymentID, commitHash, commitMessage)
+	if err != nil {
+		return err
+	}
+
+	if s.bus != nil {
+		s.bus.Publish("deployment_commit_info_received", domain.EventDeploymentCommitInfoReceived{
+			DeploymentID:  d.ID,
+			ApplicationID: d.ApplicationID,
+			CommitHash:    *d.CommitHash,
+			CommitMessage: *d.CommitMessage,
+		})
+	}
+
+	return nil
 }
 
 func (s *Service) UpdateLogs(ctx context.Context, deploymentID int64, logs string, isPartial bool) error {

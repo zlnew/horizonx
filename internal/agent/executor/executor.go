@@ -84,7 +84,7 @@ func (e *Executor) executeDeployApp(ctx context.Context, job *domain.Job, handle
 	var logs strings.Builder
 
 	// Start
-	deployingApplicationLog := fmt.Sprintf("=== Deploying Application %d ===\n\n", appID)
+	deployingApplicationLog := "=== Deploying Application ===\n\n"
 	logs.WriteString(deployingApplicationLog)
 	handler.SendLog(deployingApplicationLog)
 
@@ -133,7 +133,9 @@ func (e *Executor) executeDeployApp(ctx context.Context, job *domain.Job, handle
 	}
 
 	// Validating compose file
-	logs.WriteString("Step 2: Validating compose file...\n")
+	validatingComposeFileLog := "Step 2: Validating compose file...\n"
+	logs.WriteString(validatingComposeFileLog)
+	handler.SendLog(validatingComposeFileLog)
 	if err := e.docker.ValidateDockerComposeFile(appID); err != nil {
 		failedToValidateComposeFileLog := fmt.Sprintf("❌ Failed to validate compose file: %v\n", err)
 		logs.WriteString(failedToValidateComposeFileLog)

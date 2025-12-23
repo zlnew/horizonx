@@ -56,7 +56,7 @@ type DeploymentRepository interface {
 	Start(ctx context.Context, deploymentID int64) error
 	Finish(ctx context.Context, deploymentID int64) error
 	UpdateStatus(ctx context.Context, deploymentID int64, status DeploymentStatus) (*Deployment, error)
-	UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) error
+	UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) (*Deployment, error)
 	UpdateLogs(ctx context.Context, deploymentID int64, logs string, isPartial bool) (*Deployment, error)
 }
 

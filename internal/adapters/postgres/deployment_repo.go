@@ -184,19 +184,29 @@ func (r *DeploymentRepository) UpdateStatus(ctx context.Context, deploymentID in
 	return &d, nil
 }
 
-func (r *DeploymentRepository) UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) error {
-	query := `UPDATE deployments SET commit_hash = $1, commit_message = $2 WHERE id = $3`
+func (r *DeploymentRepository) UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) (*domain.Deployment, error) {
+	query := `
+		UPDATE deployments
+		SET commit_hash = $1, commit_message = $2
+		WHERE id = $3
+		RETURNING id, application_id, commit_hash, commit_message
+	`
 
-	ct, err := r.db.Exec(ctx, query, commitHash, commitMessage, deploymentID)
+	var d domain.Deployment
+	err := r.db.QueryRow(ctx, query, commitHash, commitMessage, deploymentID).Scan(
+		&d.ID,
+		&d.ApplicationID,
+		&d.CommitHash,
+		&d.CommitMessage,
+	)
 	if err != nil {
-		return fmt.Errorf("failed to update commit info: %w", err)
+		if err == pgx.ErrNoRows {
+			return nil, domain.ErrDeploymentNotFound
+		}
+		return nil, fmt.Errorf("failed to update deployment commit info: %w", err)
 	}
 
-	if ct.RowsAffected() == 0 {
-		return domain.ErrDeploymentNotFound
-	}
-
-	return nil
+	return &d, nil
 }
 
 func (r *DeploymentRepository) UpdateLogs(ctx context.Context, deploymentID int64, logs string, isPartial bool) (*domain.Deployment, error) {
