@@ -7,23 +7,15 @@ import (
 	"strconv"
 
 	"horizonx-server/internal/domain"
-	"horizonx-server/internal/event"
-	"horizonx-server/internal/logger"
 )
 
 type DeploymentHandler struct {
-	svc  domain.DeploymentService
-	repo domain.DeploymentRepository
-	bus  *event.Bus
-	log  logger.Logger
+	svc domain.DeploymentService
 }
 
-func NewDeploymentHandler(svc domain.DeploymentService, repo domain.DeploymentRepository, bus *event.Bus, log logger.Logger) *DeploymentHandler {
+func NewDeploymentHandler(svc domain.DeploymentService) *DeploymentHandler {
 	return &DeploymentHandler{
-		svc:  svc,
-		repo: repo,
-		bus:  bus,
-		log:  log,
+		svc: svc,
 	}
 }
 
@@ -103,6 +95,35 @@ func (h *DeploymentHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *DeploymentHandler) UpdateCommitInfo(w http.ResponseWriter, r *http.Request) {
+	deploymentIDStr := r.PathValue("id")
+	deploymentID, err := strconv.ParseInt(deploymentIDStr, 10, 64)
+	if err != nil {
+		JSONError(w, http.StatusBadRequest, "invalid deployment id")
+		return
+	}
+
+	var req domain.DeploymentCommitInfoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		JSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if _, err := h.svc.GetByID(r.Context(), deploymentID); err != nil {
+		JSONError(w, http.StatusNotFound, "deployment not found")
+		return
+	}
+
+	if err := h.svc.UpdateCommitInfo(r.Context(), deploymentID, req.CommitHash, req.CommitMessage); err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to update commit info")
+		return
+	}
+
+	JSONSuccess(w, http.StatusOK, APIResponse{
+		Message: "Commit Info updated",
+	})
+}
+
 func (h *DeploymentHandler) UpdateLogs(w http.ResponseWriter, r *http.Request) {
 	deploymentIDStr := r.PathValue("id")
 	deploymentID, err := strconv.ParseInt(deploymentIDStr, 10, 64)
@@ -111,42 +132,21 @@ func (h *DeploymentHandler) UpdateLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var payload struct {
-		Logs      string `json:"logs"`
-		IsPartial bool   `json:"is_partial"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	var req domain.DeploymentLogsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		JSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	deployment, err := h.repo.GetByID(r.Context(), deploymentID)
-	if err != nil {
+	if _, err := h.svc.GetByID(r.Context(), deploymentID); err != nil {
 		JSONError(w, http.StatusNotFound, "deployment not found")
 		return
 	}
 
-	if err := h.repo.UpdateLogs(r.Context(), deploymentID, payload.Logs); err != nil {
-		h.log.Error("failed to update deployment logs", "error", err)
+	if err := h.svc.UpdateLogs(r.Context(), deploymentID, req.Logs, req.IsPartial); err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to update logs")
 		return
 	}
-
-	if h.bus != nil {
-		h.bus.Publish("deployment_logs_updated", domain.EventDeploymentLogsUpdated{
-			DeploymentID:  deploymentID,
-			ApplicationID: deployment.ApplicationID,
-			Logs:          payload.Logs,
-			IsPartial:     payload.IsPartial,
-		})
-	}
-
-	h.log.Debug("deployment logs updated",
-		"deployment_id", deploymentID,
-		"app_id", deployment.ApplicationID,
-		"is_partial", payload.IsPartial,
-	)
 
 	JSONSuccess(w, http.StatusOK, APIResponse{
 		Message: "Logs updated",

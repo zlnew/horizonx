@@ -42,15 +42,6 @@ func (s *JobService) Create(ctx context.Context, j *domain.Job) (*domain.Job, er
 			DeploymentID:  job.DeploymentID,
 			JobType:       job.JobType,
 		})
-
-		s.bus.Publish("job_status_changed", domain.EventJobStatusChanged{
-			JobID:         job.ID,
-			ServerID:      job.ServerID,
-			ApplicationID: job.ApplicationID,
-			DeploymentID:  job.DeploymentID,
-			JobType:       job.JobType,
-			Status:        domain.JobQueued,
-		})
 	}
 
 	return job, nil
@@ -74,15 +65,6 @@ func (s *JobService) Start(ctx context.Context, jobID int64) (*domain.Job, error
 			DeploymentID:  job.DeploymentID,
 			JobType:       job.JobType,
 		})
-
-		s.bus.Publish("job_status_changed", domain.EventJobStatusChanged{
-			JobID:         job.ID,
-			ServerID:      job.ServerID,
-			ApplicationID: job.ApplicationID,
-			DeploymentID:  job.DeploymentID,
-			JobType:       job.JobType,
-			Status:        domain.JobRunning,
-		})
 	}
 
 	return job, nil
@@ -96,16 +78,6 @@ func (s *JobService) Finish(ctx context.Context, jobID int64, status domain.JobS
 
 	if s.bus != nil {
 		s.bus.Publish("job_finished", domain.EventJobFinished{
-			JobID:         job.ID,
-			ServerID:      job.ServerID,
-			ApplicationID: job.ApplicationID,
-			DeploymentID:  job.DeploymentID,
-			JobType:       job.JobType,
-			Status:        status,
-			OutputLog:     result,
-		})
-
-		s.bus.Publish("job_status_changed", domain.EventJobStatusChanged{
 			JobID:         job.ID,
 			ServerID:      job.ServerID,
 			ApplicationID: job.ApplicationID,

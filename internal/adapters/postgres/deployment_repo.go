@@ -147,19 +147,28 @@ func (r *DeploymentRepository) Create(ctx context.Context, deployment *domain.De
 	return deployment, nil
 }
 
-func (r *DeploymentRepository) UpdateStatus(ctx context.Context, deploymentID int64, status domain.DeploymentStatus) error {
-	query := `UPDATE deployments SET status = $1 WHERE id = $2`
+func (r *DeploymentRepository) UpdateStatus(ctx context.Context, deploymentID int64, status domain.DeploymentStatus) (*domain.Deployment, error) {
+	query := `
+		UPDATE deployments
+		SET status = $1
+		WHERE id = $2
+		RETURNING id, application_id, status
+	`
 
-	ct, err := r.db.Exec(ctx, query, status, deploymentID)
+	var d domain.Deployment
+	err := r.db.QueryRow(ctx, query, status, deploymentID).Scan(
+		&d.ID,
+		&d.ApplicationID,
+		&d.Status,
+	)
 	if err != nil {
-		return fmt.Errorf("failed to update deployment status: %w", err)
+		if err == pgx.ErrNoRows {
+			return nil, domain.ErrDeploymentNotFound
+		}
+		return nil, fmt.Errorf("failed to update deployment status: %w", err)
 	}
 
-	if ct.RowsAffected() == 0 {
-		return domain.ErrDeploymentNotFound
-	}
-
-	return nil
+	return &d, nil
 }
 
 func (r *DeploymentRepository) UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash, commitMessage string) error {
@@ -177,19 +186,27 @@ func (r *DeploymentRepository) UpdateCommitInfo(ctx context.Context, deploymentI
 	return nil
 }
 
-func (r *DeploymentRepository) UpdateLogs(ctx context.Context, deploymentID int64, logs string) error {
-	query := `UPDATE deployments SET build_logs = $1 WHERE id = $2`
+func (r *DeploymentRepository) UpdateLogs(ctx context.Context, deploymentID int64, logs string) (*domain.Deployment, error) {
+	query := `
+		UPDATE deployments
+		SET build_logs = $1
+		WHERE id = $2
+		RETURNING id, application_id, build_logs
+	`
 
-	ct, err := r.db.Exec(ctx, query, logs, deploymentID)
+	var d domain.Deployment
+	err := r.db.QueryRow(ctx, query, logs, deploymentID).Scan(
+		&d.ID,
+		&d.ApplicationID,
+	)
 	if err != nil {
-		return fmt.Errorf("failed to update deployment logs: %w", err)
+		if err == pgx.ErrNoRows {
+			return nil, domain.ErrDeploymentNotFound
+		}
+		return nil, fmt.Errorf("failed to update deployment build logs: %w", err)
 	}
 
-	if ct.RowsAffected() == 0 {
-		return domain.ErrDeploymentNotFound
-	}
-
-	return nil
+	return &d, nil
 }
 
 func (r *DeploymentRepository) Finish(ctx context.Context, deploymentID int64, status domain.DeploymentStatus, logs string) error {

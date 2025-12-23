@@ -36,46 +36,6 @@ const (
 	JobFailed  JobStatus = "failed"
 )
 
-type EventJobCreated struct {
-	JobID         int64
-	ServerID      uuid.UUID
-	ApplicationID *int64
-	DeploymentID  *int64
-	JobType       string
-}
-
-type EventJobStarted struct {
-	JobID         int64
-	ServerID      uuid.UUID
-	ApplicationID *int64
-	DeploymentID  *int64
-	JobType       string
-}
-
-type EventJobFinished struct {
-	JobID         int64
-	ServerID      uuid.UUID
-	ApplicationID *int64
-	DeploymentID  *int64
-	JobType       string
-	Status        JobStatus
-	OutputLog     *string
-}
-
-type EventJobStatusChanged struct {
-	JobID         int64     `json:"job_id"`
-	ServerID      uuid.UUID `json:"server_id"`
-	ApplicationID *int64    `json:"application_id,omitempty"`
-	DeploymentID  *int64    `json:"deployment_id,omitempty"`
-	JobType       string    `json:"job_type"`
-	Status        JobStatus `json:"status"`
-	OutputLog     *string   `json:"output_log,omitempty"`
-}
-
-type JobCommandPayload struct {
-	JobID int64
-}
-
 type JobFinishRequest struct {
 	Status    JobStatus `json:"status" validate:"required"`
 	OutputLog string    `json:"output_log" validate:"required"`

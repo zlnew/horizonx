@@ -72,8 +72,8 @@ func main() {
 	authHandler := http.NewAuthHandler(authService, cfg)
 	userHandler := http.NewUserHandler(userService)
 	jobHandler := http.NewJobHandler(jobService)
-	metricsHandler := http.NewMetricsHandler(metricsService, log)
-	deploymentHandler := http.NewDeploymentHandler(deploymentService, deploymentRepo, bus, log)
+	metricsHandler := http.NewMetricsHandler(metricsService)
+	deploymentHandler := http.NewDeploymentHandler(deploymentService)
 	applicationHandler := http.NewApplicationHandler(applicationService)
 
 	// WebSocket Handlers

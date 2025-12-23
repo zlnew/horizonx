@@ -56,3 +56,42 @@ func (s *Service) Create(ctx context.Context, req domain.DeploymentCreateRequest
 
 	return created, nil
 }
+
+func (s *Service) UpdateStatus(ctx context.Context, deploymentID int64, status domain.DeploymentStatus) error {
+	d, err := s.repo.UpdateStatus(ctx, deploymentID, status)
+	if err != nil {
+		return err
+	}
+
+	if s.bus != nil {
+		s.bus.Publish("deployment_status_changed", domain.EventDeploymentStatusChanged{
+			DeploymentID:  d.ID,
+			ApplicationID: d.ApplicationID,
+			Status:        d.Status,
+		})
+	}
+
+	return nil
+}
+
+func (s *Service) UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash, commitMessage string) error {
+	return s.repo.UpdateCommitInfo(ctx, deploymentID, commitHash, commitMessage)
+}
+
+func (s *Service) UpdateLogs(ctx context.Context, deploymentID int64, logs string, isPartial bool) error {
+	d, err := s.repo.UpdateLogs(ctx, deploymentID, logs)
+	if err != nil {
+		return err
+	}
+
+	if s.bus != nil {
+		s.bus.Publish("deployment_logs_updated", domain.EventDeploymentLogsUpdated{
+			DeploymentID:  d.ID,
+			ApplicationID: d.ApplicationID,
+			Logs:          logs,
+			IsPartial:     isPartial,
+		})
+	}
+
+	return nil
+}

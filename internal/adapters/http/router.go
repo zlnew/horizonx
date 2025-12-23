@@ -57,6 +57,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("GET /agent/jobs", agentStack.Then(http.HandlerFunc(deps.Job.Index)))
 	mux.Handle("POST /agent/jobs/{id}/start", agentStack.Then(http.HandlerFunc(deps.Job.Start)))
 	mux.Handle("POST /agent/jobs/{id}/finish", agentStack.Then(http.HandlerFunc(deps.Job.Finish)))
+	mux.Handle("POST /agent/deployments/{id}/commit-info", agentStack.Then(http.HandlerFunc(deps.Deployment.UpdateCommitInfo)))
 	mux.Handle("POST /agent/deployments/{id}/logs", agentStack.Then(http.HandlerFunc(deps.Deployment.UpdateLogs)))
 
 	// SERVERS
@@ -71,10 +72,6 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /users", userStack.Then(http.HandlerFunc(deps.User.Store)))
 	mux.Handle("PUT /users/{id}", userStack.Then(http.HandlerFunc(deps.User.Update)))
 	mux.Handle("DELETE /users/{id}", userStack.Then(http.HandlerFunc(deps.User.Destroy)))
-
-	// JOBS (User-facing for monitoring)
-	mux.Handle("GET /jobs", userStack.Then(http.HandlerFunc(deps.Job.Index)))
-	mux.Handle("GET /jobs/{id}", userStack.Then(http.HandlerFunc(deps.Job.Show)))
 
 	// APPLICATIONS
 	mux.Handle("GET /applications", userStack.Then(http.HandlerFunc(deps.Application.Index)))

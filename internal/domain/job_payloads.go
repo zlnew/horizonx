@@ -1,5 +1,9 @@
 package domain
 
+type JobCommandPayload struct {
+	JobID int64
+}
+
 type DeployAppPayload struct {
 	ApplicationID int64             `json:"application_id"`
 	RepoURL       *string           `json:"repo_url"`
