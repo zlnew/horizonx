@@ -32,7 +32,7 @@ func (h *UserHandler) Index(w http.ResponseWriter, r *http.Request) {
 		IsPaginate: isPaginate,
 	}
 
-	result, err := h.svc.Get(r.Context(), opts)
+	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Something went wrong")
 		return

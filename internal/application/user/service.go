@@ -17,7 +17,7 @@ func NewService(repo domain.UserRepository) domain.UserService {
 	return &service{repo: repo}
 }
 
-func (s *service) Get(ctx context.Context, opts domain.ListOptions) (*domain.ListResult[*domain.User], error) {
+func (s *service) List(ctx context.Context, opts domain.ListOptions) (*domain.ListResult[*domain.User], error) {
 	if opts.IsPaginate {
 		if opts.Page <= 0 {
 			opts.Page = 1

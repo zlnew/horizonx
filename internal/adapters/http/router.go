@@ -91,7 +91,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /applications/{id}/restart", userStack.Then(http.HandlerFunc(deps.Application.Restart)))
 
 	// DEPLOYMENTS
-	mux.Handle("GET /applications/{id}/deployments", userStack.Then(http.HandlerFunc(deps.Deployment.List)))
+	mux.Handle("GET /applications/{id}/deployments", userStack.Then(http.HandlerFunc(deps.Deployment.Index)))
 	mux.Handle("GET /applications/{id}/deployments/{deployment_id}", userStack.Then(http.HandlerFunc(deps.Deployment.Show)))
 
 	// ENVIRONMENT VARIABLES

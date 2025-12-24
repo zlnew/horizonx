@@ -20,8 +20,35 @@ func NewService(repo domain.DeploymentRepository, bus *event.Bus) domain.Deploym
 	}
 }
 
-func (s *Service) List(ctx context.Context, appID int64, limit int) ([]domain.Deployment, error) {
-	return s.repo.List(ctx, appID, limit)
+func (s *Service) List(ctx context.Context, opts domain.DeploymentListOptions) (*domain.ListResult[*domain.Deployment], error) {
+	if opts.IsPaginate {
+		if opts.Page <= 0 {
+			opts.Page = 1
+		}
+		if opts.Limit <= 0 {
+			opts.Limit = 10
+		}
+	} else {
+		if opts.Limit <= 0 {
+			opts.Limit = 1000
+		}
+	}
+
+	d, total, err := s.repo.List(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &domain.ListResult[*domain.Deployment]{
+		Data: d,
+		Meta: nil,
+	}
+
+	if opts.IsPaginate {
+		res.Meta = domain.CalculateMeta(total, opts.Page, opts.Limit)
+	}
+
+	return res, nil
 }
 
 func (s *Service) GetByID(ctx context.Context, deploymentID int64) (*domain.Deployment, error) {

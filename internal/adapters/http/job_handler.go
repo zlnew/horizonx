@@ -24,7 +24,7 @@ func (h *JobHandler) Index(w http.ResponseWriter, r *http.Request) {
 	opts := domain.JobListOptions{
 		ListOptions: domain.ListOptions{
 			Page:       GetInt(q, "page", 1),
-			Limit:      GetInt(q, "limit", 20),
+			Limit:      GetInt(q, "limit", 10),
 			Search:     GetString(q, "search", ""),
 			IsPaginate: GetBool(q, "paginate"),
 		},
@@ -35,7 +35,7 @@ func (h *JobHandler) Index(w http.ResponseWriter, r *http.Request) {
 		Statuses:      GetStringSlice(q, "statuses"),
 	}
 
-	result, err := h.svc.Get(r.Context(), opts)
+	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to list jobs")
 		return

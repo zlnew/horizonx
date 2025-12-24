@@ -2,8 +2,10 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"horizonx-server/internal/domain"
@@ -20,61 +22,162 @@ func NewDeploymentRepository(db *pgxpool.Pool) domain.DeploymentRepository {
 	return &DeploymentRepository{db: db}
 }
 
-func (r *DeploymentRepository) List(ctx context.Context, appID int64, limit int) ([]domain.Deployment, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-
-	query := `
-		SELECT id, application_id, branch, commit_hash, commit_message, status,
-					build_logs, deployed_by, triggered_at, started_at, finished_at
-		FROM deployments
-		WHERE application_id = $1
-		ORDER BY triggered_at DESC
-		LIMIT $2
+func (r *DeploymentRepository) List(ctx context.Context, opts domain.DeploymentListOptions) ([]*domain.Deployment, int64, error) {
+	baseQuery := `
+		SELECT
+			d.id,
+			d.application_id,
+			d.branch,
+			d.commit_hash,
+			d.commit_message,
+			d.status,
+			d.deployed_by,
+			d.triggered_at,
+			d.started_at,
+			d.finished_at,
+			u.id,
+			u.name,
+			u.email,
+			u.role_id
+		FROM deployments d
+		LEFT JOIN users u ON d.deployed_by = u.id
 	`
 
-	rows, err := r.db.Query(ctx, query, appID, limit)
+	args := []any{}
+	conditions := []string{}
+	argCounter := 1
+
+	if opts.ApplicationID != nil {
+		conditions = append(conditions, fmt.Sprintf("d.application_id = $%d", argCounter))
+		args = append(args, *opts.ApplicationID)
+		argCounter++
+	}
+
+	if opts.DeployedBy != nil {
+		conditions = append(conditions, fmt.Sprintf("d.deployed_by = $%d", argCounter))
+		args = append(args, *opts.DeployedBy)
+		argCounter++
+	}
+
+	if len(opts.Statuses) > 0 {
+		placeholders := []string{}
+		for _, s := range opts.Statuses {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", argCounter))
+			args = append(args, s)
+			argCounter++
+		}
+		conditions = append(conditions, fmt.Sprintf("d.status IN (%s)", strings.Join(placeholders, ", ")))
+	}
+
+	if len(conditions) > 0 {
+		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	baseQuery += " ORDER BY d.triggered_at DESC"
+
+	var total int64
+	if opts.IsPaginate {
+		countQuery := "SELECT COUNT(*) FROM deployments d"
+		if len(conditions) > 0 {
+			countQuery += " WHERE " + strings.Join(conditions, " AND ")
+		}
+		if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("failed to count deployments: %w", err)
+		}
+
+		offset := (opts.Page - 1) * opts.Limit
+		baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
+		args = append(args, opts.Limit, offset)
+	} else {
+		baseQuery += fmt.Sprintf(" LIMIT %d", opts.Limit)
+	}
+
+	rows, err := r.db.Query(ctx, baseQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query deployments: %w", err)
+		return nil, 0, fmt.Errorf("failed to query deployments: %w", err)
 	}
 	defer rows.Close()
 
-	var deployments []domain.Deployment
+	var deployments []*domain.Deployment
 	for rows.Next() {
 		var d domain.Deployment
-		err := rows.Scan(
+		var (
+			userID     sql.NullInt64
+			userName   sql.NullString
+			userEmail  sql.NullString
+			userRoleID sql.NullInt64
+		)
+
+		if err := rows.Scan(
 			&d.ID,
 			&d.ApplicationID,
 			&d.Branch,
 			&d.CommitHash,
 			&d.CommitMessage,
 			&d.Status,
-			&d.BuildLogs,
 			&d.DeployedBy,
 			&d.TriggeredAt,
 			&d.StartedAt,
 			&d.FinishedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan deployment: %w", err)
+			&userID,
+			&userName,
+			&userEmail,
+			&userRoleID,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan deployments: %w", err)
 		}
-		deployments = append(deployments, d)
+
+		if userID.Valid {
+			d.Deployer = &domain.User{
+				ID:     userID.Int64,
+				Name:   userName.String,
+				Email:  userEmail.String,
+				RoleID: userRoleID.Int64,
+			}
+		}
+
+		deployments = append(deployments, &d)
 	}
 
-	return deployments, nil
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return deployments, total, nil
 }
 
 func (r *DeploymentRepository) GetByID(ctx context.Context, deploymentID int64) (*domain.Deployment, error) {
 	query := `
-		SELECT id, application_id, branch, commit_hash, commit_message, status, 
-		       build_logs, deployed_by, triggered_at, started_at, finished_at
-		FROM deployments
-		WHERE id = $1
+		SELECT
+			d.id,
+			d.application_id,
+			d.branch,
+			d.commit_hash,
+			d.commit_message,
+			d.status, 
+		  d.build_logs,
+			d.deployed_by,
+			d.triggered_at,
+			d.started_at,
+			d.finished_at,
+			u.id,
+			u.name,
+			u.email,
+			u.role_id
+		FROM deployments d
+		LEFT JOIN users u ON d.deployed_by = u.id
+		WHERE d.id = $1
 	`
 
 	var d domain.Deployment
-	err := r.db.QueryRow(ctx, query, deploymentID).Scan(
+	var (
+		uID     sql.NullInt64
+		uName   sql.NullString
+		uEmail  sql.NullString
+		uRoleID sql.NullInt64
+	)
+
+	if err := r.db.QueryRow(ctx, query, deploymentID).Scan(
 		&d.ID,
 		&d.ApplicationID,
 		&d.Branch,
@@ -86,12 +189,24 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, deploymentID int64) 
 		&d.TriggeredAt,
 		&d.StartedAt,
 		&d.FinishedAt,
-	)
-	if err != nil {
+		&uID,
+		&uName,
+		&uEmail,
+		&uRoleID,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrDeploymentNotFound
 		}
-		return nil, fmt.Errorf("failed to get deployment: %w", err)
+		return nil, fmt.Errorf("failed to scan deployment: %w", err)
+	}
+
+	if uID.Valid {
+		d.Deployer = &domain.User{
+			ID:     uID.Int64,
+			Name:   uName.String,
+			Email:  uEmail.String,
+			RoleID: uRoleID.Int64,
+		}
 	}
 
 	return &d, nil

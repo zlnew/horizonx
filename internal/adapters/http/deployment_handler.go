@@ -19,23 +19,28 @@ func NewDeploymentHandler(svc domain.DeploymentService) *DeploymentHandler {
 	}
 }
 
-func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
-	appIDStr := r.PathValue("id")
-	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+func (h *DeploymentHandler) Index(w http.ResponseWriter, r *http.Request) {
+	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		JSONError(w, http.StatusBadRequest, "invalid application id")
 		return
 	}
 
-	limitStr := r.URL.Query().Get("limit")
-	limit := 50
-	if limitStr != "" {
-		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
-			limit = parsed
-		}
+	q := r.URL.Query()
+
+	opts := domain.DeploymentListOptions{
+		ListOptions: domain.ListOptions{
+			Page:       GetInt(q, "page", 1),
+			Limit:      GetInt(q, "limit", 10),
+			Search:     GetString(q, "search", ""),
+			IsPaginate: GetBool(q, "paginate"),
+		},
+		ApplicationID: &appID,
+		DeployedBy:    GetInt64(q, "deployed_by"),
+		Statuses:      GetStringSlice(q, "statuses"),
 	}
 
-	deployments, err := h.svc.List(r.Context(), appID, limit)
+	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to list deployments")
 		return
@@ -43,20 +48,19 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	JSONSuccess(w, http.StatusOK, APIResponse{
 		Message: "OK",
-		Data:    deployments,
+		Data:    result.Data,
+		Meta:    result.Meta,
 	})
 }
 
 func (h *DeploymentHandler) Show(w http.ResponseWriter, r *http.Request) {
-	appIDStr := r.PathValue("id")
-	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		JSONError(w, http.StatusBadRequest, "invalid application id")
 		return
 	}
 
-	deploymentIDStr := r.PathValue("deployment_id")
-	deploymentID, err := strconv.ParseInt(deploymentIDStr, 10, 64)
+	deploymentID, err := strconv.ParseInt(r.PathValue("deployment_id"), 10, 64)
 	if err != nil {
 		JSONError(w, http.StatusBadRequest, "invalid deployment id")
 		return
@@ -84,8 +88,7 @@ func (h *DeploymentHandler) Show(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DeploymentHandler) UpdateCommitInfo(w http.ResponseWriter, r *http.Request) {
-	deploymentIDStr := r.PathValue("id")
-	deploymentID, err := strconv.ParseInt(deploymentIDStr, 10, 64)
+	deploymentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		JSONError(w, http.StatusBadRequest, "invalid deployment id")
 		return
@@ -113,8 +116,7 @@ func (h *DeploymentHandler) UpdateCommitInfo(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *DeploymentHandler) UpdateLogs(w http.ResponseWriter, r *http.Request) {
-	deploymentIDStr := r.PathValue("id")
-	deploymentID, err := strconv.ParseInt(deploymentIDStr, 10, 64)
+	deploymentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		JSONError(w, http.StatusBadRequest, "invalid deployment id")
 		return

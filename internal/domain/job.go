@@ -75,7 +75,7 @@ type JobRepository interface {
 }
 
 type JobService interface {
-	Get(ctx context.Context, opts JobListOptions) (*ListResult[*Job], error)
+	List(ctx context.Context, opts JobListOptions) (*ListResult[*Job], error)
 	GetPending(ctx context.Context) ([]*Job, error)
 	GetByID(ctx context.Context, jobID int64) (*Job, error)
 	Create(ctx context.Context, j *Job) (*Job, error)

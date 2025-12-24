@@ -95,7 +95,7 @@ func (r *JobRepository) List(ctx context.Context, opts domain.JobListOptions) ([
 		baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 		args = append(args, opts.Limit, offset)
 	} else {
-		baseQuery += " LIMIT 1000"
+		baseQuery += fmt.Sprintf(" LIMIT %d", opts.Limit)
 	}
 
 	rows, err := r.db.Query(ctx, baseQuery, args...)

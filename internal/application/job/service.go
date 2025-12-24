@@ -20,13 +20,17 @@ func NewService(repo domain.JobRepository, events *event.Bus) domain.JobService 
 	}
 }
 
-func (s *JobService) Get(ctx context.Context, opts domain.JobListOptions) (*domain.ListResult[*domain.Job], error) {
+func (s *JobService) List(ctx context.Context, opts domain.JobListOptions) (*domain.ListResult[*domain.Job], error) {
 	if opts.IsPaginate {
 		if opts.Page <= 0 {
 			opts.Page = 1
 		}
 		if opts.Limit <= 0 {
 			opts.Limit = 10
+		}
+	} else {
+		if opts.Limit <= 0 {
+			opts.Limit = 1000
 		}
 	}
 

@@ -19,7 +19,7 @@ func NewServerHandler(svc domain.ServerService) *ServerHandler {
 }
 
 func (h *ServerHandler) Index(w http.ResponseWriter, r *http.Request) {
-	servers, err := h.svc.Get(r.Context())
+	servers, err := h.svc.List(r.Context())
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "Something went wrong")
 		return

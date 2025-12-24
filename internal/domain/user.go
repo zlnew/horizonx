@@ -54,7 +54,7 @@ type UserRepository interface {
 }
 
 type UserService interface {
-	Get(ctx context.Context, opts ListOptions) (*ListResult[*User], error)
+	List(ctx context.Context, opts ListOptions) (*ListResult[*User], error)
 	Create(ctx context.Context, req UserSaveRequest) error
 	Update(ctx context.Context, req UserSaveRequest, userID int64) error
 	Delete(ctx context.Context, userID int64) error

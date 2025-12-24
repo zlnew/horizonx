@@ -38,7 +38,7 @@ type ServerRepository interface {
 }
 
 type ServerService interface {
-	Get(ctx context.Context) ([]Server, error)
+	List(ctx context.Context) ([]Server, error)
 	GetByID(ctx context.Context, serverID uuid.UUID) (*Server, error)
 	Register(ctx context.Context, req ServerSaveRequest) (*Server, string, error)
 	Update(ctx context.Context, req ServerSaveRequest, serverID uuid.UUID) error

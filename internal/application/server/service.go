@@ -24,7 +24,7 @@ func NewService(repo domain.ServerRepository, bus *event.Bus) domain.ServerServi
 	}
 }
 
-func (s *Service) Get(ctx context.Context) ([]domain.Server, error) {
+func (s *Service) List(ctx context.Context) ([]domain.Server, error) {
 	return s.repo.List(ctx)
 }
 

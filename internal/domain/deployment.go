@@ -33,6 +33,13 @@ type Deployment struct {
 	Deployer *User `json:"deployer,omitempty"`
 }
 
+type DeploymentListOptions struct {
+	ListOptions
+	ApplicationID *int64   `json:"application_id,omitempty"`
+	DeployedBy    *int64   `json:"deployed_by,omitempty"`
+	Statuses      []string `json:"statuses,omitempty"`
+}
+
 type DeploymentCreateRequest struct {
 	ApplicationID int64  `json:"application_id"`
 	Branch        string `json:"branch"`
@@ -50,7 +57,7 @@ type DeploymentLogsRequest struct {
 }
 
 type DeploymentRepository interface {
-	List(ctx context.Context, appID int64, limit int) ([]Deployment, error)
+	List(ctx context.Context, opts DeploymentListOptions) ([]*Deployment, int64, error)
 	GetByID(ctx context.Context, deploymentID int64) (*Deployment, error)
 	Create(ctx context.Context, deployment *Deployment) (*Deployment, error)
 	Start(ctx context.Context, deploymentID int64) error
@@ -61,7 +68,7 @@ type DeploymentRepository interface {
 }
 
 type DeploymentService interface {
-	List(ctx context.Context, appID int64, limit int) ([]Deployment, error)
+	List(ctx context.Context, opts DeploymentListOptions) (*ListResult[*Deployment], error)
 	GetByID(ctx context.Context, deploymentID int64) (*Deployment, error)
 	Create(ctx context.Context, req DeploymentCreateRequest) (*Deployment, error)
 	Start(ctx context.Context, deploymentID int64) error
