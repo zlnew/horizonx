@@ -24,8 +24,3 @@ type WsAgentCommand struct {
 	CommandType    string            `json:"command_type"`
 	Payload        JobCommandPayload `json:"payload"`
 }
-
-type ServerStatusChanged struct {
-	ServerID uuid.UUID `json:"server_id"`
-	IsOnline bool      `json:"is_online"`
-}

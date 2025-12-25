@@ -22,13 +22,18 @@ type Server struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type ServerListOptions struct {
+	ListOptions
+	IsOnline *bool `json:"is_online"`
+}
+
 type ServerSaveRequest struct {
 	Name      string `json:"name" validate:"required"`
 	IPAddress string `json:"ip_address" validate:"required"`
 }
 
 type ServerRepository interface {
-	List(ctx context.Context) ([]Server, error)
+	List(ctx context.Context, opts ServerListOptions) ([]*Server, int64, error)
 	GetByID(ctx context.Context, serverID uuid.UUID) (*Server, error)
 	GetByToken(ctx context.Context, token string) (*Server, error)
 	Create(ctx context.Context, s *Server) (*Server, error)
@@ -38,7 +43,7 @@ type ServerRepository interface {
 }
 
 type ServerService interface {
-	List(ctx context.Context) ([]Server, error)
+	List(ctx context.Context, opts ServerListOptions) (*ListResult[*Server], error)
 	GetByID(ctx context.Context, serverID uuid.UUID) (*Server, error)
 	Register(ctx context.Context, req ServerSaveRequest) (*Server, string, error)
 	Update(ctx context.Context, req ServerSaveRequest, serverID uuid.UUID) error

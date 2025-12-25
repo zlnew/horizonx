@@ -14,9 +14,14 @@ func NewServerMetricsReceived(hub *userws.Hub) *ServerMetricsReceived {
 }
 
 func (s *ServerMetricsReceived) Handle(event any) {
+	evt, ok := event.(domain.Metrics)
+	if !ok {
+		return
+	}
+
 	s.hub.Broadcast(&domain.WsServerEvent{
 		Channel: "server_metrics",
 		Event:   "server_metrics_received",
-		Payload: event,
+		Payload: evt,
 	})
 }

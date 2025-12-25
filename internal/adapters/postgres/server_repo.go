@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"horizonx-server/internal/domain"
@@ -21,24 +22,74 @@ func NewServerRepository(db *pgxpool.Pool) domain.ServerRepository {
 	return &ServerRepository{db: db}
 }
 
-func (r *ServerRepository) List(ctx context.Context) ([]domain.Server, error) {
-	query := `
-		SELECT id, name, COALESCE(ip_address::text, ''), is_online, os_info, created_at, updated_at
+func (r *ServerRepository) List(ctx context.Context, opts domain.ServerListOptions) ([]*domain.Server, int64, error) {
+	baseQuery := `
+		SELECT
+			id,
+			name,
+			COALESCE(ip_address::text, ''),
+			is_online,
+			os_info,
+			created_at,
+			updated_at
 		FROM servers
-		WHERE deleted_at IS NULL
-		ORDER BY name ASC
 	`
 
-	rows, err := r.db.Query(ctx, query)
+	args := []any{}
+	conditions := []string{}
+	argCounter := 1
+
+	conditions = append(conditions, "deleted_at IS NULL")
+
+	if opts.Search != "" {
+		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d OR ip_address::text ILIKE $%d)", argCounter, argCounter+1))
+		searchParam := "%" + opts.Search + "%"
+		args = append(args, searchParam, searchParam)
+		argCounter += 2
+	}
+
+	if opts.IsOnline != nil {
+		if *opts.IsOnline {
+			conditions = append(conditions, "is_online IS TRUE")
+		} else {
+			conditions = append(conditions, "is_online IS FALSE")
+		}
+	}
+
+	if len(conditions) > 0 {
+		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	baseQuery += " ORDER BY created_at ASC"
+
+	var total int64
+	if opts.IsPaginate {
+		countQuery := "SELECT COUNT(*) FROM servers"
+		if len(conditions) > 0 {
+			countQuery += " WHERE " + strings.Join(conditions, " AND ")
+		}
+		if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("failed to count servers: %w", err)
+		}
+
+		offset := (opts.Page - 1) * opts.Limit
+		baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
+		args = append(args, opts.Limit, offset)
+	} else {
+		baseQuery += fmt.Sprintf(" LIMIT %d", opts.Limit)
+	}
+
+	rows, err := r.db.Query(ctx, baseQuery, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("failed to query servers: %w", err)
 	}
 	defer rows.Close()
 
-	var servers []domain.Server
+	var servers []*domain.Server
 	for rows.Next() {
 		var s domain.Server
-		err := rows.Scan(
+
+		if err := rows.Scan(
 			&s.ID,
 			&s.Name,
 			&s.IPAddress,
@@ -46,19 +97,31 @@ func (r *ServerRepository) List(ctx context.Context) ([]domain.Server, error) {
 			&s.OSInfo,
 			&s.CreatedAt,
 			&s.UpdatedAt,
-		)
-		if err != nil {
-			return nil, err
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan servers: %w", err)
 		}
-		servers = append(servers, s)
+
+		servers = append(servers, &s)
 	}
 
-	return servers, nil
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return servers, total, nil
 }
 
 func (r *ServerRepository) GetByID(ctx context.Context, serverID uuid.UUID) (*domain.Server, error) {
 	query := `
-		SELECT id, name, COALESCE(ip_address::text, ''), api_token, is_online, os_info, created_at, updated_at
+		SELECT
+			id,
+			name,
+			COALESCE(ip_address::text, ''),
+			api_token,
+			is_online,
+			os_info,
+			created_at,
+			updated_at
 		FROM servers
 		WHERE id = $1 AND deleted_at IS NULL LIMIT 1
 	`
@@ -86,7 +149,14 @@ func (r *ServerRepository) GetByID(ctx context.Context, serverID uuid.UUID) (*do
 
 func (r *ServerRepository) GetByToken(ctx context.Context, token string) (*domain.Server, error) {
 	query := `
-		SELECT id, name, COALESCE(ip_address::text, ''), is_online, os_info, created_at, updated_at
+		SELECT
+			id,
+			name,
+			COALESCE(ip_address::text, ''),
+			is_online,
+			os_info,
+			created_at,
+			updated_at
 		FROM servers
 		WHERE api_token = $1 AND deleted_at IS NULL LIMIT 1
 	`

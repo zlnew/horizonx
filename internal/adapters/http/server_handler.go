@@ -19,15 +19,28 @@ func NewServerHandler(svc domain.ServerService) *ServerHandler {
 }
 
 func (h *ServerHandler) Index(w http.ResponseWriter, r *http.Request) {
-	servers, err := h.svc.List(r.Context())
+	q := r.URL.Query()
+
+	opts := domain.ServerListOptions{
+		ListOptions: domain.ListOptions{
+			Page:       GetInt(q, "page", 1),
+			Limit:      GetInt(q, "limit", 10),
+			Search:     GetString(q, "search", ""),
+			IsPaginate: GetBool(q, "paginate"),
+		},
+		IsOnline: GetBoolPtr(q, "is_online"),
+	}
+
+	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		JSONError(w, http.StatusInternalServerError, "failed to list servers")
 		return
 	}
 
 	JSONSuccess(w, http.StatusOK, APIResponse{
 		Message: "OK",
-		Data:    servers,
+		Data:    result.Data,
+		Meta:    result.Meta,
 	})
 }
 
