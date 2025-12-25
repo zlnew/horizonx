@@ -26,6 +26,11 @@ type User struct {
 	DeletedAt   *time.Time   `json:"-"`
 }
 
+type UserListOptions struct {
+	ListOptions
+	Roles []string `json:"roles"`
+}
+
 type Role struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
@@ -44,7 +49,7 @@ type UserSaveRequest struct {
 }
 
 type UserRepository interface {
-	List(ctx context.Context, opts ListOptions) ([]*User, int64, error)
+	List(ctx context.Context, opts UserListOptions) ([]*User, int64, error)
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	GetByID(ctx context.Context, ID int64) (*User, error)
 	GetRoleByID(ctx context.Context, roleID int64) (*Role, error)
@@ -54,7 +59,7 @@ type UserRepository interface {
 }
 
 type UserService interface {
-	List(ctx context.Context, opts ListOptions) (*ListResult[*User], error)
+	List(ctx context.Context, opts UserListOptions) (*ListResult[*User], error)
 	Create(ctx context.Context, req UserSaveRequest) error
 	Update(ctx context.Context, req UserSaveRequest, userID int64) error
 	Delete(ctx context.Context, userID int64) error

@@ -34,13 +34,13 @@ func (s *Service) List(ctx context.Context, opts domain.DeploymentListOptions) (
 		}
 	}
 
-	d, total, err := s.repo.List(ctx, opts)
+	deployments, total, err := s.repo.List(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	res := &domain.ListResult[*domain.Deployment]{
-		Data: d,
+		Data: deployments,
 		Meta: nil,
 	}
 

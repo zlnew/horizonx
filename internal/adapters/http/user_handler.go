@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"horizonx-server/internal/adapters/http/middleware"
 	"horizonx-server/internal/domain"
 )
 
@@ -20,21 +21,19 @@ func NewUserHandler(svc domain.UserService) *UserHandler {
 func (h *UserHandler) Index(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	page, _ := strconv.Atoi(q.Get("page"))
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	search := q.Get("search")
-	isPaginate := q.Get("paginate") == "true"
-
-	opts := domain.ListOptions{
-		Page:       page,
-		Limit:      limit,
-		Search:     search,
-		IsPaginate: isPaginate,
+	opts := domain.UserListOptions{
+		ListOptions: domain.ListOptions{
+			Page:       GetInt(q, "page", 1),
+			Limit:      GetInt(q, "limit", 10),
+			Search:     GetString(q, "search", ""),
+			IsPaginate: GetBool(q, "paginate"),
+		},
+		Roles: GetStringSlice(q, "roles"),
 	}
 
 	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		JSONError(w, http.StatusInternalServerError, "failed to list users")
 		return
 	}
 
@@ -48,7 +47,7 @@ func (h *UserHandler) Index(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) Store(w http.ResponseWriter, r *http.Request) {
 	var req domain.UserSaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		JSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -59,15 +58,15 @@ func (h *UserHandler) Store(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.svc.Create(r.Context(), req); err != nil {
 		if errors.Is(err, domain.ErrRoleNotFound) {
-			JSONError(w, http.StatusBadRequest, "Role not found")
+			JSONError(w, http.StatusBadRequest, "role not found")
 		}
 
 		if errors.Is(err, domain.ErrEmailAlreadyExists) {
-			JSONError(w, http.StatusBadRequest, "Email already registered")
+			JSONError(w, http.StatusBadRequest, "email already registered")
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		JSONError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
 
@@ -77,11 +76,15 @@ func (h *UserHandler) Store(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
-	userID := r.PathValue("id")
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		JSONError(w, http.StatusInternalServerError, "invalid user id")
+		return
+	}
 
 	var req domain.UserSaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "Invalid request body")
+		JSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -90,28 +93,22 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
-	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
-		return
-	}
-
-	if err := h.svc.Update(r.Context(), req, parsedUserID); err != nil {
+	if err := h.svc.Update(r.Context(), req, userID); err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
-			JSONError(w, http.StatusNotFound, "User not found")
+			JSONError(w, http.StatusNotFound, "user not found")
 			return
 		}
 
 		if errors.Is(err, domain.ErrRoleNotFound) {
-			JSONError(w, http.StatusBadRequest, "Role not found")
+			JSONError(w, http.StatusBadRequest, "role not found")
 		}
 
 		if errors.Is(err, domain.ErrEmailAlreadyExists) {
-			JSONError(w, http.StatusBadRequest, "Email already registered")
+			JSONError(w, http.StatusBadRequest, "email already registered")
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		JSONError(w, http.StatusInternalServerError, "failed to update user")
 		return
 	}
 
@@ -121,21 +118,30 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Destroy(w http.ResponseWriter, r *http.Request) {
-	userID := r.PathValue("id")
-
-	parsedUserID, err := strconv.ParseInt(userID, 10, 64)
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		JSONError(w, http.StatusInternalServerError, "invalid user id")
 		return
 	}
 
-	if err := h.svc.Delete(r.Context(), parsedUserID); err != nil {
+	currentUserID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		JSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if userID == currentUserID {
+		JSONError(w, http.StatusBadRequest, "you cannot delete yourself")
+		return
+	}
+
+	if err := h.svc.Delete(r.Context(), userID); err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
-			JSONError(w, http.StatusNotFound, "User not found")
+			JSONError(w, http.StatusNotFound, "user not found")
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		JSONError(w, http.StatusInternalServerError, "failed to delete user")
 		return
 	}
 
