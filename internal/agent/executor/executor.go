@@ -24,8 +24,8 @@ type Executor struct {
 func NewExecutor(log logger.Logger, workDir string) *Executor {
 	return &Executor{
 		log:    log,
-		docker: docker.NewManager(log, workDir),
-		git:    git.NewManager(log),
+		docker: docker.NewManager(workDir),
+		git:    git.NewManager(workDir),
 	}
 }
 
@@ -93,29 +93,32 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	appID := payload.ApplicationID
 	source := domain.LogAgent
 	action := domain.ActionAppDeploy
-	repoDir := e.docker.GetAppDir(appID)
 
-	// Fetching source code
-	var gitOut string
-	var gitErr error
+	// Git clone or pull
+	if _, err := e.git.CloneOrPull(ctx, appID, payload.RepoURL, payload.Branch, func(line string, isErr bool) {
+		level := domain.LogInfo
+		stream := domain.StreamStdout
+		if isErr {
+			level = domain.LogError
+			stream = domain.StreamStderr
+		}
 
-	if e.git.IsGitRepo(repoDir) {
-		gitOut, gitErr = e.git.Pull(ctx, repoDir, payload.Branch)
-	} else {
-		gitOut, gitErr = e.git.Clone(ctx, payload.RepoURL, payload.Branch, repoDir)
+		emit(e.emitLog(level, source, action, domain.StepGitClone, stream, line))
+	}); err != nil {
+		return err
 	}
 
-	if gitErr != nil {
-		emit(e.emitLog(domain.LogError, source, action, domain.StepGitClone, domain.StreamStderr, gitOut))
-		return gitErr
-	}
-
-	emit(e.emitLog(domain.LogInfo, source, action, domain.StepGitClone, domain.StreamStdout, gitOut))
-
-	// Fetching commit info
+	// Get git commit info
 	if job.DeploymentID != nil {
-		hash, _ := e.git.GetCurrentCommit(ctx, repoDir)
-		message, _ := e.git.GetCommitMessage(ctx, repoDir)
+		hash, err := e.git.GetCurrentCommit(ctx, appID)
+		if err != nil {
+			return err
+		}
+
+		message, err := e.git.GetCommitMessage(ctx, appID)
+		if err != nil {
+			return err
+		}
 
 		emit(domain.EventCommitInfoEmitted{
 			DeploymentID: *job.DeploymentID,

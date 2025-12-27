@@ -2,73 +2,69 @@
 package git
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
-	"horizonx-server/internal/logger"
+	"horizonx-server/internal/agent/command"
 )
 
 type Manager struct {
-	log logger.Logger
+	workDir string
 }
 
-func NewManager(log logger.Logger) *Manager {
-	return &Manager{log: log}
+func NewManager(workDir string) *Manager {
+	return &Manager{workDir: workDir}
 }
 
-func (m *Manager) Clone(ctx context.Context, repoURL, branch, destDir string) (string, error) {
-	if _, err := os.Stat(destDir); err == nil {
-		m.log.Debug("repository directory exists, pulling instead", "dir", destDir)
-		return m.Pull(ctx, destDir, branch)
-	}
-
-	parent := filepath.Dir(destDir)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", fmt.Errorf("failed to create parent directory: %w", err)
-	}
-
-	args := []string{"clone", "--branch", branch, "--depth", "1", repoURL, destDir}
-	output, err := m.runGitCommand(ctx, parent, args...)
-	if err != nil {
-		return output, fmt.Errorf("git clone failed: %w", err)
-	}
-
-	m.log.Info("repository cloned", "repo", repoURL, "branch", branch, "dest", destDir)
-	return output, nil
+func (m *Manager) GetAppDir(appID int64) string {
+	return filepath.Join(m.workDir, fmt.Sprintf("app-%d", appID))
 }
 
-func (m *Manager) Pull(ctx context.Context, repoDir, branch string) (string, error) {
-	if _, err := m.runGitCommand(ctx, repoDir, "checkout", branch); err != nil {
-		m.log.Warn("failed to checkout branch, continuing", "branch", branch, "error", err)
+func (m *Manager) CloneOrPull(ctx context.Context, appID int64, remoteURL, branch string, handlers ...command.StreamHandler) (string, error) {
+	appDir := m.GetAppDir(appID)
+
+	if yes := m.IsGitRepo(appDir); yes {
+		return m.Pull(ctx, appID, branch, handlers...)
 	}
 
-	output, err := m.runGitCommand(ctx, repoDir, "pull", "origin", branch)
-	if err != nil {
-		return output, fmt.Errorf("git pull failed: %w", err)
-	}
-
-	m.log.Info("repository updated", "branch", branch, "dir", repoDir)
-	return output, nil
+	return m.Clone(ctx, appID, remoteURL, branch, handlers...)
 }
 
-func (m *Manager) GetCurrentCommit(ctx context.Context, repoDir string) (string, error) {
-	output, err := m.runGitCommand(ctx, repoDir, "rev-parse", "HEAD")
-	if err != nil {
-		return "", fmt.Errorf("failed to get commit hash: %w", err)
-	}
-	return output, nil
+func (m *Manager) Clone(ctx context.Context, appID int64, remoteURL, branch string, handlers ...command.StreamHandler) (string, error) {
+	appDir := m.GetAppDir(appID)
+	args := []string{"clone", "--branch", branch, "--depth", "1", remoteURL, appDir}
+
+	cmd := command.NewCommand(appDir, "git", args...)
+	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) GetCommitMessage(ctx context.Context, repoDir string) (string, error) {
-	output, err := m.runGitCommand(ctx, repoDir, "log", "-1", "--pretty=%B")
-	if err != nil {
-		return "", fmt.Errorf("failed to get commit message: %w", err)
+func (m *Manager) Pull(ctx context.Context, appID int64, branch string, handlers ...command.StreamHandler) (string, error) {
+	appDir := m.GetAppDir(appID)
+
+	checkout := command.NewCommand(appDir, "git", "checkout", branch)
+	if output, err := checkout.Run(ctx, handlers...); err != nil {
+		return output, err
 	}
-	return output, nil
+
+	pull := command.NewCommand(appDir, "git", "pull", "origin", branch)
+	return pull.Run(ctx, handlers...)
+}
+
+func (m *Manager) GetCurrentCommit(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
+	appDir := m.GetAppDir(appID)
+
+	cmd := command.NewCommand(appDir, "git", "rev-parse", "HEAD")
+	return cmd.Run(ctx, handlers...)
+}
+
+func (m *Manager) GetCommitMessage(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
+	appDir := m.GetAppDir(appID)
+
+	cmd := command.NewCommand(appDir, "git", "log", "-1", "--pretty=%B")
+	return cmd.Run(ctx, handlers...)
 }
 
 func (m *Manager) IsGitRepo(dir string) bool {
@@ -77,40 +73,9 @@ func (m *Manager) IsGitRepo(dir string) bool {
 	return err == nil
 }
 
-func (m *Manager) runGitCommand(ctx context.Context, workDir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = workDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	m.log.Debug("running git command", "cmd", cmd.String(), "dir", workDir)
-
-	err := cmd.Run()
-
-	output := stdout.String()
-	if stderr.Len() > 0 {
-		output += "\n" + stderr.String()
-	}
-
-	if err != nil {
-		m.log.Error("git command failed",
-			"cmd", cmd.String(),
-			"error", err,
-			"output", output,
-		)
-		return output, fmt.Errorf("git command failed: %w", err)
-	}
-
-	m.log.Debug("git command succeeded", "cmd", cmd.String())
-	return output, nil
-}
-
 func (m *Manager) IsGitInstalled() bool {
 	cmd := exec.Command("git", "--version")
 	if err := cmd.Run(); err != nil {
-		m.log.Warn("git not found in PATH")
 		return false
 	}
 	return true

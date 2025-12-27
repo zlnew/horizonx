@@ -2,32 +2,23 @@
 package docker
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 
-	"horizonx-server/internal/logger"
+	"horizonx-server/internal/agent/command"
 )
 
-type StreamHandler func(line string, isErr bool)
-
 type Manager struct {
-	log     logger.Logger
 	workDir string
 }
 
-func NewManager(log logger.Logger, workDir string) *Manager {
-	return &Manager{
-		log:     log,
-		workDir: workDir,
-	}
+func NewManager(workDir string) *Manager {
+	return &Manager{workDir: workDir}
 }
 
 func (m *Manager) Initialize() error {
@@ -35,7 +26,6 @@ func (m *Manager) Initialize() error {
 		return fmt.Errorf("failed to create work directory: %w", err)
 	}
 
-	m.log.Info("docker manager initialized", "work_dir", m.workDir)
 	return nil
 }
 
@@ -43,9 +33,7 @@ func (m *Manager) GetAppDir(appID int64) string {
 	return filepath.Join(m.workDir, fmt.Sprintf("app-%d", appID))
 }
 
-func (m *Manager) ComposeUp(ctx context.Context, appID int64, detached, build bool, onStream StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-
+func (m *Manager) ComposeUp(ctx context.Context, appID int64, detached, build bool, handlers ...command.StreamHandler) (string, error) {
 	args := []string{"compose", "up"}
 	if detached {
 		args = append(args, "-d")
@@ -54,48 +42,48 @@ func (m *Manager) ComposeUp(ctx context.Context, appID int64, detached, build bo
 		args = append(args, "--build")
 	}
 
-	return m.Run(ctx, appDir, onStream, args...)
+	cmd := command.NewCommand(m.GetAppDir(appID), "docker", args...)
+	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeDown(ctx context.Context, appID int64, removeVolumes bool, onStream StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-
+func (m *Manager) ComposeDown(ctx context.Context, appID int64, removeVolumes bool, handlers ...command.StreamHandler) (string, error) {
 	args := []string{"compose", "down"}
 	if removeVolumes {
 		args = append(args, "-v")
 	}
 
-	return m.Run(ctx, appDir, onStream, args...)
+	cmd := command.NewCommand(m.GetAppDir(appID), "docker", args...)
+	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeStop(ctx context.Context, appID int64, onStream StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-	return m.Run(ctx, appDir, onStream, "compose", "stop")
+func (m *Manager) ComposeStop(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(m.GetAppDir(appID), "docker", "compose", "stop")
+	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeStart(ctx context.Context, appID int64, onStream StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-	return m.Run(ctx, appDir, onStream, "compose", "start")
+func (m *Manager) ComposeStart(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(m.GetAppDir(appID), "docker", "compose", "start")
+	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeRestart(ctx context.Context, appID int64, onStream StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-	return m.Run(ctx, appDir, onStream, "compose", "restart")
+func (m *Manager) ComposeRestart(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(m.GetAppDir(appID), "docker", "compose", "restart")
+	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeLogs(ctx context.Context, appID int64, tail int, onStream StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
+func (m *Manager) ComposeLogs(ctx context.Context, appID int64, tail int, handlers ...command.StreamHandler) (string, error) {
 	args := []string{"compose", "logs"}
 	if tail > 0 {
 		args = append(args, "--tail", fmt.Sprintf("%d", tail))
 	}
 
-	return m.Run(ctx, appDir, onStream, args...)
+	cmd := command.NewCommand(m.GetAppDir(appID), "docker", args...)
+	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposePs(ctx context.Context, appID int64, onStream StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-	return m.Run(ctx, appDir, onStream, "compose", "ps")
+func (m *Manager) ComposePs(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(m.GetAppDir(appID), "docker", "compose", "ps")
+	return cmd.Run(ctx, handlers...)
 }
 
 func (m *Manager) ValidateDockerComposeFile(appID int64) error {
@@ -135,90 +123,4 @@ func (m *Manager) IsDockerInstalled() bool {
 
 func (m *Manager) IsDockerComposeAvailable() bool {
 	return exec.Command("docker", "compose", "version").Run() == nil
-}
-
-func (m *Manager) Run(ctx context.Context, workDir string, onStream StreamHandler, args ...string) (string, error) {
-	var buf bytes.Buffer
-
-	err := m.RunStream(ctx, workDir, func(line string, isErr bool) {
-		buf.WriteString(line + "\n")
-		if onStream != nil {
-			onStream(line, isErr)
-		}
-	}, args...)
-
-	return buf.String(), err
-}
-
-func (m *Manager) RunStream(ctx context.Context, workDir string, onStream StreamHandler, args ...string) error {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Dir = workDir
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	errCount := 2
-	done := make(chan error, errCount)
-
-	var stderrBuf []string
-	var mu sync.Mutex
-
-	stream := func(r io.Reader) {
-		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 1024), 1024*1024)
-
-		for scanner.Scan() {
-			raw := scanner.Text()
-			raw = strings.ReplaceAll(raw, "\r\n", "\n")
-			raw = strings.ReplaceAll(raw, "\r", "\n")
-
-			lines := strings.SplitSeq(raw, "\n")
-			for line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-
-				onStream(line, false)
-
-				mu.Lock()
-				stderrBuf = append(stderrBuf, line)
-				mu.Unlock()
-			}
-		}
-
-		done <- scanner.Err()
-	}
-
-	go stream(stdout)
-	go stream(stderr)
-
-	for range errCount {
-		if err := <-done; err != nil {
-			return err
-		}
-	}
-
-	if err := cmd.Wait(); err != nil {
-		mu.Lock()
-		for _, line := range stderrBuf {
-			onStream(line, true)
-		}
-		mu.Unlock()
-
-		return fmt.Errorf("docker command failed: %w", err)
-	}
-
-	return nil
 }
