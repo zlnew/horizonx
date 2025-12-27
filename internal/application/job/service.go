@@ -101,8 +101,8 @@ func (s *JobService) Create(ctx context.Context, j *domain.Job) (*domain.Job, er
 		})
 
 		s.bus.Publish("job_status_changed", domain.EventJobStatusChanged{
-			TraceID: job.TraceID,
 			JobID:   job.ID,
+			TraceID: job.TraceID,
 			Status:  job.Status,
 		})
 	}
@@ -131,8 +131,8 @@ func (s *JobService) Start(ctx context.Context, jobID int64) (*domain.Job, error
 		})
 
 		s.bus.Publish("job_status_changed", domain.EventJobStatusChanged{
-			TraceID: job.TraceID,
 			JobID:   job.ID,
+			TraceID: job.TraceID,
 			Status:  job.Status,
 		})
 	}
@@ -158,8 +158,8 @@ func (s *JobService) Finish(ctx context.Context, jobID int64, status domain.JobS
 		})
 
 		s.bus.Publish("job_status_changed", domain.EventJobStatusChanged{
-			TraceID: job.TraceID,
 			JobID:   job.ID,
+			TraceID: job.TraceID,
 			Status:  job.Status,
 		})
 	}

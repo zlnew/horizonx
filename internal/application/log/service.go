@@ -62,19 +62,7 @@ func (s *LogService) Emit(ctx context.Context, l *domain.Log) (*domain.Log, erro
 	}
 
 	if s.bus != nil {
-		s.bus.Publish("log_received", domain.EventLogReceived{
-			ID:            log.ID,
-			Timestamp:     log.Timestamp,
-			Level:         log.Level,
-			Source:        log.Source,
-			Action:        log.Action,
-			TraceID:       log.TraceID,
-			ServerID:      log.ServerID,
-			ApplicationID: log.ApplicationID,
-			DeploymentID:  log.DeploymentID,
-			Message:       log.Message,
-			Context:       log.Context,
-		})
+		s.bus.Publish("log_received", l)
 	}
 
 	return log, nil

@@ -210,67 +210,90 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, deploymentID int64) 
 	return &d, nil
 }
 
-func (r *DeploymentRepository) Create(ctx context.Context, deployment *domain.Deployment) (*domain.Deployment, error) {
+func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment) (*domain.Deployment, error) {
 	query := `
-		INSERT INTO deployments (application_id, branch, deployed_by, status, triggered_at)
+		INSERT INTO deployments (
+			application_id,
+			branch,
+			deployed_by,
+			status,
+			triggered_at
+		)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, triggered_at
+		RETURNING
+			id,
+			application_id,
+			deployed_by,
+			triggered_at
 	`
 
 	now := time.Now().UTC()
-	err := r.db.QueryRow(
-		ctx, query,
-		deployment.ApplicationID,
-		deployment.Branch,
-		deployment.DeployedBy,
+	if err := r.db.QueryRow(ctx, query,
+		d.ApplicationID,
+		d.Branch,
+		d.DeployedBy,
 		domain.DeploymentPending,
 		now,
-	).Scan(&deployment.ID, &deployment.TriggeredAt)
-	if err != nil {
+	).Scan(
+		&d.ID,
+		&d.ApplicationID,
+		&d.DeployedBy,
+		&d.TriggeredAt,
+	); err != nil {
 		return nil, fmt.Errorf("failed to create deployment: %w", err)
 	}
 
-	return deployment, nil
+	return d, nil
 }
 
-func (r *DeploymentRepository) Start(ctx context.Context, deploymentID int64) error {
+func (r *DeploymentRepository) Start(ctx context.Context, deploymentID int64) (*domain.Deployment, error) {
 	query := `
 		UPDATE deployments 
 		SET started_at = $1
 		WHERE id = $2
+		RETURNING
+			id,
+			application_id,
+			started_at
 	`
 
+	var d domain.Deployment
 	now := time.Now().UTC()
-	ct, err := r.db.Exec(ctx, query, now, deploymentID)
-	if err != nil {
-		return fmt.Errorf("failed to start deployment: %w", err)
+	if err := r.db.QueryRow(ctx, query, now, deploymentID).Scan(
+		&d.ID,
+		&d.ApplicationID,
+		&d.StartedAt,
+	); err != nil {
+		return nil, fmt.Errorf("failed to start deployment: %w", err)
 	}
 
-	if ct.RowsAffected() == 0 {
-		return domain.ErrDeploymentNotFound
-	}
-
-	return nil
+	return &d, nil
 }
 
-func (r *DeploymentRepository) Finish(ctx context.Context, deploymentID int64) error {
+func (r *DeploymentRepository) Finish(ctx context.Context, deploymentID int64) (*domain.Deployment, error) {
 	query := `
 		UPDATE deployments 
 		SET finished_at = $1
 		WHERE id = $2
+		RETURNING
+			id,
+			application_id,
+			status,
+			finished_at
 	`
 
+	var d domain.Deployment
 	now := time.Now().UTC()
-	ct, err := r.db.Exec(ctx, query, now, deploymentID)
-	if err != nil {
-		return fmt.Errorf("failed to finish deployment: %w", err)
+	if err := r.db.QueryRow(ctx, query, now, deploymentID).Scan(
+		&d.ID,
+		&d.ApplicationID,
+		&d.Status,
+		&d.FinishedAt,
+	); err != nil {
+		return nil, fmt.Errorf("failed to finish deployment: %w", err)
 	}
 
-	if ct.RowsAffected() == 0 {
-		return domain.ErrDeploymentNotFound
-	}
-
-	return nil
+	return &d, nil
 }
 
 func (r *DeploymentRepository) UpdateStatus(ctx context.Context, deploymentID int64, status domain.DeploymentStatus) (*domain.Deployment, error) {

@@ -7,8 +7,8 @@ import (
 )
 
 type EventJobCreated struct {
-	TraceID       uuid.UUID `json:"trace_id"`
 	JobID         int64     `json:"job_id"`
+	TraceID       uuid.UUID `json:"trace_id"`
 	ServerID      uuid.UUID `json:"server_id"`
 	ApplicationID *int64    `json:"application_id"`
 	DeploymentID  *int64    `json:"deployment_id"`
@@ -16,8 +16,8 @@ type EventJobCreated struct {
 }
 
 type EventJobStarted struct {
-	TraceID       uuid.UUID `json:"trace_id"`
 	JobID         int64     `json:"job_id"`
+	TraceID       uuid.UUID `json:"trace_id"`
 	ServerID      uuid.UUID `json:"server_id"`
 	ApplicationID *int64    `json:"application_id"`
 	DeploymentID  *int64    `json:"deployment_id"`
@@ -25,8 +25,8 @@ type EventJobStarted struct {
 }
 
 type EventJobFinished struct {
-	TraceID       uuid.UUID `json:"trace_id"`
 	JobID         int64     `json:"job_id"`
+	TraceID       uuid.UUID `json:"trace_id"`
 	ServerID      uuid.UUID `json:"server_id"`
 	ApplicationID *int64    `json:"application_id"`
 	DeploymentID  *int64    `json:"deployment_id"`
@@ -35,8 +35,8 @@ type EventJobFinished struct {
 }
 
 type EventJobStatusChanged struct {
-	TraceID uuid.UUID `json:"trace_id"`
 	JobID   int64     `json:"job_id"`
+	TraceID uuid.UUID `json:"trace_id"`
 	Status  JobStatus `json:"status"`
 }
 

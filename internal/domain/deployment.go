@@ -60,8 +60,8 @@ type DeploymentRepository interface {
 	List(ctx context.Context, opts DeploymentListOptions) ([]*Deployment, int64, error)
 	GetByID(ctx context.Context, deploymentID int64) (*Deployment, error)
 	Create(ctx context.Context, deployment *Deployment) (*Deployment, error)
-	Start(ctx context.Context, deploymentID int64) error
-	Finish(ctx context.Context, deploymentID int64) error
+	Start(ctx context.Context, deploymentID int64) (*Deployment, error)
+	Finish(ctx context.Context, deploymentID int64) (*Deployment, error)
 	UpdateStatus(ctx context.Context, deploymentID int64, status DeploymentStatus) (*Deployment, error)
 	UpdateCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) (*Deployment, error)
 }

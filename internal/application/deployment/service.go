@@ -97,12 +97,7 @@ func (s *Service) Create(ctx context.Context, req domain.DeploymentCreateRequest
 		s.bus.Publish("deployment_created", domain.EventDeploymentCreated{
 			DeploymentID:  created.ID,
 			ApplicationID: created.ApplicationID,
-		})
-
-		s.bus.Publish("deployment_status_changed", domain.EventDeploymentStatusChanged{
-			DeploymentID:  created.ID,
-			ApplicationID: created.ApplicationID,
-			Status:        created.Status,
+			TriggeredAt:   created.TriggeredAt,
 		})
 	}
 
@@ -110,11 +105,38 @@ func (s *Service) Create(ctx context.Context, req domain.DeploymentCreateRequest
 }
 
 func (s *Service) Start(ctx context.Context, deploymentID int64) error {
-	return s.repo.Start(ctx, deploymentID)
+	d, err := s.repo.Start(ctx, deploymentID)
+	if err != nil {
+		return err
+	}
+
+	if s.bus != nil {
+		s.bus.Publish("deployment_started", domain.EventDeploymentStarted{
+			DeploymentID:  d.ID,
+			ApplicationID: d.ApplicationID,
+			StartedAt:     *d.StartedAt,
+		})
+	}
+
+	return nil
 }
 
 func (s *Service) Finish(ctx context.Context, deploymentID int64) error {
-	return s.repo.Finish(ctx, deploymentID)
+	d, err := s.repo.Finish(ctx, deploymentID)
+	if err != nil {
+		return err
+	}
+
+	if s.bus != nil {
+		s.bus.Publish("deployment_finished", domain.EventDeploymentFinished{
+			DeploymentID:  d.ID,
+			ApplicationID: d.ApplicationID,
+			Status:        d.Status,
+			FinishedAt:    *d.FinishedAt,
+		})
+	}
+
+	return nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, deploymentID int64, status domain.DeploymentStatus) error {

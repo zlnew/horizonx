@@ -14,7 +14,7 @@ func NewLogReceived(hub *userws.Hub) *LogReceived {
 }
 
 func (s *LogReceived) Handle(event any) {
-	evt, ok := event.(domain.EventLogReceived)
+	evt, ok := event.(domain.Log)
 	if !ok {
 		return
 	}

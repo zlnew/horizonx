@@ -23,8 +23,28 @@ func NewListener(svc domain.DeploymentService, log logger.Logger) *Listener {
 }
 
 func (l *Listener) Register(bus *event.Bus) {
+	bus.Subscribe("job_created", l.handleJobCreated)
 	bus.Subscribe("job_started", l.handleJobStarted)
 	bus.Subscribe("job_finished", l.handleJobFinished)
+}
+
+func (l *Listener) handleJobCreated(event any) {
+	evt, ok := event.(domain.EventJobCreated)
+	if !ok {
+		l.log.Warn("invalid event payload for job_created", "event", event)
+		return
+	}
+
+	if evt.DeploymentID == nil || evt.ApplicationID == nil || evt.Type != domain.JobTypeAppDeploy {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_ = l.updateStatus(ctx, *evt.DeploymentID, domain.DeploymentPending)
+
+	l.log.Debug("deployment created", "deployment_id", *evt.DeploymentID)
 }
 
 func (l *Listener) handleJobStarted(event any) {
