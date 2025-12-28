@@ -9,16 +9,16 @@ import (
 )
 
 type JobService struct {
-	repo    domain.JobRepository
-	logRepo domain.LogRepository
-	bus     *event.Bus
+	repo   domain.JobRepository
+	logSvc domain.LogService
+	bus    *event.Bus
 }
 
-func NewService(repo domain.JobRepository, logRepo domain.LogRepository, events *event.Bus) domain.JobService {
+func NewService(repo domain.JobRepository, logSvc domain.LogService, events *event.Bus) domain.JobService {
 	return &JobService{
-		repo:    repo,
-		logRepo: logRepo,
-		bus:     events,
+		repo:   repo,
+		logSvc: logSvc,
+		bus:    events,
 	}
 }
 
@@ -63,17 +63,16 @@ func (s *JobService) GetByID(ctx context.Context, jobID int64) (*domain.Job, err
 		return nil, err
 	}
 
-	logs, _, err := s.logRepo.List(ctx, domain.LogListOptions{
-		ListOptions: domain.ListOptions{Limit: 1000},
-		JobID:       &job.ID,
+	logs, err := s.logSvc.List(ctx, domain.LogListOptions{
+		JobID: &job.ID,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if len(logs) > 0 {
-		job.Logs = make([]domain.Log, 0, len(logs))
-		for _, l := range logs {
+	if len(logs.Data) > 0 {
+		job.Logs = make([]domain.Log, 0, len(logs.Data))
+		for _, l := range logs.Data {
 			if l == nil {
 				continue
 			}

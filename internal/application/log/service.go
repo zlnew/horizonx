@@ -51,12 +51,8 @@ func (s *LogService) List(ctx context.Context, opts domain.LogListOptions) (*dom
 	return res, nil
 }
 
-func (s *LogService) GetByID(ctx context.Context, logID int64) (*domain.Log, error) {
-	return s.repo.GetByID(ctx, logID)
-}
-
-func (s *LogService) Emit(ctx context.Context, l *domain.Log) (*domain.Log, error) {
-	log, err := s.repo.Emit(ctx, l)
+func (s *LogService) Create(ctx context.Context, l *domain.Log) (*domain.Log, error) {
+	log, err := s.repo.Create(ctx, l)
 	if err != nil {
 		return nil, err
 	}

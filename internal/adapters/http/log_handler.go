@@ -72,12 +72,12 @@ func (h *LogHandler) Store(w http.ResponseWriter, r *http.Request) {
 		Message:       req.Message,
 		Context:       req.Context,
 	}
-	if _, err := h.svc.Emit(r.Context(), l); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to emit log")
+	if _, err := h.svc.Create(r.Context(), l); err != nil {
+		JSONError(w, http.StatusInternalServerError, "failed to create log")
 		return
 	}
 
 	JSONSuccess(w, http.StatusCreated, APIResponse{
-		Message: "log emitted successfully",
+		Message: "log created successfully",
 	})
 }

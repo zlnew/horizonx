@@ -2,14 +2,12 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"horizonx-server/internal/domain"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -165,53 +163,7 @@ func (r *LogRepository) List(ctx context.Context, opts domain.LogListOptions) ([
 	return logs, total, nil
 }
 
-func (r *LogRepository) GetByID(ctx context.Context, logID int64) (*domain.Log, error) {
-	query := `
-		SELECT
-			id,
-			timestamp,
-			level,
-			source,
-			action,
-			trace_id,
-			job_id,
-			server_id,
-			application_id,
-			deployment_id,
-			message,
-			context,
-			created_at
-		FROM logs
-		WHERE id = $1
-		LIMIT 1
-	`
-
-	var l domain.Log
-	if err := r.db.QueryRow(ctx, query, logID).Scan(
-		&l.ID,
-		&l.Timestamp,
-		&l.Level,
-		&l.Source,
-		&l.Action,
-		&l.TraceID,
-		&l.JobID,
-		&l.ServerID,
-		&l.ApplicationID,
-		&l.DeploymentID,
-		&l.Message,
-		&l.Context,
-		&l.CreatedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrLogNotFound
-		}
-		return nil, fmt.Errorf("failed to get log: %w", err)
-	}
-
-	return &l, nil
-}
-
-func (r *LogRepository) Emit(ctx context.Context, l *domain.Log) (*domain.Log, error) {
+func (r *LogRepository) Create(ctx context.Context, l *domain.Log) (*domain.Log, error) {
 	query := `
 		INSERT INTO logs
 		(

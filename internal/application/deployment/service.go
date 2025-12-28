@@ -9,16 +9,16 @@ import (
 )
 
 type Service struct {
-	repo    domain.DeploymentRepository
-	logRepo domain.LogRepository
-	bus     *event.Bus
+	repo   domain.DeploymentRepository
+	logSvc domain.LogService
+	bus    *event.Bus
 }
 
-func NewService(repo domain.DeploymentRepository, logRepo domain.LogRepository, bus *event.Bus) domain.DeploymentService {
+func NewService(repo domain.DeploymentRepository, logSvc domain.LogService, bus *event.Bus) domain.DeploymentService {
 	return &Service{
-		repo:    repo,
-		logRepo: logRepo,
-		bus:     bus,
+		repo:   repo,
+		logSvc: logSvc,
+		bus:    bus,
 	}
 }
 
@@ -59,17 +59,16 @@ func (s *Service) GetByID(ctx context.Context, deploymentID int64) (*domain.Depl
 		return nil, err
 	}
 
-	logs, _, err := s.logRepo.List(ctx, domain.LogListOptions{
-		ListOptions:  domain.ListOptions{Limit: 1000},
+	logs, err := s.logSvc.List(ctx, domain.LogListOptions{
 		DeploymentID: &deployment.ID,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if len(logs) > 0 {
-		deployment.Logs = make([]domain.Log, 0, len(logs))
-		for _, l := range logs {
+	if len(logs.Data) > 0 {
+		deployment.Logs = make([]domain.Log, 0, len(logs.Data))
+		for _, l := range logs.Data {
 			if l == nil {
 				continue
 			}

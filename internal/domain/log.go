@@ -112,12 +112,10 @@ type LogEmitRequest struct {
 
 type LogRepository interface {
 	List(ctx context.Context, opts LogListOptions) ([]*Log, int64, error)
-	GetByID(ctx context.Context, logID int64) (*Log, error)
-	Emit(ctx context.Context, l *Log) (*Log, error)
+	Create(ctx context.Context, l *Log) (*Log, error)
 }
 
 type LogService interface {
 	List(ctx context.Context, opts LogListOptions) (*ListResult[*Log], error)
-	GetByID(ctx context.Context, logID int64) (*Log, error)
-	Emit(ctx context.Context, l *Log) (*Log, error)
+	Create(ctx context.Context, l *Log) (*Log, error)
 }
