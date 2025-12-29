@@ -47,9 +47,6 @@ HORIZONX_API_URL="http://localhost:3000"
 HORIZONX_WS_URL="ws://localhost:3000/agent/ws"
 HORIZONX_SERVER_API_TOKEN="hzx_secret"
 HORIZONX_SERVER_ID="123"
-
-AGENT_LOG_LEVEL="info"
-AGENT_LOG_FORMAT="text"
 EOF
   echo
   echo "!!! IMPORTANT !!!"

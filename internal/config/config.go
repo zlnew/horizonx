@@ -29,8 +29,6 @@ type Config struct {
 	AgentTargetWsURL    string
 	AgentServerAPIToken string
 	AgentServerID       uuid.UUID
-	AgentLogLevel       string
-	AgentLogFormat      string
 }
 
 func Load() *Config {
@@ -102,10 +100,6 @@ func Load() *Config {
 		}
 	}
 
-	// AGENT Logs
-	agentLogLevel := getEnv("AGENT_LOG_LEVEL", "info")
-	agentLogFormat := getEnv("AGENT_LOG_FORMAT", "text")
-
 	return &Config{
 		Address:        addr,
 		AllowedOrigins: origins,
@@ -124,8 +118,6 @@ func Load() *Config {
 		AgentTargetWsURL:    agentTargetWsURL,
 		AgentServerAPIToken: agentServerAPIToken,
 		AgentServerID:       agentServerID,
-		AgentLogLevel:       agentLogLevel,
-		AgentLogFormat:      agentLogFormat,
 	}
 }
 

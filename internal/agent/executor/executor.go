@@ -17,14 +17,14 @@ import (
 type EmitHandler = func(event any)
 
 type Executor struct {
-	metrics func() domain.Metrics
+	metrics func() *domain.Metrics
 	docker  *docker.Manager
 	git     *git.Manager
 
 	log logger.Logger
 }
 
-func NewExecutor(workDir string, metrics func() domain.Metrics, log logger.Logger) *Executor {
+func NewExecutor(workDir string, metrics func() *domain.Metrics, log logger.Logger) *Executor {
 	return &Executor{
 		docker:  docker.NewManager(workDir),
 		git:     git.NewManager(workDir),

@@ -21,7 +21,7 @@ type JobWorker struct {
 	executor *executor.Executor
 }
 
-func NewJobWorker(cfg *config.Config, log logger.Logger, metrics func() domain.Metrics) *JobWorker {
+func NewJobWorker(cfg *config.Config, log logger.Logger, metrics func() *domain.Metrics) *JobWorker {
 	return &JobWorker{
 		cfg:      cfg,
 		log:      log,
@@ -150,12 +150,12 @@ func (w *JobWorker) execute(job domain.Job) error {
 	bus := event.New()
 
 	bus.Subscribe("metrics", func(event any) {
-		metrics, ok := event.(domain.Metrics)
+		metrics, ok := event.(*domain.Metrics)
 		if !ok {
 			return
 		}
 
-		if err := w.client.SendMetrics(ctx, &metrics); err != nil {
+		if err := w.client.SendMetrics(ctx, metrics); err != nil {
 			w.log.Error("failed to send metrics", "error", err)
 		}
 	})
@@ -180,7 +180,7 @@ func (w *JobWorker) execute(job domain.Job) error {
 
 	onEmit := func(event any) {
 		switch event.(type) {
-		case domain.Metrics:
+		case *domain.Metrics:
 			bus.Publish("metrics", event)
 		case domain.EventLogEmitted:
 			bus.Publish("log", event)

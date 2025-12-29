@@ -10,6 +10,15 @@ import (
 
 var ErrMetricsNotFound = errors.New("metrics not found")
 
+type ServerMetrics struct {
+	ID                 int64     `json:"id"`
+	ServerID           uuid.UUID `json:"server_id"`
+	CPUUsagePercent    float64   `json:"cpu_usage_percent"`
+	MemoryUsagePercent float64   `json:"memory_usage_percent"`
+	Data               Metrics   `json:"data"`
+	RecordedAt         time.Time `json:"recorded_at"`
+}
+
 type Metrics struct {
 	ServerID      uuid.UUID     `json:"server_id"`
 	OSInfo        OSInfo        `json:"os_info"`
@@ -38,17 +47,15 @@ type CPUMetric struct {
 }
 
 type GPUMetric struct {
-	ID               int     `json:"id"`
 	Card             string  `json:"card"`
 	Vendor           string  `json:"vendor"`
-	Model            string  `json:"model"`
-	Temperature      float64 `json:"temperature"`
-	CoreUsagePercent float64 `json:"core_usage_percent"`
+	Temperature      int     `json:"temperature"`
+	CoreUsagePercent int     `json:"core_usage_percent"`
+	FrequencyMhz     int     `json:"frequency_mhz"`
 	VRAMTotalGB      float64 `json:"vram_total_gb"`
 	VRAMUsedGB       float64 `json:"vram_used_gb"`
 	VRAMPercent      float64 `json:"vram_percent"`
 	PowerWatt        float64 `json:"power_watt"`
-	FanSpeedPercent  float64 `json:"fan_speed_percent"`
 }
 
 type MemoryMetric struct {
@@ -62,9 +69,14 @@ type MemoryMetric struct {
 }
 
 type DiskMetric struct {
-	Name        string            `json:"name"`
-	RawSizeGB   float64           `json:"raw_size_gb"`
-	Temperature float64           `json:"temperature"`
+	Name        string  `json:"name"`
+	RawSizeGB   float64 `json:"raw_size_gb"`
+	Temperature float64 `json:"temperature"`
+
+	ReadMBps  float64 `json:"read_mbps"`
+	WriteMBps float64 `json:"write_mbps"`
+	UtilPct   float64 `json:"util_pct"`
+
 	Filesystems []FilesystemUsage `json:"filesystems"`
 }
 
@@ -78,14 +90,10 @@ type FilesystemUsage struct {
 }
 
 type NetworkMetric struct {
-	RXBytes uint64  `json:"rx_bytes"`
-	TXBytes uint64  `json:"tx_bytes"`
-	RXSpeed float64 `json:"rx_speed"`
-	TXSpeed float64 `json:"tx_speed"`
-}
-
-type MetricsPayload struct {
-	Metrics []Metrics `json:"metrics" validate:"required,dive"`
+	RXBytes    uint64  `json:"rx_bytes"`
+	TXBytes    uint64  `json:"tx_bytes"`
+	RXSpeedMBs float64 `json:"rx_speed_mbs"`
+	TXSpeedMBs float64 `json:"tx_speed_mbs"`
 }
 
 type MetricsService interface {
