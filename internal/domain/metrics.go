@@ -21,7 +21,6 @@ type ServerMetrics struct {
 
 type Metrics struct {
 	ServerID      uuid.UUID     `json:"server_id"`
-	OSInfo        OSInfo        `json:"os_info"`
 	CPU           CPUMetric     `json:"cpu"`
 	GPU           []GPUMetric   `json:"gpu"`
 	Memory        MemoryMetric  `json:"memory"`
