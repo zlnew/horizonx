@@ -80,6 +80,10 @@ func (s *Service) Latest(serverID uuid.UUID) (*domain.Metrics, error) {
 	return &metrics, nil
 }
 
+func (s *Service) Cleanup(ctx context.Context, serverID uuid.UUID, cutoff time.Time) error {
+	return s.repo.Cleanup(ctx, serverID, cutoff)
+}
+
 func (s *Service) backgroundFlusher() {
 	ticker := time.NewTicker(s.cfg.MetricsFlushInterval)
 	defer ticker.Stop()

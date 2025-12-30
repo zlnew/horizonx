@@ -105,8 +105,10 @@ type NetworkMetric struct {
 type MetricsService interface {
 	Ingest(m Metrics) error
 	Latest(serverID uuid.UUID) (*Metrics, error)
+	Cleanup(ctx context.Context, serverID uuid.UUID, cutoff time.Time) error
 }
 
 type MetricsRepository interface {
 	BulkInsert(ctx context.Context, metrics []Metrics) error
+	Cleanup(ctx context.Context, serverID uuid.UUID, cutoff time.Time) error
 }

@@ -50,8 +50,9 @@ func (m *Manager) Start(ctx context.Context) {
 	})
 
 	m.scheduler.RunDaily(ctx, DailySchedule{Hour: 2, Minute: 0}, &MetricsCleanupWorker{
-		svc: m.services.Metrics,
-		log: m.log,
+		metrics: m.services.Metrics,
+		server:  m.services.Server,
+		log:     m.log,
 	})
 
 	m.scheduler.RunByDuration(ctx, 10*time.Minute, &ApplicationHealthCheckWorker{
