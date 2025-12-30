@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"horizonx-server/internal/agent/command"
 	"horizonx-server/internal/agent/docker"
 	"horizonx-server/internal/agent/git"
 	"horizonx-server/internal/domain"
@@ -70,11 +71,7 @@ func (e *Executor) Execute(ctx context.Context, job *domain.Job, emit EmitHandle
 	}
 }
 
-func (e *Executor) emitLogHandler(
-	emit EmitHandler,
-	action domain.LogAction,
-	step domain.LogStep,
-) func(line string, stream domain.LogStream, level domain.LogLevel) {
+func (e *Executor) logStreamHandler(emit EmitHandler, action domain.LogAction, step domain.LogStep) command.StreamHandler {
 	return func(line string, stream domain.LogStream, level domain.LogLevel) {
 		emit(domain.EventLogEmitted{
 			Timestamp: time.Now().UTC(),
@@ -89,6 +86,26 @@ func (e *Executor) emitLogHandler(
 			},
 		})
 	}
+}
+
+func (e *Executor) logErrorHandler(
+	message string,
+	emit EmitHandler,
+	action domain.LogAction,
+	step domain.LogStep,
+) {
+	emit(domain.EventLogEmitted{
+		Timestamp: time.Now().UTC(),
+		Level:     domain.LogError,
+		Source:    domain.LogAgent,
+		Action:    action,
+		Message:   message,
+		Context: &domain.LogContext{
+			Step:   step,
+			Stream: domain.StreamStderr,
+			Line:   message,
+		},
+	})
 }
 
 func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
@@ -107,12 +124,18 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Git clone or pull
-	if _, err := e.git.CloneOrPull(ctx, appID, payload.RepoURL, payload.Branch, e.emitLogHandler(
+	if _, err := e.git.CloneOrPull(ctx, appID, payload.RepoURL, payload.Branch, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepGitClone,
 	),
 	); err != nil {
+		e.logErrorHandler(
+			fmt.Sprintf("failed to clone or pull repository, %s", err.Error()),
+			emit,
+			action,
+			domain.StepGitClone,
+		)
 		return err
 	}
 
@@ -120,11 +143,24 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	if job.DeploymentID != nil {
 		hash, err := e.git.GetCurrentCommit(ctx, appID)
 		if err != nil {
+			e.logErrorHandler(
+				fmt.Sprintf("failed to get commit hash, %s", err.Error()),
+				emit,
+				action,
+				domain.StepBuildPrepare,
+			)
 			return err
 		}
 
 		message, err := e.git.GetCommitMessage(ctx, appID)
 		if err != nil {
+			e.logErrorHandler(
+				fmt.Sprintf("failed to get commit message, %s", err.Error()),
+				emit,
+				action,
+				domain.StepBuildPrepare,
+			)
+
 			return err
 		}
 
@@ -137,32 +173,56 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 
 	// Validate docker compose file
 	if err := e.docker.ValidateDockerComposeFile(appID); err != nil {
+		e.logErrorHandler(
+			fmt.Sprintf("failed to validate docker compose file, %s", err.Error()),
+			emit,
+			action,
+			domain.StepBuildPrepare,
+		)
 		return err
 	}
 
 	// Write env
 	if len(payload.EnvVars) > 0 {
 		if err := e.docker.WriteEnvFile(appID, payload.EnvVars); err != nil {
+			e.logErrorHandler(
+				fmt.Sprintf("failed to write env, %s", err.Error()),
+				emit,
+				action,
+				domain.StepBuildPrepare,
+			)
 			return err
 		}
 	}
 
 	// Docker compose down
-	if _, err := e.docker.ComposeDown(ctx, appID, false, e.emitLogHandler(
+	if _, err := e.docker.ComposeDown(ctx, appID, false, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerStop,
 	),
 	); err != nil {
+		e.logErrorHandler(
+			fmt.Sprintf("failed to run docker compose down, %s", err.Error()),
+			emit,
+			action,
+			domain.StepDockerStop,
+		)
 		return err
 	}
 
 	// Docker compose up
-	if _, err := e.docker.ComposeUp(ctx, appID, true, true, e.emitLogHandler(
+	if _, err := e.docker.ComposeUp(ctx, appID, true, true, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerBuild,
 	)); err != nil {
+		e.logErrorHandler(
+			fmt.Sprintf("failed to run docker compose up, %s", err.Error()),
+			emit,
+			action,
+			domain.StepDockerBuild,
+		)
 		return err
 	}
 
@@ -177,11 +237,17 @@ func (e *Executor) startApp(ctx context.Context, job *domain.Job, emit EmitHandl
 
 	appID := payload.ApplicationID
 
-	if _, err := e.docker.ComposeStart(ctx, appID, e.emitLogHandler(
+	if _, err := e.docker.ComposeStart(ctx, appID, e.logStreamHandler(
 		emit,
 		domain.ActionAppStart,
 		domain.StepDockerStart,
 	)); err != nil {
+		e.logErrorHandler(
+			fmt.Sprintf("failed to run docker compose start, %s", err.Error()),
+			emit,
+			domain.ActionAppStart,
+			domain.StepDockerStart,
+		)
 		return err
 	}
 
@@ -196,11 +262,17 @@ func (e *Executor) stopApp(ctx context.Context, job *domain.Job, emit EmitHandle
 
 	appID := payload.ApplicationID
 
-	if _, err := e.docker.ComposeStop(ctx, appID, e.emitLogHandler(
+	if _, err := e.docker.ComposeStop(ctx, appID, e.logStreamHandler(
 		emit,
 		domain.ActionAppStop,
 		domain.StepDockerStop,
 	)); err != nil {
+		e.logErrorHandler(
+			fmt.Sprintf("failed to run docker compose stop, %s", err.Error()),
+			emit,
+			domain.ActionAppStop,
+			domain.StepDockerStop,
+		)
 		return err
 	}
 
@@ -215,11 +287,17 @@ func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHan
 
 	appID := payload.ApplicationID
 
-	if _, err := e.docker.ComposeRestart(ctx, appID, e.emitLogHandler(
+	if _, err := e.docker.ComposeRestart(ctx, appID, e.logStreamHandler(
 		emit,
 		domain.ActionAppRestart,
 		domain.StepDockerRestart,
 	)); err != nil {
+		e.logErrorHandler(
+			fmt.Sprintf("failed to run docker compose restart, %s", err.Error()),
+			emit,
+			domain.ActionAppRestart,
+			domain.StepDockerRestart,
+		)
 		return err
 	}
 

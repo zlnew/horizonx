@@ -145,9 +145,11 @@ func (r *SystemReader) AMDGPU(card string) *GPUMetrics {
 		for l := range lines {
 			if strings.Contains(l, "*") {
 				fields := strings.Fields(l)
-				if len(fields) > 0 {
-					v, _ := strconv.Atoi(fields[0])
-					clockMhz = v
+				if len(fields) >= 2 {
+					mhz := strings.TrimSuffix(fields[1], "Mhz")
+					if v, err := strconv.Atoi(mhz); err == nil {
+						clockMhz = v
+					}
 				}
 			}
 		}

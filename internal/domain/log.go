@@ -41,6 +41,7 @@ const (
 
 const (
 	StepGitClone          LogStep = "git_clone"
+	StepBuildPrepare      LogStep = "build_prepare"
 	StepDockerBuild       LogStep = "docker_build"
 	StepDockerStart       LogStep = "docker_start"
 	StepDockerStop        LogStep = "docker_stop"
