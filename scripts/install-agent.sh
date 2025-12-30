@@ -28,7 +28,7 @@ chown root:root "$CONFIG_DIR" 2>/dev/null || true
 chown root:root "$LOG_DIR"/*.log
 
 # Stop service
-systemctl stop "$SERVICE_NAME"
+systemctl stop "$SERVICE_NAME" || true
 
 # -----------------------------
 # Install binary

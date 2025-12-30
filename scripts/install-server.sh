@@ -56,7 +56,7 @@ touch "$LOG_DIR/server.log" "$LOG_DIR/server.error.log"
 chown -R "$USER_NAME:$GROUP_NAME" "$(dirname "$INSTALL_DIR")" "$(dirname "$CONFIG_DIR")" "$LOG_DIR"
 
 # Stop service
-systemctl stop "$SERVICE_NAME"
+systemctl stop "$SERVICE_NAME" || true
 
 # -----------------------------
 # Install server binary
