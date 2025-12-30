@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"horizonx-server/internal/adapters/http/middleware"
 	"horizonx-server/internal/domain"
 )
 
@@ -50,7 +51,13 @@ func (h *JobHandler) Index(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *JobHandler) Pending(w http.ResponseWriter, r *http.Request) {
-	jobs, err := h.svc.GetPending(r.Context())
+	serverID, ok := middleware.GetServerID(r.Context())
+	if !ok {
+		JSONError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	jobs, err := h.svc.GetPending(r.Context(), serverID)
 	if err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to get pending jobs")
 		return

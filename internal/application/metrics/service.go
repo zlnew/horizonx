@@ -44,7 +44,7 @@ func NewService(cfg *config.Config, repo domain.MetricsRepository, bus *event.Bu
 	return svc
 }
 
-func (s *Service) Ingest(m domain.Metrics) error {
+func (s *Service) Ingest(serverID uuid.UUID, m domain.Metrics) error {
 	s.latestMu.Lock()
 	s.latest[m.ServerID] = m
 	s.latestMu.Unlock()

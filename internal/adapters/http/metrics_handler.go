@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"horizonx-server/internal/adapters/http/middleware"
 	"horizonx-server/internal/domain"
 
 	"github.com/google/uuid"
@@ -21,6 +22,11 @@ func NewMetricsHandler(svc domain.MetricsService) *MetricsHandler {
 }
 
 func (h *MetricsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
+	serverID, ok := middleware.GetServerID(r.Context())
+	if !ok {
+		JSONError(w, http.StatusUnauthorized, "invalid credentials")
+	}
+
 	var metrics domain.Metrics
 
 	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
@@ -28,7 +34,7 @@ func (h *MetricsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Ingest(metrics); err != nil {
+	if err := h.svc.Ingest(serverID, metrics); err != nil {
 		JSONError(w, http.StatusInternalServerError, "failed to process metrics")
 		return
 	}

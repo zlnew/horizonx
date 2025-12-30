@@ -69,7 +69,7 @@ type JobFinishRequest struct {
 
 type JobRepository interface {
 	List(ctx context.Context, opts JobListOptions) ([]*Job, int64, error)
-	GetPending(ctx context.Context) ([]*Job, error)
+	GetPending(ctx context.Context, serverID uuid.UUID) ([]*Job, error)
 	GetByID(ctx context.Context, jobID int64) (*Job, error)
 	Create(ctx context.Context, j *Job) (*Job, error)
 	Delete(ctx context.Context, jobID int64) error
@@ -80,7 +80,7 @@ type JobRepository interface {
 
 type JobService interface {
 	List(ctx context.Context, opts JobListOptions) (*ListResult[*Job], error)
-	GetPending(ctx context.Context) ([]*Job, error)
+	GetPending(ctx context.Context, serverID uuid.UUID) ([]*Job, error)
 	GetByID(ctx context.Context, jobID int64) (*Job, error)
 	Create(ctx context.Context, j *Job) (*Job, error)
 	Delete(ctx context.Context, jobID int64) error

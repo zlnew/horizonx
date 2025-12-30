@@ -103,7 +103,7 @@ type NetworkMetric struct {
 }
 
 type MetricsService interface {
-	Ingest(m Metrics) error
+	Ingest(serverID uuid.UUID, m Metrics) error
 	Latest(serverID uuid.UUID) (*Metrics, error)
 	Cleanup(ctx context.Context, serverID uuid.UUID, cutoff time.Time) error
 }

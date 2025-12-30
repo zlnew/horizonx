@@ -6,6 +6,8 @@ import (
 
 	"horizonx-server/internal/domain"
 	"horizonx-server/internal/event"
+
+	"github.com/google/uuid"
 )
 
 type JobService struct {
@@ -53,8 +55,8 @@ func (s *JobService) List(ctx context.Context, opts domain.JobListOptions) (*dom
 	return res, nil
 }
 
-func (s *JobService) GetPending(ctx context.Context) ([]*domain.Job, error) {
-	return s.repo.GetPending(ctx)
+func (s *JobService) GetPending(ctx context.Context, serverID uuid.UUID) ([]*domain.Job, error) {
+	return s.repo.GetPending(ctx, serverID)
 }
 
 func (s *JobService) GetByID(ctx context.Context, jobID int64) (*domain.Job, error) {

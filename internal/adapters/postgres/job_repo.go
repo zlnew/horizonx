@@ -8,6 +8,7 @@ import (
 
 	"horizonx-server/internal/domain"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -134,7 +135,7 @@ func (r *JobRepository) List(ctx context.Context, opts domain.JobListOptions) ([
 	return jobs, total, nil
 }
 
-func (r *JobRepository) GetPending(ctx context.Context) ([]*domain.Job, error) {
+func (r *JobRepository) GetPending(ctx context.Context, serverID uuid.UUID) ([]*domain.Job, error) {
 	query := `
 		SELECT
 			id,
@@ -148,12 +149,13 @@ func (r *JobRepository) GetPending(ctx context.Context) ([]*domain.Job, error) {
 			queued_at,
 			expired_at
 		FROM jobs
-		WHERE status = $1
+		WHERE server_id = $1
+		AND status = $2
 		ORDER BY queued_at ASC
 		LIMIT 30
 	`
 
-	rows, err := r.db.Query(ctx, query, domain.JobQueued)
+	rows, err := r.db.Query(ctx, query, serverID, domain.JobQueued)
 	if err != nil {
 		return nil, err
 	}
