@@ -373,5 +373,7 @@ func (h *ApplicationHandler) ReportHealth(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	JSONSuccess(w, http.StatusNoContent, APIResponse{})
+	JSONSuccess(w, http.StatusOK, APIResponse{
+		Message: "Applications Health Reported",
+	})
 }

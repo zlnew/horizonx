@@ -3,7 +3,6 @@ package config
 
 import (
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,11 +19,6 @@ type Config struct {
 	LogLevel       string
 	LogFormat      string
 
-	MetricsCollectInterval time.Duration
-	MetricsFlushInterval   time.Duration
-	MetricsBufferSize      int
-	MetricsBatchSize       int
-
 	AgentTargetAPIURL   string
 	AgentTargetWsURL    string
 	AgentServerAPIToken string
@@ -33,6 +27,10 @@ type Config struct {
 
 func Load() *Config {
 	_ = godotenv.Load()
+
+	// Logs
+	logLevel := getEnv("LOG_LEVEL", "info")
+	logFormat := getEnv("LOG_FORMAT", "text")
 
 	// Server HTTP Address
 	addr := getEnv("HTTP_ADDR", ":3000")
@@ -61,32 +59,6 @@ func Load() *Config {
 		}
 	}
 
-	// Logs
-	logLevel := getEnv("LOG_LEVEL", "info")
-	logFormat := getEnv("LOG_FORMAT", "text")
-
-	// Metrics
-	metricsCollectInterval := 10 * time.Second
-	metricsFlushInterval := 15 * time.Second
-	metricsBufferSize := 50
-	metricsBatchSize := 10
-
-	if raw := getEnv("METRICS_COLLECT_INTERVAL", "10s"); raw != "" {
-		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
-			metricsCollectInterval = duration
-		}
-	}
-
-	if raw := os.Getenv("METRICS_FLUSH_INTERVAL"); raw != "" {
-		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
-			metricsFlushInterval = duration
-		}
-	}
-
-	if value, err := strconv.ParseInt(os.Getenv("METRICS_BATCH_SIZE"), 10, 64); err == nil {
-		metricsBatchSize = int(value)
-	}
-
 	// AGENT Target URL
 	agentTargetAPIURL := getEnv("HORIZONX_API_URL", "http://localhost:3000")
 	agentTargetWsURL := getEnv("HORIZONX_WS_URL", "ws://localhost:3000/ws/agent")
@@ -101,18 +73,14 @@ func Load() *Config {
 	}
 
 	return &Config{
+		LogLevel:  logLevel,
+		LogFormat: logFormat,
+
 		Address:        addr,
 		AllowedOrigins: origins,
 		DatabaseURL:    databaseURL,
 		JWTSecret:      jwtSecret,
 		JWTExpiry:      jwtExpiry,
-		LogLevel:       logLevel,
-		LogFormat:      logFormat,
-
-		MetricsCollectInterval: metricsCollectInterval,
-		MetricsFlushInterval:   metricsFlushInterval,
-		MetricsBufferSize:      metricsBufferSize,
-		MetricsBatchSize:       metricsBatchSize,
 
 		AgentTargetAPIURL:   agentTargetAPIURL,
 		AgentTargetWsURL:    agentTargetWsURL,

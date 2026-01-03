@@ -18,11 +18,13 @@ type Manager struct {
 }
 
 type Container struct {
-	ID      string `json:"ID"`
-	Name    string `json:"Name"`
-	Port    string `json:"Port"`
-	Project string `json:"Project"`
-	State   string `json:"State"`
+	ID       string `json:"ID"`
+	Name     string `json:"Name"`
+	Ports    string `json:"Ports"`
+	Project  string `json:"Project"`
+	State    string `json:"State"`
+	Health   string `json:"Health"`
+	ExitCode int    `json:"ExitCode"`
 }
 
 func NewManager(workDir string) *Manager {

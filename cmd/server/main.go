@@ -60,7 +60,7 @@ func main() {
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, logService, bus)
-	metricsService := metrics.NewService(cfg, metricsRepo, bus, log)
+	metricsService := metrics.NewService(metricsRepo, bus, log)
 	deploymentService := deployment.NewService(deploymentRepo, logService, bus)
 	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus)
 
@@ -112,7 +112,7 @@ func main() {
 
 	// Worker Manager
 	wSheduler := workers.NewScheduler(log)
-	wManager := workers.NewManager(wSheduler, cfg, log, &workers.ManagerServices{
+	wManager := workers.NewManager(wSheduler, log, &workers.ManagerServices{
 		Job:         jobService,
 		Server:      serverService,
 		Metrics:     metricsService,

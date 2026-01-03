@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"horizonx-server/internal/config"
 	"horizonx-server/internal/domain"
 	"horizonx-server/internal/event"
 	"horizonx-server/internal/logger"
@@ -15,7 +14,6 @@ import (
 )
 
 type Service struct {
-	cfg  *config.Config
 	repo domain.MetricsRepository
 	bus  *event.Bus
 	log  logger.Logger
@@ -38,11 +36,12 @@ type Service struct {
 
 	flushInterval     time.Duration
 	broadcastInterval time.Duration
+
+	batchSize int
 }
 
-func NewService(cfg *config.Config, repo domain.MetricsRepository, bus *event.Bus, log logger.Logger) domain.MetricsService {
+func NewService(repo domain.MetricsRepository, bus *event.Bus, log logger.Logger) domain.MetricsService {
 	svc := &Service{
-		cfg:  cfg,
 		repo: repo,
 		bus:  bus,
 		log:  log,
@@ -58,6 +57,8 @@ func NewService(cfg *config.Config, repo domain.MetricsRepository, bus *event.Bu
 
 		flushInterval:     15 * time.Second,
 		broadcastInterval: 10 * time.Second,
+
+		batchSize: 10,
 	}
 
 	go svc.backgroundFlusher()
@@ -81,7 +82,7 @@ func (s *Service) Ingest(m domain.Metrics) error {
 
 	s.log.Debug("metrics added to buffer", "buffer_size", bufferSize)
 
-	if bufferSize >= s.cfg.MetricsBatchSize {
+	if bufferSize >= s.batchSize {
 		s.log.Debug("buffer size reached, forcing flush", "size", bufferSize)
 		go s.safeFlush()
 	}
@@ -177,7 +178,7 @@ func (s *Service) recordNetSpeed(serverID uuid.UUID, rxMBs float64, txMBs float6
 }
 
 func (s *Service) backgroundFlusher() {
-	ticker := time.NewTicker(s.cfg.MetricsFlushInterval)
+	ticker := time.NewTicker(s.flushInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -202,7 +203,7 @@ func (s *Service) flush() {
 	}
 
 	batch := s.buffer
-	s.buffer = make([]domain.Metrics, 0, s.cfg.MetricsBatchSize)
+	s.buffer = make([]domain.Metrics, 0, s.batchSize)
 	s.bufferMu.Unlock()
 
 	s.log.Debug("flushing metrics to database", "count", len(batch))

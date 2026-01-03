@@ -119,28 +119,75 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 	action := domain.ActionAppHealthCheck
 	step := domain.StepDockerHealthCheck
 
-	var reports []domain.ApplicationHealth
+	reports := make([]domain.ApplicationHealth, 0, len(payload.ApplicationsIDs))
 
 	for _, appID := range payload.ApplicationsIDs {
 		output, err := e.docker.ComposePs(ctx, appID, true)
 		if err != nil {
-			e.logFatalHandler(
-				fmt.Sprintf("failed to check application health, %s", err.Error()),
-				emit,
-				action,
-				step,
+			// TODO: implement application docker container status
+			e.log.Debug("failed to run docker compose ps",
+				"server_id", job.ServerID.String(),
+				"app_id", appID,
+				"err", err.Error(),
 			)
-			return err
+
+			reports = append(reports, domain.ApplicationHealth{
+				ApplicationID: appID,
+				Status:        domain.AppStatusFailed,
+			})
+
+			continue
 		}
 
 		var c docker.Container
 		if err := json.Unmarshal([]byte(output), &c); err != nil {
-			return err
+			e.logFatalHandler(
+				fmt.Sprintf(
+					"failed to parse compose ps output server_id=%s app_id=%d err=%v",
+					job.ServerID.String(),
+					appID,
+					err,
+				),
+				emit,
+				action,
+				step,
+			)
+
+			reports = append(reports, domain.ApplicationHealth{
+				ApplicationID: appID,
+				Status:        domain.AppStatusFailed,
+			})
+
+			continue
 		}
 
-		status := domain.AppStatusFailed
-		if c.State == "running" {
-			status = domain.AppStatusRunning
+		var status domain.ApplicationStatus
+
+		switch c.State {
+		case "running":
+			switch c.Health {
+			case "unhealthy":
+				status = domain.AppStatusFailed
+			case "starting":
+				status = domain.AppStatusStarting
+			default:
+				status = domain.AppStatusRunning
+			}
+		case "restarting":
+			status = domain.AppStatusRestarting
+		case "exited":
+			switch c.ExitCode {
+			case 0:
+				status = domain.AppStatusStopped
+			default:
+				status = domain.AppStatusFailed
+			}
+		case "paused":
+			status = domain.AppStatusStopped
+		case "dead":
+			status = domain.AppStatusFailed
+		default:
+			status = domain.AppStatusFailed
 		}
 
 		reports = append(reports, domain.ApplicationHealth{

@@ -5,14 +5,12 @@ import (
 	"context"
 	"time"
 
-	"horizonx-server/internal/config"
 	"horizonx-server/internal/domain"
 	"horizonx-server/internal/logger"
 )
 
 type Manager struct {
 	scheduler *Scheduler
-	cfg       *config.Config
 	log       logger.Logger
 
 	services *ManagerServices
@@ -30,10 +28,9 @@ type Worker interface {
 	Run(ctx context.Context) error
 }
 
-func NewManager(scheduler *Scheduler, cfg *config.Config, log logger.Logger, services *ManagerServices) *Manager {
+func NewManager(scheduler *Scheduler, log logger.Logger, services *ManagerServices) *Manager {
 	return &Manager{
 		scheduler: scheduler,
-		cfg:       cfg,
 		log:       log,
 
 		services: services,
@@ -43,7 +40,7 @@ func NewManager(scheduler *Scheduler, cfg *config.Config, log logger.Logger, ser
 func (m *Manager) Start(ctx context.Context) {
 	m.log.Info("worker: manager started")
 
-	m.scheduler.RunByDuration(ctx, m.cfg.MetricsCollectInterval, &MetricsCollectWorker{
+	m.scheduler.RunByDuration(ctx, 10*time.Second, &MetricsCollectWorker{
 		job:    m.services.Job,
 		server: m.services.Server,
 		log:    m.log,
@@ -55,7 +52,7 @@ func (m *Manager) Start(ctx context.Context) {
 		log:     m.log,
 	})
 
-	m.scheduler.RunByDuration(ctx, 10*time.Minute, &ApplicationHealthCheckWorker{
+	m.scheduler.RunByDuration(ctx, 10*time.Second, &ApplicationHealthCheckWorker{
 		app: m.services.Application,
 		job: m.services.Job,
 		log: m.log,

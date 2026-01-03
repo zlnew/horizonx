@@ -41,24 +41,26 @@ func (r *ApplicationRepository) List(ctx context.Context, opts domain.Applicatio
 	conditions := []string{}
 	argCounter := 1
 
+	conditions = append(conditions, "deleted_at IS NULL")
+
+	if opts.Search != "" {
+		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d)", argCounter))
+		searchParam := "%" + opts.Search + "%"
+		args = append(args, searchParam)
+		argCounter++
+	}
+
 	if opts.ServerID != nil {
 		conditions = append(conditions, fmt.Sprintf("server_id = $%d", argCounter))
 		args = append(args, *opts.ServerID)
 		argCounter++
 	}
 
-	if opts.Search != "" {
-		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d)", argCounter))
-		searchParam := "%" + opts.Search + "%"
-		args = append(args, searchParam)
-		argCounter += 2
-	}
-
 	if len(conditions) > 0 {
 		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	baseQuery += " AND deleted_at IS NULL ORDER BY created_at DESC"
+	baseQuery += " ORDER BY created_at DESC"
 
 	var total int64
 	if opts.IsPaginate {
@@ -424,7 +426,7 @@ func (r *ApplicationRepository) UpdateHealth(ctx context.Context, serverID uuid.
 
 	argPos := 2
 	for _, d := range reports {
-		valueStrings = append(valueStrings, fmt.Sprintf("(%d, %d)", argPos, argPos+1))
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d::bigint, $%d::text)", argPos, argPos+1))
 		valueArgs = append(valueArgs, d.ApplicationID, d.Status)
 		argPos += 2
 	}
@@ -433,7 +435,7 @@ func (r *ApplicationRepository) UpdateHealth(ctx context.Context, serverID uuid.
 		UPDATE applications a
 		SET status = v.status
 		FROM (VALUES %s) AS v(app_id, status)
-		WHERE a.app_id = v.app_id
+		WHERE a.id = v.app_id
 		  AND a.server_id = $1
 	`, strings.Join(valueStrings, ","))
 
@@ -441,7 +443,7 @@ func (r *ApplicationRepository) UpdateHealth(ctx context.Context, serverID uuid.
 
 	_, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("failed to update applications health")
+		return fmt.Errorf("failed to update applications health: %w", err)
 	}
 
 	return nil
