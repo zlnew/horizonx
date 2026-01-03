@@ -16,14 +16,14 @@ import (
 	"horizonx-server/internal/application/auth"
 	"horizonx-server/internal/application/deployment"
 	"horizonx-server/internal/application/job"
-	logService "horizonx-server/internal/application/log"
+	logSvc "horizonx-server/internal/application/log"
 	"horizonx-server/internal/application/metrics"
 	"horizonx-server/internal/application/server"
 	"horizonx-server/internal/application/user"
-	"horizonx-server/internal/application/workers"
 	"horizonx-server/internal/config"
 	"horizonx-server/internal/event"
 	"horizonx-server/internal/logger"
+	"horizonx-server/internal/workers"
 )
 
 func main() {
@@ -55,7 +55,7 @@ func main() {
 	deploymentRepo := postgres.NewDeploymentRepository(dbPool)
 
 	// Services
-	logService := logService.NewService(logRepo, bus)
+	logService := logSvc.NewService(logRepo, bus)
 	serverService := server.NewService(serverRepo, bus)
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	userService := user.NewService(userRepo)
@@ -111,8 +111,8 @@ func main() {
 	})
 
 	// Worker Manager
-	wSheduler := workers.NewScheduler(log)
-	wManager := workers.NewManager(wSheduler, log, &workers.ManagerServices{
+	wSheduler := workers.NewScheduler(cfg, log)
+	wManager := workers.NewManager(log, wSheduler, &workers.ManagerServices{
 		Job:         jobService,
 		Server:      serverService,
 		Metrics:     metricsService,

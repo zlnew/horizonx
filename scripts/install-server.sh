@@ -72,6 +72,7 @@ chown "$USER_NAME:$GROUP_NAME" "$INSTALL_DIR"
 if [ ! -f "$CONFIG_DIR" ]; then
   echo "[*] Creating default config at $CONFIG_DIR..."
   cat > "$CONFIG_DIR" <<EOF
+TIME_ZONE="Local"
 HTTP_ADDR=":3000"
 ALLOWED_ORIGINS="http://localhost:5173,http://localhost:5174"
 DATABASE_URL="postgres://postgres:@localhost:5432/horizonx?sslmode=disable"

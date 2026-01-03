@@ -10,10 +10,10 @@ import (
 )
 
 type Manager struct {
-	scheduler *Scheduler
-	log       logger.Logger
+	log logger.Logger
 
-	services *ManagerServices
+	scheduler *Scheduler
+	services  *ManagerServices
 }
 
 type ManagerServices struct {
@@ -28,12 +28,12 @@ type Worker interface {
 	Run(ctx context.Context) error
 }
 
-func NewManager(scheduler *Scheduler, log logger.Logger, services *ManagerServices) *Manager {
+func NewManager(log logger.Logger, scheduler *Scheduler, services *ManagerServices) *Manager {
 	return &Manager{
-		scheduler: scheduler,
-		log:       log,
+		log: log,
 
-		services: services,
+		scheduler: scheduler,
+		services:  services,
 	}
 }
 

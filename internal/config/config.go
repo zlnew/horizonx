@@ -11,13 +11,15 @@ import (
 )
 
 type Config struct {
+	LogLevel  string
+	LogFormat string
+
+	TimeZone       *time.Location
 	Address        string
 	AllowedOrigins []string
 	DatabaseURL    string
 	JWTSecret      string
 	JWTExpiry      time.Duration
-	LogLevel       string
-	LogFormat      string
 
 	AgentTargetAPIURL   string
 	AgentTargetWsURL    string
@@ -31,6 +33,12 @@ func Load() *Config {
 	// Logs
 	logLevel := getEnv("LOG_LEVEL", "info")
 	logFormat := getEnv("LOG_FORMAT", "text")
+
+	// Server Time Zone
+	timeZone, err := time.LoadLocation(getEnv("TIME_ZONE", "Local"))
+	if err != nil {
+		timeZone = time.Local
+	}
 
 	// Server HTTP Address
 	addr := getEnv("HTTP_ADDR", ":3000")
@@ -76,6 +84,7 @@ func Load() *Config {
 		LogLevel:  logLevel,
 		LogFormat: logFormat,
 
+		TimeZone:       timeZone,
 		Address:        addr,
 		AllowedOrigins: origins,
 		DatabaseURL:    databaseURL,
