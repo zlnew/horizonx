@@ -18,17 +18,19 @@ func ValidateStruct(payload any) map[string]string {
 	errors := make(map[string]string)
 
 	if validationErrors, ok := err.(validator.ValidationErrors); ok {
-		for _, fieldError := range validationErrors {
-			fieldName := strings.ToLower(fieldError.Field())
-			switch fieldError.Tag() {
+		for _, error := range validationErrors {
+			fieldName := strings.ToLower(error.Field())
+			switch error.Tag() {
 			case "required":
-				errors[fieldName] = fmt.Sprintf("The %s field is required.", fieldName)
+				errors[fieldName] = fmt.Sprintf("The %s field is required.", error.Field())
 			case "email":
-				errors[fieldName] = "The email must be a valid email address."
+				errors[fieldName] = fmt.Sprintf("The %s must be a valid email address.", error.Field())
 			case "min":
-				errors[fieldName] = fmt.Sprintf("The %s must be at least %s characters.", fieldName, fieldError.Param())
+				errors[fieldName] = fmt.Sprintf("The %s must be at least %s characters.", error.Field(), error.Param())
+			case "eqfield":
+				errors[fieldName] = fmt.Sprintf("The %s field must be equal to %s field.", error.Field(), error.Param())
 			default:
-				errors[fieldName] = fmt.Sprintf("The %s field is invalid.", fieldName)
+				errors[fieldName] = fmt.Sprintf("The %s field is invalid.", error.Field())
 			}
 		}
 	}

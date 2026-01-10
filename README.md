@@ -88,7 +88,7 @@ make build
 
 # Run Agent (replace credentials with real ones from DB/UI)
 export HORIZONX_API_URL="http://localhost:3000"
-export HORIZONX_WS_URL="ws://localhost:3000/agent/ws"
+export HORIZONX_WS_URL="ws://localhost:3000/ws/agent"
 export HORIZONX_SERVER_API_TOKEN="hzx_secret"
 export HORIZONX_SERVER_ID="123"
 

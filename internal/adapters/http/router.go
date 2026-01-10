@@ -16,6 +16,7 @@ type RouterDeps struct {
 	WsAgent *agentws.Handler
 
 	Auth        *AuthHandler
+	Account     *AccountHandler
 	User        *UserHandler
 	Server      *ServerHandler
 	Log         *LogHandler
@@ -89,10 +90,13 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("DELETE /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Destroy))
 
 	// SERVER METRICS
-
 	mux.Handle("GET /servers/{id}/metrics/latest", metricsReadStack.ThenFunc(deps.Metrics.Latest))
 	mux.Handle("GET /servers/{id}/metrics/cpu-usage-history", metricsReadStack.ThenFunc(deps.Metrics.CPUUsageHistory))
 	mux.Handle("GET /servers/{id}/metrics/net-speed-history", metricsReadStack.ThenFunc(deps.Metrics.NetSpeedHistory))
+
+	// ACCOUNT
+	mux.Handle("POST /account/profile", userStack.ThenFunc(deps.Account.Profile))
+	mux.Handle("POST /account/password", userStack.ThenFunc(deps.Account.Password))
 
 	// USERS
 	mux.Handle("GET /users", memberReadStack.ThenFunc(deps.User.Index))

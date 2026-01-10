@@ -12,6 +12,7 @@ import (
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
 	"horizonx/internal/adapters/ws/userws/subscribers"
+	"horizonx/internal/application/account"
 	"horizonx/internal/application/application"
 	"horizonx/internal/application/auth"
 	"horizonx/internal/application/deployment"
@@ -63,6 +64,7 @@ func main() {
 	serverService := server.NewService(serverRepo, bus)
 	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
 	roleService := role.NewService(roleRepo)
+	accountService := account.NewService(userRepo)
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, logService, bus)
 	metricsService := metrics.NewService(metricsRepo, bus, log)
@@ -80,6 +82,7 @@ func main() {
 	logHandler := http.NewLogHandler(logService)
 	serverHandler := http.NewServerHandler(serverService)
 	authHandler := http.NewAuthHandler(authService, cfg)
+	accountHandler := http.NewAccountHandler(accountService)
 	userHandler := http.NewUserHandler(userService)
 	jobHandler := http.NewJobHandler(jobService)
 	metricsHandler := http.NewMetricsHandler(metricsService)
@@ -104,6 +107,7 @@ func main() {
 		WsAgent: wsAgentHandler,
 
 		Auth:        authHandler,
+		Account:     accountHandler,
 		User:        userHandler,
 		Server:      serverHandler,
 		Log:         logHandler,
@@ -117,8 +121,8 @@ func main() {
 	})
 
 	// Worker Manager
-	wSheduler := workers.NewScheduler(cfg, log)
-	wManager := workers.NewManager(log, wSheduler, &workers.ManagerServices{
+	wScheduler := workers.NewScheduler(cfg, log)
+	wManager := workers.NewManager(log, wScheduler, &workers.ManagerServices{
 		Job:         jobService,
 		Server:      serverService,
 		Metrics:     metricsService,
