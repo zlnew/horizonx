@@ -1,11 +1,13 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
+	"horizonx/internal/adapters/http/request"
+	"horizonx/internal/adapters/http/response"
+	"horizonx/internal/adapters/http/validator"
 	"horizonx/internal/config"
 	"horizonx/internal/domain"
 )
@@ -13,12 +15,25 @@ import (
 type AuthHandler struct {
 	svc domain.AuthService
 	cfg *config.Config
+
+	decoder   request.RequestDecoder
+	writer    response.ResponseWriter
+	validator validator.Validator
 }
 
-func NewAuthHandler(svc domain.AuthService, cfg *config.Config) *AuthHandler {
+func NewAuthHandler(
+	svc domain.AuthService,
+	cfg *config.Config,
+	d request.RequestDecoder,
+	w response.ResponseWriter,
+	v validator.Validator,
+) *AuthHandler {
 	return &AuthHandler{
-		svc: svc,
-		cfg: cfg,
+		svc:       svc,
+		cfg:       cfg,
+		decoder:   d,
+		writer:    w,
+		validator: v,
 	}
 }
 
@@ -26,40 +41,51 @@ func (h *AuthHandler) User(w http.ResponseWriter, r *http.Request) {
 	user, err := h.svc.GetUser(r.Context())
 	if err != nil {
 		if errors.Is(err, domain.ErrUnauthorized) {
-			JSONError(w, http.StatusUnauthorized, "unauthorized")
+			h.writer.Write(w, http.StatusUnauthorized, &response.Response{
+				Message: "unauthorized",
+			})
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "failed to get user")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to get user",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "OK",
-		Data:    user,
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: user,
 	})
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	var req domain.LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "Invalid request body")
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: err.Error(),
+		})
 		return
 	}
 
-	if validationErrors := ValidateStruct(req); len(validationErrors) > 0 {
-		JSONValidationError(w, validationErrors)
+	if errs := h.validator.Validate(&req); len(errs) > 0 {
+		h.writer.WriteValidationError(w, errs)
 		return
 	}
 
 	res, err := h.svc.Login(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidCredentials) {
-			JSONError(w, http.StatusUnauthorized, "Invalid credentials")
+			h.writer.Write(w, http.StatusUnauthorized, &response.Response{
+				Message: "invalid credentials",
+			})
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "Something went wrong")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to sign in",
+		})
 		return
 	}
 
@@ -73,9 +99,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "OK",
-		Data:    res.User,
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: res.User,
 	})
 }
 
@@ -102,5 +127,5 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	JSONSuccess(w, http.StatusOK, APIResponse{})
+	h.writer.Write(w, http.StatusOK, &response.Response{})
 }

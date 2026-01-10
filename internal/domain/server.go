@@ -32,6 +32,11 @@ type ServerSaveRequest struct {
 	IPAddress string `json:"ip_address" validate:"required"`
 }
 
+type ServerRegisteredResponse struct {
+	Server Server `json:"server"`
+	Token  string `json:"token"`
+}
+
 type ServerRepository interface {
 	List(ctx context.Context, opts ServerListOptions) ([]*Server, int64, error)
 	GetByID(ctx context.Context, serverID uuid.UUID) (*Server, error)

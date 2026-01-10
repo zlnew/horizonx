@@ -1,21 +1,37 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 
 	"horizonx/internal/adapters/http/middleware"
+	"horizonx/internal/adapters/http/request"
+	"horizonx/internal/adapters/http/response"
+	"horizonx/internal/adapters/http/validator"
 	"horizonx/internal/domain"
 )
 
 type UserHandler struct {
 	svc domain.UserService
+
+	decoder   request.RequestDecoder
+	writer    response.ResponseWriter
+	validator validator.Validator
 }
 
-func NewUserHandler(svc domain.UserService) *UserHandler {
-	return &UserHandler{svc: svc}
+func NewUserHandler(
+	svc domain.UserService,
+	d request.RequestDecoder,
+	w response.ResponseWriter,
+	v validator.Validator,
+) *UserHandler {
+	return &UserHandler{
+		svc:       svc,
+		decoder:   d,
+		writer:    w,
+		validator: v,
+	}
 }
 
 func (h *UserHandler) Index(w http.ResponseWriter, r *http.Request) {
@@ -33,119 +49,156 @@ func (h *UserHandler) Index(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to list users")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to list users",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "OK",
-		Data:    result.Data,
-		Meta:    result.Meta,
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: result.Data,
+		Meta: result.Meta,
 	})
 }
 
 func (h *UserHandler) Store(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	var req domain.UserSaveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: err.Error(),
+		})
 		return
 	}
 
-	if validationErrors := ValidateStruct(req); len(validationErrors) > 0 {
-		JSONValidationError(w, validationErrors)
+	if errs := h.validator.Validate(&req); len(errs) > 0 {
+		h.writer.WriteValidationError(w, errs)
 		return
 	}
 
 	if err := h.svc.Create(r.Context(), req); err != nil {
 		if errors.Is(err, domain.ErrRoleNotFound) {
-			JSONError(w, http.StatusBadRequest, "role not found")
-		}
-
-		if errors.Is(err, domain.ErrEmailAlreadyExists) {
-			JSONError(w, http.StatusBadRequest, "email already registered")
+			h.writer.Write(w, http.StatusBadRequest, &response.Response{
+				Message: "role not found",
+			})
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "failed to create user")
+		if errors.Is(err, domain.ErrEmailAlreadyExists) {
+			h.writer.Write(w, http.StatusBadRequest, &response.Response{
+				Message: "email already registered",
+			})
+			return
+		}
+
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to create user",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "User created successfully",
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Message: "user created successfully",
 	})
 }
 
 func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "invalid user id")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "invalid user id",
+		})
 		return
 	}
 
 	var req domain.UserSaveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: err.Error(),
+		})
 		return
 	}
 
-	if validationErrors := ValidateStruct(req); len(validationErrors) > 0 {
-		JSONValidationError(w, validationErrors)
+	if errs := h.validator.Validate(&req); len(errs) > 0 {
+		h.writer.WriteValidationError(w, errs)
 		return
 	}
 
 	if err := h.svc.Update(r.Context(), req, userID); err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
-			JSONError(w, http.StatusNotFound, "user not found")
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "user not found",
+			})
 			return
 		}
 
 		if errors.Is(err, domain.ErrRoleNotFound) {
-			JSONError(w, http.StatusBadRequest, "role not found")
-		}
-
-		if errors.Is(err, domain.ErrEmailAlreadyExists) {
-			JSONError(w, http.StatusBadRequest, "email already registered")
+			h.writer.Write(w, http.StatusBadRequest, &response.Response{
+				Message: "role not found",
+			})
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "failed to update user")
+		if errors.Is(err, domain.ErrEmailAlreadyExists) {
+			h.writer.Write(w, http.StatusBadRequest, &response.Response{
+				Message: "email already registered",
+			})
+			return
+		}
+
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to update user",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "User updated successfully",
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Message: "user updated successfully",
 	})
 }
 
 func (h *UserHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 	userCtx, ok := middleware.GetUser(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		h.writer.Write(w, http.StatusUnauthorized, &response.Response{
+			Message: "unauthorized",
+		})
 		return
 	}
 
 	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "invalid user id")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "invalid user id",
+		})
 		return
 	}
 
 	if userID == userCtx.ID {
-		JSONError(w, http.StatusBadRequest, "you cannot delete yourself")
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "you cannot delete yourself",
+		})
 		return
 	}
 
 	if err := h.svc.Delete(r.Context(), userID); err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
-			JSONError(w, http.StatusNotFound, "user not found")
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "user not found",
+			})
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "failed to delete user")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to delete user",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "User deleted successfully",
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Message: "user deleted successfully",
 	})
 }

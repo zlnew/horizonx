@@ -1,28 +1,44 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 
+	"horizonx/internal/adapters/http/request"
+	"horizonx/internal/adapters/http/response"
+	"horizonx/internal/adapters/http/validator"
 	"horizonx/internal/domain"
 )
 
 type DeploymentHandler struct {
 	svc domain.DeploymentService
+
+	decoder   request.RequestDecoder
+	writer    response.ResponseWriter
+	validator validator.Validator
 }
 
-func NewDeploymentHandler(svc domain.DeploymentService) *DeploymentHandler {
+func NewDeploymentHandler(
+	svc domain.DeploymentService,
+	d request.RequestDecoder,
+	w response.ResponseWriter,
+	v validator.Validator,
+) *DeploymentHandler {
 	return &DeploymentHandler{
-		svc: svc,
+		svc:       svc,
+		decoder:   d,
+		writer:    w,
+		validator: v,
 	}
 }
 
 func (h *DeploymentHandler) Index(w http.ResponseWriter, r *http.Request) {
 	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid application id")
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid application id",
+		})
 		return
 	}
 
@@ -42,75 +58,95 @@ func (h *DeploymentHandler) Index(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to list deployments")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to list deployments",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "OK",
-		Data:    result.Data,
-		Meta:    result.Meta,
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: result.Data,
+		Meta: result.Meta,
 	})
 }
 
 func (h *DeploymentHandler) Show(w http.ResponseWriter, r *http.Request) {
 	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid application id")
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid application id",
+		})
 		return
 	}
 
 	deploymentID, err := strconv.ParseInt(r.PathValue("deployment_id"), 10, 64)
 	if err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid deployment id")
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid deployment id",
+		})
 		return
 	}
 
 	deployment, err := h.svc.GetByID(r.Context(), deploymentID)
 	if err != nil {
 		if errors.Is(err, domain.ErrDeploymentNotFound) {
-			JSONError(w, http.StatusNotFound, "deployment not found")
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "deployment not found",
+			})
 			return
 		}
-		JSONError(w, http.StatusInternalServerError, "failed to get deployment")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to get deployment",
+		})
 		return
 	}
 
 	if deployment.ApplicationID != appID {
-		JSONError(w, http.StatusBadRequest, "invalid application id")
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid application id",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "OK",
-		Data:    deployment,
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: deployment,
 	})
 }
 
 func (h *DeploymentHandler) UpdateCommitInfo(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	deploymentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid deployment id")
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid deployment id",
+		})
 		return
 	}
 
 	var req domain.DeploymentCommitInfoRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: err.Error(),
+		})
 		return
 	}
 
 	if err := h.svc.UpdateCommitInfo(r.Context(), deploymentID, req.CommitHash, req.CommitMessage); err != nil {
 		if errors.Is(err, domain.ErrDeploymentNotFound) {
-			JSONError(w, http.StatusNotFound, "deployment not found")
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "deployment not found",
+			})
 			return
 		}
 
-		JSONError(w, http.StatusInternalServerError, "failed to update commit info")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to update commit info",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "Commit Info updated",
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Message: "commit info updated",
 	})
 }

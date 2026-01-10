@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"horizonx/internal/adapters/http"
+	"horizonx/internal/adapters/http/request"
+	"horizonx/internal/adapters/http/response"
+	"horizonx/internal/adapters/http/validator"
 	"horizonx/internal/adapters/postgres"
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
@@ -79,15 +82,19 @@ func main() {
 	deploymentListener.Register(bus)
 
 	// HTTP Handlers
-	logHandler := http.NewLogHandler(logService)
-	serverHandler := http.NewServerHandler(serverService)
-	authHandler := http.NewAuthHandler(authService, cfg)
-	accountHandler := http.NewAccountHandler(accountService)
-	userHandler := http.NewUserHandler(userService)
-	jobHandler := http.NewJobHandler(jobService)
-	metricsHandler := http.NewMetricsHandler(metricsService)
-	deploymentHandler := http.NewDeploymentHandler(deploymentService)
-	applicationHandler := http.NewApplicationHandler(applicationService)
+	jsonDecoder := request.NewJSONDecoder()
+	jsonWriter := response.NewJSONWriter(log)
+	validator := validator.NewValidator()
+
+	logHandler := http.NewLogHandler(logService, jsonDecoder, jsonWriter, validator)
+	serverHandler := http.NewServerHandler(serverService, jsonDecoder, jsonWriter, validator)
+	authHandler := http.NewAuthHandler(authService, cfg, jsonDecoder, jsonWriter, validator)
+	accountHandler := http.NewAccountHandler(accountService, jsonDecoder, jsonWriter, validator)
+	userHandler := http.NewUserHandler(userService, jsonDecoder, jsonWriter, validator)
+	jobHandler := http.NewJobHandler(jobService, jsonDecoder, jsonWriter, validator)
+	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
+	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
+	applicationHandler := http.NewApplicationHandler(applicationService, jsonDecoder, jsonWriter, validator)
 
 	// WebSocket Handlers
 	wsUserhub := userws.NewHub(ctx, log)

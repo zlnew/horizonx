@@ -1,18 +1,34 @@
 package http
 
 import (
-	"encoding/json"
 	"net/http"
 
+	"horizonx/internal/adapters/http/request"
+	"horizonx/internal/adapters/http/response"
+	"horizonx/internal/adapters/http/validator"
 	"horizonx/internal/domain"
 )
 
 type LogHandler struct {
 	svc domain.LogService
+
+	decoder   request.RequestDecoder
+	writer    response.ResponseWriter
+	validator validator.Validator
 }
 
-func NewLogHandler(svc domain.LogService) *LogHandler {
-	return &LogHandler{svc: svc}
+func NewLogHandler(
+	svc domain.LogService,
+	d request.RequestDecoder,
+	w response.ResponseWriter,
+	v validator.Validator,
+) *LogHandler {
+	return &LogHandler{
+		svc:       svc,
+		decoder:   d,
+		writer:    w,
+		validator: v,
+	}
 }
 
 func (h *LogHandler) Index(w http.ResponseWriter, r *http.Request) {
@@ -36,26 +52,31 @@ func (h *LogHandler) Index(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.List(r.Context(), opts)
 	if err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to list logs")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to list logs",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusOK, APIResponse{
-		Message: "OK",
-		Data:    result.Data,
-		Meta:    result.Meta,
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: result.Data,
+		Meta: result.Meta,
 	})
 }
 
 func (h *LogHandler) Store(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	var req domain.LogEmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		JSONError(w, http.StatusBadRequest, "invalid request body")
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: err.Error(),
+		})
 		return
 	}
 
-	if validationErrors := ValidateStruct(req); len(validationErrors) > 0 {
-		JSONValidationError(w, validationErrors)
+	if errs := h.validator.Validate(&req); len(errs) > 0 {
+		h.writer.WriteValidationError(w, errs)
 		return
 	}
 
@@ -73,11 +94,13 @@ func (h *LogHandler) Store(w http.ResponseWriter, r *http.Request) {
 		Context:       req.Context,
 	}
 	if _, err := h.svc.Create(r.Context(), l); err != nil {
-		JSONError(w, http.StatusInternalServerError, "failed to create log")
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to create log",
+		})
 		return
 	}
 
-	JSONSuccess(w, http.StatusCreated, APIResponse{
+	h.writer.Write(w, http.StatusCreated, &response.Response{
 		Message: "log created successfully",
 	})
 }
