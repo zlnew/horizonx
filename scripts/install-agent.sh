@@ -144,6 +144,103 @@ setcap cap_dac_read_search,cap_sys_ptrace+ep "$INSTALL_BIN" || \
   echo "[!] setcap skipped"
 
 # =============================
+# Hardware Monitoring Access
+# =============================
+echo "[*] Setting up hardware monitoring access"
+
+# udev rules for persistence
+UDEV_RULE_FILE="/etc/udev/rules.d/99-horizonx-hwmon.rules"
+cat > "$UDEV_RULE_FILE" <<'EOF'
+# Intel RAPL power metrics
+SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", ACTION=="add", RUN+="/bin/chmod 444 /sys/class/powercap/%k/energy_uj"
+SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", ACTION=="add", RUN+="/bin/chmod 444 /sys/class/powercap/%k/max_energy_range_uj"
+
+# Hardware monitoring sensors (temp, fan, voltage, power)
+SUBSYSTEM=="hwmon", ACTION=="add", RUN+="/bin/chmod -R a+r /sys/class/hwmon/%k"
+
+# Thermal zones
+SUBSYSTEM=="thermal", ACTION=="add", RUN+="/bin/chmod 444 /sys/class/thermal/%k/temp"
+
+# Block devices
+SUBSYSTEM=="block", ACTION=="add", RUN+="/bin/chmod 444 /sys/block/%k/stat"
+EOF
+
+# Reload udev
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger --subsystem-match=powercap 2>/dev/null || true
+udevadm trigger --subsystem-match=hwmon 2>/dev/null || true
+udevadm trigger --subsystem-match=thermal 2>/dev/null || true
+udevadm trigger --subsystem-match=block 2>/dev/null || true
+
+# Immediate fixes (apply now, udev handles future)
+echo "  [*] Applying immediate permissions..."
+
+# Intel RAPL (power)
+if [ -d /sys/class/powercap/intel-rapl ]; then
+  chmod 444 /sys/class/powercap/intel-rapl/intel-rapl:*/energy_uj 2>/dev/null || true
+  chmod 444 /sys/class/powercap/intel-rapl/intel-rapl:*/max_energy_range_uj 2>/dev/null || true
+  echo "    [✓] Intel RAPL"
+fi
+
+# AMD/Intel hwmon (power, temp, fan, voltage)
+if [ -d /sys/class/hwmon ]; then
+  chmod -R a+r /sys/class/hwmon/hwmon* 2>/dev/null || true
+  echo "    [✓] Hardware monitors (hwmon)"
+fi
+
+# CPU frequency
+if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+  chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null || true
+  chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq 2>/dev/null || true
+  chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq 2>/dev/null || true
+  echo "    [✓] CPU frequency scaling"
+fi
+
+# Thermal zones
+if [ -d /sys/class/thermal ]; then
+  chmod 444 /sys/class/thermal/thermal_zone*/temp 2>/dev/null || true
+  echo "    [✓] Thermal zones"
+fi
+
+# Block device stats
+if [ -d /sys/block ]; then
+  chmod 444 /sys/block/*/stat 2>/dev/null || true
+  echo "    [✓] Block device stats"
+fi
+
+# Network stats (usually already readable, but just in case)
+if [ -d /sys/class/net ]; then
+  chmod 444 /sys/class/net/*/statistics/* 2>/dev/null || true
+  echo "    [✓] Network statistics"
+fi
+
+# GPU (DRM) if available
+if [ -d /sys/class/drm ]; then
+  chmod 444 /sys/class/drm/card*/device/power_state 2>/dev/null || true
+  chmod 444 /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null || true
+  echo "    [✓] GPU metrics (if available)"
+fi
+
+echo "  [✓] Hardware monitoring configured"
+
+# Verify critical metrics accessible
+echo "  [*] Verifying access..."
+VERIFICATION_FAILED=0
+
+if [ -f /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj ]; then
+  if ! sudo -u "$USER_NAME" cat /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj >/dev/null 2>&1; then
+    echo "    [!] RAPL access failed"
+    VERIFICATION_FAILED=1
+  fi
+fi
+
+if [ $VERIFICATION_FAILED -eq 0 ]; then
+  echo "    [✓] All checks passed"
+else
+  echo "    [!] Some checks failed, agent may have limited monitoring capabilities"
+fi
+
+# =============================
 # Env file
 # =============================
 if [ ! -f "$CONFIG_DIR" ]; then
@@ -179,6 +276,7 @@ Environment=GIT_SSH=$GIT_SSH_WRAPPER
 EnvironmentFile=$CONFIG_DIR
 ExecStart=$INSTALL_BIN --config $CONFIG_DIR
 Restart=always
+RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=true
@@ -196,7 +294,18 @@ EOF
 # =============================
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
-systemctl restart "$SERVICE_NAME"
+
+echo "  [*] Starting $SERVICE_NAME..."
+systemctl start "$SERVICE_NAME"
+
+# Wait a bit and check status
+sleep 2
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+  echo "  [✓] Service started successfully"
+else
+  echo "  [!] Service failed to start, check logs:"
+  echo "      journalctl -u $SERVICE_NAME -n 20 --no-pager"
+fi
 
 echo
 echo "[✓] HorizonX Agent installed"
@@ -205,5 +314,5 @@ echo "----------------------------------------"
 cat "$SSH_KEY.pub"
 echo "----------------------------------------"
 echo
-echo "[*] Verify known_hosts:"
-wc -l "$KNOWN_HOSTS_FILE"
+echo "[*] Service status:"
+systemctl status "$SERVICE_NAME" --no-pager -l || true
