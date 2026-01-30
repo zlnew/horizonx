@@ -3,6 +3,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -39,7 +40,9 @@ type Collector struct {
 	cfg *config.Config
 	log logger.Logger
 
-	registry *redis.MetricsRegistry
+	registry       *redis.Registry
+	registryKey    string
+	registryMaxLen int64
 
 	buffer   []domain.Metrics
 	bufferMu sync.Mutex
@@ -78,12 +81,14 @@ type Collector struct {
 	iface string
 }
 
-func NewCollector(cfg *config.Config, log logger.Logger, registry *redis.MetricsRegistry) *Collector {
+func NewCollector(cfg *config.Config, log logger.Logger, registry *redis.Registry) *Collector {
 	return &Collector{
 		cfg: cfg,
 		log: log,
 
-		registry: registry,
+		registry:       registry,
+		registryKey:    fmt.Sprintf("metrics:agent:%s:stream", cfg.AgentServerID.String()),
+		registryMaxLen: 5000,
 
 		buffer:     make([]domain.Metrics, 0, 10),
 		maxSamples: 10,
@@ -116,6 +121,10 @@ func NewCollector(cfg *config.Config, log logger.Logger, registry *redis.Metrics
 }
 
 func (c *Collector) Start(ctx context.Context) error {
+	if err := c.loadBufferFromRegistry(ctx); err != nil {
+		c.log.Error("failed to load initial metrics from registry", "err", err)
+	}
+
 	runtimeCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -148,7 +157,7 @@ func (c *Collector) stop(ctx context.Context) {
 	c.log.Info("flushing buffered metrics to registry")
 
 	for _, m := range c.buffer {
-		if _, err := c.registry.Append(ctx, &m); err != nil {
+		if _, err := c.registry.Append(ctx, c.registryKey, &m, 5000); err != nil {
 			c.log.Error("failed to flush metrics", "err", err)
 		}
 	}
@@ -156,21 +165,43 @@ func (c *Collector) stop(ctx context.Context) {
 	c.buffer = nil
 }
 
-func (c *Collector) Latest(ctx context.Context) *domain.Metrics {
+func (c *Collector) Latest() *domain.Metrics {
 	c.bufferMu.Lock()
-	if len(c.buffer) > 0 {
-		m := c.buffer[len(c.buffer)-1]
-		c.bufferMu.Unlock()
-		return &m
-	}
-	c.bufferMu.Unlock()
+	defer c.bufferMu.Unlock()
 
-	m, _, err := c.registry.GetLatest(ctx)
-	if err != nil || m == nil {
+	if len(c.buffer) == 0 {
 		return &domain.Metrics{}
 	}
 
-	return m
+	m := c.buffer[len(c.buffer)-1]
+	return &m
+}
+
+func (c *Collector) loadBufferFromRegistry(ctx context.Context) error {
+	msg, err := c.registry.GetRangeDesc(ctx, c.registryKey, int64(c.maxSamples))
+	if err != nil {
+		return err
+	}
+
+	metrics, _, err := redis.ParseStreamMessages[domain.Metrics](msg)
+	if err != nil {
+		return err
+	}
+
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	c.bufferMu.Lock()
+	defer c.bufferMu.Unlock()
+
+	if len(metrics) > c.maxSamples {
+		metrics = metrics[len(metrics)-c.maxSamples:]
+	}
+	c.buffer = append(c.buffer, metrics...)
+	c.log.Info("loaded initial metrics from registry", "count", len(c.buffer))
+
+	return nil
 }
 
 func (c *Collector) collect(ctx context.Context) {
@@ -191,14 +222,15 @@ func (c *Collector) collect(ctx context.Context) {
 	c.ApplyEMA(&metrics)
 
 	c.bufferMu.Lock()
-	defer c.bufferMu.Unlock()
-
 	if len(c.buffer) >= c.maxSamples {
 		c.buffer = c.buffer[1:]
 	}
-
 	c.buffer = append(c.buffer, metrics)
-	c.registry.Append(ctx, &metrics)
+	c.bufferMu.Unlock()
+
+	if _, err := c.registry.Append(ctx, c.registryKey, &metrics, 5000); err != nil {
+		c.log.Error("failed to append metrics", "err", err)
+	}
 }
 
 func (c *Collector) getCPUMetric() domain.CPUMetric {

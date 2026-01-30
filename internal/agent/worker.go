@@ -21,7 +21,7 @@ type JobWorker struct {
 	executor *executor.Executor
 }
 
-func NewJobWorker(cfg *config.Config, log logger.Logger, metrics func(ctx context.Context) *domain.Metrics) *JobWorker {
+func NewJobWorker(cfg *config.Config, log logger.Logger, metrics func() *domain.Metrics) *JobWorker {
 	return &JobWorker{
 		cfg:      cfg,
 		log:      log,

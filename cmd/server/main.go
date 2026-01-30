@@ -66,6 +66,7 @@ func main() {
 	defer redisClient.Close()
 
 	bus := event.New()
+	redisRegistry := redis.NewRegistry(redisClient)
 
 	// Repositories
 	logRepo := postgres.NewLogRepository(dbPool)
@@ -85,7 +86,7 @@ func main() {
 	accountService := account.NewService(userRepo)
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, logService, bus)
-	metricsService := metrics.NewService(metricsRepo, bus, log)
+	metricsService := metrics.NewService(metricsRepo, redisRegistry, bus, log)
 	deploymentService := deployment.NewService(deploymentRepo, logService, bus)
 	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus)
 

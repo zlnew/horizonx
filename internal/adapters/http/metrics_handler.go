@@ -46,7 +46,7 @@ func (h *MetricsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Ingest(metrics); err != nil {
+	if err := h.svc.Ingest(r.Context(), metrics); err != nil {
 		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
 			Message: "failed to process metrics",
 		})
@@ -68,7 +68,7 @@ func (h *MetricsHandler) Latest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics, err := h.svc.Latest(serverID)
+	metrics, err := h.svc.Latest(r.Context(), serverID)
 	if err != nil {
 		if errors.Is(err, domain.ErrMetricsNotFound) {
 			h.writer.Write(w, http.StatusNotFound, &response.Response{
@@ -97,7 +97,7 @@ func (h *MetricsHandler) CPUUsageHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	data, err := h.svc.CPUUsageHistory(serverID)
+	data, err := h.svc.CPUUsageHistory(r.Context(), serverID)
 	if err != nil {
 		if errors.Is(err, domain.ErrMetricsNotFound) {
 			h.writer.Write(w, http.StatusNotFound, &response.Response{
@@ -126,7 +126,7 @@ func (h *MetricsHandler) NetSpeedHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	data, err := h.svc.NetSpeedHistory(serverID)
+	data, err := h.svc.NetSpeedHistory(r.Context(), serverID)
 	if err != nil {
 		if errors.Is(err, domain.ErrMetricsNotFound) {
 			h.writer.Write(w, http.StatusNotFound, &response.Response{

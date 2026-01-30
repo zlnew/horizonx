@@ -36,12 +36,20 @@ func (r *Registry) Append(ctx context.Context, stream string, payload any, maxLe
 	return id, nil
 }
 
-func (r *Registry) GetRange(ctx context.Context, stream string, limit int64) ([]redis.XMessage, error) {
+func (r *Registry) GetRangeAsc(ctx context.Context, stream string, limit int64) ([]redis.XMessage, error) {
 	msgs, err := r.redis.XRangeN(ctx, stream, "-", "+", limit).Result()
 	if err != nil {
 		return nil, fmt.Errorf("registry xrange failed: %w", err)
 	}
 
+	return msgs, nil
+}
+
+func (r *Registry) GetRangeDesc(ctx context.Context, stream string, limit int64) ([]redis.XMessage, error) {
+	msgs, err := r.redis.XRevRangeN(ctx, stream, "+", "-", limit).Result()
+	if err != nil {
+		return nil, fmt.Errorf("registry xrange failed: %w", err)
+	}
 	return msgs, nil
 }
 

@@ -3,9 +3,11 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"horizonx/internal/adapters/redis"
 	"horizonx/internal/domain"
 	"horizonx/internal/event"
 	"horizonx/internal/logger"
@@ -14,9 +16,11 @@ import (
 )
 
 type Service struct {
-	repo domain.MetricsRepository
-	bus  *event.Bus
-	log  logger.Logger
+	repo     domain.MetricsRepository
+	registry *redis.Registry
+
+	bus *event.Bus
+	log logger.Logger
 
 	buffer []domain.Metrics
 	latest map[uuid.UUID]domain.Metrics
@@ -40,11 +44,13 @@ type Service struct {
 	batchSize int
 }
 
-func NewService(repo domain.MetricsRepository, bus *event.Bus, log logger.Logger) domain.MetricsService {
+func NewService(repo domain.MetricsRepository, registry *redis.Registry, bus *event.Bus, log logger.Logger) domain.MetricsService {
 	svc := &Service{
-		repo: repo,
-		bus:  bus,
-		log:  log,
+		repo:     repo,
+		registry: registry,
+
+		bus: bus,
+		log: log,
 
 		buffer: make([]domain.Metrics, 0, 50),
 		latest: make(map[uuid.UUID]domain.Metrics),
@@ -67,13 +73,13 @@ func NewService(repo domain.MetricsRepository, bus *event.Bus, log logger.Logger
 	return svc
 }
 
-func (s *Service) Ingest(m domain.Metrics) error {
+func (s *Service) Ingest(ctx context.Context, m domain.Metrics) error {
 	sid := m.ServerID
 	at := m.RecordedAt
 
-	s.updateLatest(m)
-	s.recordCPUUsage(sid, m.CPU.Usage.EMA, at)
-	s.recordNetSpeed(sid, m.Network.RXSpeedMBs.EMA, m.Network.TXSpeedMBs.EMA, at)
+	s.recordLatest(ctx, m)
+	s.recordCPUUsage(ctx, sid, m.CPU.Usage.EMA, at)
+	s.recordNetSpeed(ctx, sid, m.Network.RXSpeedMBs.EMA, m.Network.TXSpeedMBs.EMA, at)
 
 	s.bufferMu.Lock()
 	s.buffer = append(s.buffer, m)
@@ -90,38 +96,75 @@ func (s *Service) Ingest(m domain.Metrics) error {
 	return nil
 }
 
-func (s *Service) Latest(serverID uuid.UUID) (*domain.Metrics, error) {
+func (s *Service) Latest(ctx context.Context, serverID uuid.UUID) (*domain.Metrics, error) {
 	s.latestMu.Lock()
-	defer s.latestMu.Unlock()
+	if metrics, ok := s.latest[serverID]; ok {
+		s.latestMu.Unlock()
+		return &metrics, nil
+	}
+	s.latestMu.Unlock()
 
-	metrics, ok := s.latest[serverID]
-	if !ok {
+	if msg, err := s.registry.GetLatest(ctx, fmt.Sprintf("metrics:server:%s:latest", serverID.String())); err == nil {
+		if metrics, _, err := redis.ParseStreamMessages[domain.Metrics](msg); len(metrics) == 1 && err == nil {
+			return &metrics[0], nil
+		}
+	}
+
+	return nil, domain.ErrMetricsNotFound
+}
+
+func (s *Service) CPUUsageHistory(ctx context.Context, serverID uuid.UUID) ([]domain.CPUUsageSample, error) {
+	s.cpuUsageMu.Lock()
+	usages, ok := s.cpuUsageHistory[serverID]
+	s.cpuUsageMu.Unlock()
+	if ok {
+		return usages, nil
+	}
+
+	msg, err := s.registry.GetRangeDesc(ctx, fmt.Sprintf("metrics:server:%s:cpu_usage", serverID.String()), 900)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CPU usage from registry: %w", err)
+	}
+
+	usages, _, err = redis.ParseStreamMessages[domain.CPUUsageSample](msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CPU usage messages: %w", err)
+	}
+	if len(usages) == 0 {
 		return nil, domain.ErrMetricsNotFound
 	}
 
-	return &metrics, nil
-}
-
-func (s *Service) CPUUsageHistory(serverID uuid.UUID) ([]domain.CPUUsageSample, error) {
 	s.cpuUsageMu.Lock()
-	defer s.cpuUsageMu.Unlock()
-
-	usages, ok := s.cpuUsageHistory[serverID]
-	if !ok {
-		return []domain.CPUUsageSample{}, domain.ErrMetricsNotFound
-	}
+	s.cpuUsageHistory[serverID] = usages
+	s.cpuUsageMu.Unlock()
 
 	return usages, nil
 }
 
-func (s *Service) NetSpeedHistory(serverID uuid.UUID) ([]domain.NetworkSpeedSample, error) {
+func (s *Service) NetSpeedHistory(ctx context.Context, serverID uuid.UUID) ([]domain.NetworkSpeedSample, error) {
 	s.netSpeedMu.Lock()
-	defer s.netSpeedMu.Unlock()
-
 	speeds, ok := s.netSpeedHistory[serverID]
-	if !ok {
-		return []domain.NetworkSpeedSample{}, domain.ErrMetricsNotFound
+	s.netSpeedMu.Unlock()
+	if ok {
+		return speeds, nil
 	}
+
+	msg, err := s.registry.GetRangeDesc(ctx, fmt.Sprintf("metrics:server:%s:net_speed", serverID.String()), 900)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get net speed from registry: %w", err)
+	}
+
+	speeds, _, err = redis.ParseStreamMessages[domain.NetworkSpeedSample](msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse net speed messages: %w", err)
+	}
+	if len(speeds) == 0 {
+		return nil, domain.ErrMetricsNotFound
+	}
+
+	s.netSpeedMu.Lock()
+	s.netSpeedHistory[serverID] = speeds
+	s.netSpeedMu.Unlock()
 
 	return speeds, nil
 }
@@ -130,19 +173,23 @@ func (s *Service) Cleanup(ctx context.Context, serverID uuid.UUID, cutoff time.T
 	return s.repo.Cleanup(ctx, serverID, cutoff)
 }
 
-func (s *Service) updateLatest(m domain.Metrics) {
+func (s *Service) recordLatest(ctx context.Context, m domain.Metrics) {
 	s.latestMu.Lock()
+	defer s.latestMu.Unlock()
+
 	s.latest[m.ServerID] = m
-	s.latestMu.Unlock()
+	s.registry.Append(ctx, fmt.Sprintf("metrics:server:%s:latest", m.ServerID.String()), m, 1)
 }
 
-func (s *Service) recordCPUUsage(serverID uuid.UUID, usage float64, at time.Time) {
-	s.cpuUsageMu.Lock()
-	cpuPoints := s.cpuUsageHistory[serverID]
-	cpuPoints = append(cpuPoints, domain.CPUUsageSample{
+func (s *Service) recordCPUUsage(ctx context.Context, serverID uuid.UUID, usage float64, at time.Time) {
+	sample := domain.CPUUsageSample{
 		UsagePercent: usage,
 		At:           at,
-	})
+	}
+
+	s.cpuUsageMu.Lock()
+	cpuPoints := s.cpuUsageHistory[serverID]
+	cpuPoints = append(cpuPoints, sample)
 
 	cutoff := at.Add(-s.cpuUsageHistoryRetention)
 	i := 0
@@ -154,16 +201,22 @@ func (s *Service) recordCPUUsage(serverID uuid.UUID, usage float64, at time.Time
 	cpuPoints = cpuPoints[i:]
 	s.cpuUsageHistory[serverID] = cpuPoints
 	s.cpuUsageMu.Unlock()
+
+	if _, err := s.registry.Append(ctx, fmt.Sprintf("metrics:server:%s:cpu_usage", serverID.String()), &sample, 900); err != nil {
+		s.log.Error("failed to append CPU sample to registry", "serverID", serverID, "err", err)
+	}
 }
 
-func (s *Service) recordNetSpeed(serverID uuid.UUID, rxMBs float64, txMBs float64, at time.Time) {
-	s.netSpeedMu.Lock()
-	netPoints := s.netSpeedHistory[serverID]
-	netPoints = append(netPoints, domain.NetworkSpeedSample{
+func (s *Service) recordNetSpeed(ctx context.Context, serverID uuid.UUID, rxMBs float64, txMBs float64, at time.Time) {
+	sample := domain.NetworkSpeedSample{
 		RXMBs: rxMBs,
 		TXMBs: txMBs,
 		At:    at,
-	})
+	}
+
+	s.netSpeedMu.Lock()
+	netPoints := s.netSpeedHistory[serverID]
+	netPoints = append(netPoints, sample)
 
 	cutoff := at.Add(-s.netSpeedHistoryRetention)
 	i := 0
@@ -175,6 +228,10 @@ func (s *Service) recordNetSpeed(serverID uuid.UUID, rxMBs float64, txMBs float6
 	netPoints = netPoints[i:]
 	s.netSpeedHistory[serverID] = netPoints
 	s.netSpeedMu.Unlock()
+
+	if _, err := s.registry.Append(ctx, fmt.Sprintf("metrics:server:%s:net_speed", serverID.String()), &sample, 900); err != nil {
+		s.log.Error("failed to append net speed sample to registry", "serverID", serverID, "err", err)
+	}
 }
 
 func (s *Service) backgroundFlusher() {

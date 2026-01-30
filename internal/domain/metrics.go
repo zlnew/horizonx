@@ -114,10 +114,10 @@ type NetworkSpeedSample struct {
 }
 
 type MetricsService interface {
-	Ingest(m Metrics) error
-	Latest(serverID uuid.UUID) (*Metrics, error)
-	CPUUsageHistory(serverID uuid.UUID) ([]CPUUsageSample, error)
-	NetSpeedHistory(serverID uuid.UUID) ([]NetworkSpeedSample, error)
+	Ingest(ctx context.Context, m Metrics) error
+	Latest(ctx context.Context, serverID uuid.UUID) (*Metrics, error)
+	CPUUsageHistory(ctx context.Context, serverID uuid.UUID) ([]CPUUsageSample, error)
+	NetSpeedHistory(ctx context.Context, serverID uuid.UUID) ([]NetworkSpeedSample, error)
 	Cleanup(ctx context.Context, serverID uuid.UUID, cutoff time.Time) error
 }
 

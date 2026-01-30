@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
@@ -54,7 +53,7 @@ func main() {
 
 	// Initialize components
 	ws := agent.NewAgent(cfg, appLog)
-	mRegistry := redis.NewMetricsRegistry(redisClient, fmt.Sprintf("metrics:agent:%s:stream", cfg.AgentServerID.String()))
+	mRegistry := redis.NewRegistry(redisClient)
 	mCollector := metrics.NewCollector(cfg, appLog, mRegistry)
 
 	// Initialize job worker
