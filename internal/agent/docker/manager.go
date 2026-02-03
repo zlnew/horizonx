@@ -31,7 +31,7 @@ func NewManager(workDir string) *Manager {
 	return &Manager{workDir: workDir}
 }
 
-func (m *Manager) Initialize() error {
+func (m *Manager) Init() error {
 	if err := os.MkdirAll(m.workDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create work directory: %w", err)
 	}

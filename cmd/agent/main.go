@@ -11,6 +11,7 @@ import (
 
 	"horizonx/internal/adapters/redis"
 	"horizonx/internal/agent"
+	"horizonx/internal/agent/executor"
 	"horizonx/internal/config"
 	"horizonx/internal/logger"
 	"horizonx/internal/metrics"
@@ -51,40 +52,35 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	// Initialize components
-	ws := agent.NewAgent(cfg, appLog)
-	mRegistry := redis.NewRegistry(redisClient)
-	mCollector := metrics.NewCollector(cfg, appLog, mRegistry)
+	registry := redis.NewRegistry(redisClient)
+	httpClient := agent.NewHttpClient(cfg)
+	collector := metrics.NewCollector(cfg, appLog, registry)
+	executor := executor.NewExecutor(appLog, collector.Latest)
+	worker := agent.NewJobWorker(cfg, appLog, *httpClient, *executor)
+	conn := agent.NewAgent(cfg, appLog)
 
-	// Initialize job worker
-	jWorker := agent.NewJobWorker(cfg, appLog, mCollector.Latest)
-	if err := jWorker.Initialize(); err != nil {
-		appLog.Error("failed to Initialize job worker", "error", err)
+	if err := executor.Init(); err != nil {
+		appLog.Error("failed to init executor", "error", err)
 		log.Fatal(err)
 	}
 
-	g, gCtx := errgroup.WithContext(runtimeCtx)
+	g, gctx := errgroup.WithContext(runtimeCtx)
 
-	// WebSocket connection
 	g.Go(func() error {
-		return ws.Run(gCtx)
+		return collector.Start(gctx)
 	})
 
-	// Metrics collector
 	g.Go(func() error {
-		return mCollector.Start(gCtx)
+		return worker.Start(gctx)
 	})
 
-	// Job worker
 	g.Go(func() error {
-		return jWorker.Start(gCtx)
+		return conn.Start(gctx)
 	})
 
-	if err := g.Wait(); err != nil && err != context.Canceled && !agent.IsFatalError(err) {
-		appLog.Error("agent failed unexpectedly", "error", err)
-	} else if agent.IsFatalError(err) {
-		appLog.Error("agent failed fatally, exiting", "error", err)
+	if err := g.Wait(); err != nil {
+		appLog.Error("agent stopped with error", "error", err)
+	} else {
+		appLog.Info("agent stopped gracefully.")
 	}
-
-	appLog.Info("agent stopped gracefully.")
 }

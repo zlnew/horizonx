@@ -48,7 +48,7 @@ func (r *Registry) GetRangeAsc(ctx context.Context, stream string, limit int64) 
 func (r *Registry) GetRangeDesc(ctx context.Context, stream string, limit int64) ([]redis.XMessage, error) {
 	msgs, err := r.redis.XRevRangeN(ctx, stream, "+", "-", limit).Result()
 	if err != nil {
-		return nil, fmt.Errorf("registry xrange failed: %w", err)
+		return nil, fmt.Errorf("registry xrevrange failed: %w", err)
 	}
 	return msgs, nil
 }

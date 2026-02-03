@@ -18,14 +18,16 @@ import (
 type EmitHandler = func(event any)
 
 type Executor struct {
-	metrics func() *domain.Metrics
 	docker  *docker.Manager
 	git     *git.Manager
+	metrics func() *domain.Metrics
 
 	log logger.Logger
 }
 
-func NewExecutor(workDir string, metrics func() *domain.Metrics, log logger.Logger) *Executor {
+func NewExecutor(log logger.Logger, metrics func() *domain.Metrics) *Executor {
+	workDir := "/var/lib/horizonx/apps"
+
 	return &Executor{
 		docker:  docker.NewManager(workDir),
 		git:     git.NewManager(workDir),
@@ -35,7 +37,7 @@ func NewExecutor(workDir string, metrics func() *domain.Metrics, log logger.Logg
 	}
 }
 
-func (e *Executor) Initialize() error {
+func (e *Executor) Init() error {
 	if !e.docker.IsDockerInstalled() {
 		return fmt.Errorf("docker is not installed")
 	}
@@ -48,7 +50,7 @@ func (e *Executor) Initialize() error {
 		return fmt.Errorf("git is not installed")
 	}
 
-	return e.docker.Initialize()
+	return e.docker.Init()
 }
 
 func (e *Executor) Execute(ctx context.Context, job *domain.Job, emit EmitHandler) error {

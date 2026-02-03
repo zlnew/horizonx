@@ -15,6 +15,7 @@ import (
 	"horizonx/internal/system"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -31,11 +32,7 @@ type Agent struct {
 	log  logger.Logger
 }
 
-var ErrUnauthorized = errors.New("connection failed: unauthorized (check token)")
-
-func IsFatalError(err error) bool {
-	return errors.Is(err, ErrUnauthorized)
-}
+var ErrUnauthorized = errors.New("connection failed: unauthorized")
 
 func NewAgent(cfg *config.Config, log logger.Logger) *Agent {
 	return &Agent{
@@ -45,45 +42,37 @@ func NewAgent(cfg *config.Config, log logger.Logger) *Agent {
 	}
 }
 
-func (a *Agent) Run(ctx context.Context) error {
+func (a *Agent) Start(ctx context.Context) error {
 	a.send = make(chan []byte, 256)
 	reconnectInterval := 5 * time.Second
 	attempt := 0
 
 	for {
-		select {
-		case <-ctx.Done():
-			a.log.Info("agent run loop received shutdown signal")
-			return ctx.Err()
-		default:
-		}
-
 		a.log.Info("starting agent...", "attempt", attempt+1)
 
-		err := a.start(ctx)
+		err := a.dialUp(ctx)
 		if err != nil {
 			if errors.Is(err, ErrUnauthorized) {
-				a.log.Error("FATAL: unauthorized token. exiting...", "error", err)
 				return err
 			}
 
-			a.log.Error("failed to start agent", "error", err)
+			a.log.Warn("connection lost or failed, will retry", "error", err)
 		}
 
 		attempt++
 		a.log.Debug("waiting before next reconnection attempt")
 
 		select {
-		case <-time.After(reconnectInterval):
 		case <-ctx.Done():
-			return ctx.Err()
+			a.log.Info("agent stopped")
+			return nil
+		case <-time.After(reconnectInterval):
 		}
 	}
 }
 
-func (a *Agent) start(ctx context.Context) error {
+func (a *Agent) dialUp(ctx context.Context) error {
 	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
-
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+a.cfg.AgentServerID.String()+"."+a.cfg.AgentServerAPIToken)
 
@@ -92,49 +81,36 @@ func (a *Agent) start(ctx context.Context) error {
 		if res != nil && res.StatusCode == http.StatusUnauthorized {
 			return ErrUnauthorized
 		}
-		return fmt.Errorf("ws dial failed: %w", err)
+		return fmt.Errorf("dial failed: %w", err)
 	}
-
 	a.conn = conn
-	a.log.Info("ws connected to server", "url", a.cfg.AgentTargetWsURL)
+	a.log.Info("connected to server", "url", a.cfg.AgentTargetWsURL)
 
-	go a.sendServerOSInfo()
+	a.sendServerOSInfo()
 
-	sessionCtx, cancel := context.WithCancel(ctx)
-	pumpDone := make(chan error, 2)
+	g, gctx := errgroup.WithContext(ctx)
 
-	defer func() {
-		cancel()
-		a.conn.Close()
+	g.Go(func() error { return a.readPump(gctx) })
+	g.Go(func() error { return a.writePump(gctx) })
+
+	go func() {
+		<-gctx.Done()
+		if a.conn != nil {
+			_ = a.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = a.conn.WriteMessage(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shutting down"),
+			)
+			a.conn.Close()
+			a.conn = nil
+		}
 	}()
 
-	go func() { pumpDone <- a.readPump(sessionCtx) }()
-	go func() { pumpDone <- a.writePump(sessionCtx) }()
-
-	var finalErr error
-	select {
-	case finalErr = <-pumpDone:
-		a.log.Info("a pump has exited, shutting down agent session", "error", finalErr)
-	case <-ctx.Done():
-		finalErr = ctx.Err()
-		a.log.Info("agent received external shutdown signal, closing session")
+	if err := g.Wait(); err != nil {
+		a.log.Warn("connection closed unexpectedly, pumps exited", "error", err)
 	}
 
-	_ = a.conn.SetWriteDeadline(time.Now().Add(writeWait))
-	_ = a.conn.WriteMessage(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shutting down"),
-	)
-
-	select {
-	case <-time.After(time.Millisecond * 100):
-	case pumpErr := <-pumpDone:
-		if finalErr == nil {
-			finalErr = pumpErr
-		}
-	}
-
-	return finalErr
+	return nil
 }
 
 func (a *Agent) readPump(ctx context.Context) error {
@@ -148,13 +124,18 @@ func (a *Agent) readPump(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		default:
 			_, message, err := a.conn.ReadMessage()
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					a.log.Error("ws read error (unexpected close)", "error", err)
+				if ctx.Err() != nil {
+					return nil
 				}
+
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+					return nil
+				}
+
 				return err
 			}
 
@@ -166,7 +147,7 @@ func (a *Agent) readPump(ctx context.Context) error {
 
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return nil
 			default:
 				a.log.Debug("incoming server message", "payload", serverMessage.Payload)
 			}
@@ -181,8 +162,7 @@ func (a *Agent) writePump(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-
+			return nil
 		case message, ok := <-a.send:
 			a.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
@@ -204,7 +184,6 @@ func (a *Agent) writePump(ctx context.Context) error {
 			if err := w.Close(); err != nil {
 				return err
 			}
-
 		case <-ticker.C:
 			a.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := a.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -217,35 +196,33 @@ func (a *Agent) writePump(ctx context.Context) error {
 func (a *Agent) sendServerOSInfo() {
 	system := system.NewReader(a.log)
 
-	osInfo := domain.OSInfo{
+	osInfo, err := json.Marshal(&domain.OSInfo{
 		Hostname:      system.Hostname(),
 		Name:          system.OsName(),
 		Arch:          system.Arch(),
 		KernelVersion: system.KernelVersion(),
-	}
-
-	payloadBytes, err := json.Marshal(osInfo)
+	})
 	if err != nil {
-		a.log.Error("ws: failed to marshal OS info payload", "error", err.Error())
+		a.log.Error("failed to marshal OS info payload", "error", err.Error())
 		return
 	}
 
 	rawMessage := &domain.WsAgentMessage{
 		ServerID: a.cfg.AgentServerID,
 		Event:    "server_os_info",
-		Payload:  payloadBytes,
+		Payload:  osInfo,
 	}
 
 	message, err := json.Marshal(rawMessage)
 	if err != nil {
-		a.log.Error("ws: failed to marshal full WS message", "error", err.Error())
+		a.log.Error("failed to marshal agent message", "error", err.Error())
 		return
 	}
 
 	select {
 	case a.send <- message:
-		a.log.Debug("ws: sent server OS info")
+		a.log.Debug("server OS info sent successfully")
 	default:
-		a.log.Warn("ws: send channel full, dropping server OS info")
+		a.log.Warn("send channel full, OS info dropped")
 	}
 }

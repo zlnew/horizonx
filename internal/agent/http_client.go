@@ -12,19 +12,19 @@ import (
 	"horizonx/internal/domain"
 )
 
-type Client struct {
+type HttpClient struct {
 	cfg  *config.Config
 	http *http.Client
 }
 
-func NewClient(cfg *config.Config) *Client {
-	return &Client{
+func NewHttpClient(cfg *config.Config) *HttpClient {
+	return &HttpClient{
 		cfg:  cfg,
 		http: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
-func (c *Client) UpdateServerOSInfo(ctx context.Context, req domain.OSInfo) error {
+func (c *HttpClient) UpdateServerOSInfo(ctx context.Context, req domain.OSInfo) error {
 	url := fmt.Sprintf("%s/agent/server/os-info", c.cfg.AgentTargetAPIURL)
 
 	body, err := json.Marshal(req)
@@ -53,7 +53,7 @@ func (c *Client) UpdateServerOSInfo(ctx context.Context, req domain.OSInfo) erro
 	return nil
 }
 
-func (c *Client) GetPendingJobs(ctx context.Context) ([]domain.Job, error) {
+func (c *HttpClient) GetPendingJobs(ctx context.Context) ([]domain.Job, error) {
 	url := c.cfg.AgentTargetAPIURL + "/agent/jobs"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -84,7 +84,7 @@ func (c *Client) GetPendingJobs(ctx context.Context) ([]domain.Job, error) {
 	return response.Data, nil
 }
 
-func (c *Client) StartJob(ctx context.Context, jobID int64) error {
+func (c *HttpClient) StartJob(ctx context.Context, jobID int64) error {
 	url := fmt.Sprintf("%s/agent/jobs/%d/start", c.cfg.AgentTargetAPIURL, jobID)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
@@ -107,7 +107,7 @@ func (c *Client) StartJob(ctx context.Context, jobID int64) error {
 	return nil
 }
 
-func (c *Client) FinishJob(ctx context.Context, jobID int64, status domain.JobStatus) error {
+func (c *HttpClient) FinishJob(ctx context.Context, jobID int64, status domain.JobStatus) error {
 	url := fmt.Sprintf("%s/agent/jobs/%d/finish", c.cfg.AgentTargetAPIURL, jobID)
 
 	payload := &domain.JobFinishRequest{
@@ -140,7 +140,7 @@ func (c *Client) FinishJob(ctx context.Context, jobID int64, status domain.JobSt
 	return nil
 }
 
-func (c *Client) SendAppHealthReports(ctx context.Context, req []domain.ApplicationHealth) error {
+func (c *HttpClient) SendAppHealthReports(ctx context.Context, req []domain.ApplicationHealth) error {
 	url := fmt.Sprintf("%s/agent/applications/health", c.cfg.AgentTargetAPIURL)
 
 	body, err := json.Marshal(&req)
@@ -169,7 +169,7 @@ func (c *Client) SendAppHealthReports(ctx context.Context, req []domain.Applicat
 	return nil
 }
 
-func (c *Client) SendMetrics(ctx context.Context, req *domain.Metrics) error {
+func (c *HttpClient) SendMetrics(ctx context.Context, req *domain.Metrics) error {
 	url := fmt.Sprintf("%s/agent/metrics", c.cfg.AgentTargetAPIURL)
 
 	body, err := json.Marshal(&req)
@@ -198,7 +198,7 @@ func (c *Client) SendMetrics(ctx context.Context, req *domain.Metrics) error {
 	return nil
 }
 
-func (c *Client) SendLog(ctx context.Context, req *domain.LogEmitRequest) error {
+func (c *HttpClient) SendLog(ctx context.Context, req *domain.LogEmitRequest) error {
 	url := fmt.Sprintf("%s/agent/logs", c.cfg.AgentTargetAPIURL)
 
 	body, err := json.Marshal(&req)
@@ -227,7 +227,7 @@ func (c *Client) SendLog(ctx context.Context, req *domain.LogEmitRequest) error 
 	return nil
 }
 
-func (c *Client) SendCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) error {
+func (c *HttpClient) SendCommitInfo(ctx context.Context, deploymentID int64, commitHash string, commitMessage string) error {
 	url := fmt.Sprintf("%s/agent/deployments/%d/commit-info", c.cfg.AgentTargetAPIURL, deploymentID)
 
 	payload := &domain.DeploymentCommitInfoRequest{

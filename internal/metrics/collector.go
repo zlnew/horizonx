@@ -47,8 +47,6 @@ type Collector struct {
 	buffer   []domain.Metrics
 	bufferMu sync.Mutex
 
-	stateMu sync.Mutex
-
 	maxSamples int
 	interval   time.Duration
 
@@ -125,9 +123,6 @@ func (c *Collector) Start(ctx context.Context) error {
 		c.log.Error("failed to load initial metrics from registry", "err", err)
 	}
 
-	runtimeCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
@@ -136,33 +131,13 @@ func (c *Collector) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			c.stop(runtimeCtx)
-			return ctx.Err()
+			c.flushBufferToRegistry()
+			c.log.Info("metrics collector stopped")
+			return nil
 		case <-ticker.C:
-			c.collect(runtimeCtx)
+			c.collect(ctx)
 		}
 	}
-}
-
-func (c *Collector) stop(ctx context.Context) {
-	c.log.Info("metrics collector stopping...")
-
-	c.bufferMu.Lock()
-	defer c.bufferMu.Unlock()
-
-	if len(c.buffer) == 0 {
-		return
-	}
-
-	c.log.Info("flushing buffered metrics to registry")
-
-	for _, m := range c.buffer {
-		if _, err := c.registry.Append(ctx, c.registryKey, &m, 5000); err != nil {
-			c.log.Error("failed to flush metrics", "err", err)
-		}
-	}
-
-	c.buffer = nil
 }
 
 func (c *Collector) Latest() *domain.Metrics {
@@ -175,6 +150,25 @@ func (c *Collector) Latest() *domain.Metrics {
 
 	m := c.buffer[len(c.buffer)-1]
 	return &m
+}
+
+func (c *Collector) flushBufferToRegistry() {
+	c.bufferMu.Lock()
+	defer c.bufferMu.Unlock()
+
+	if len(c.buffer) == 0 {
+		return
+	}
+
+	c.log.Info("flushing buffered metrics to registry")
+
+	for _, m := range c.buffer {
+		if _, err := c.registry.Append(context.Background(), c.registryKey, &m, 5000); err != nil {
+			c.log.Error("failed to flush buffered metrics to registry", "err", err)
+		}
+	}
+
+	c.buffer = c.buffer[:0]
 }
 
 func (c *Collector) loadBufferFromRegistry(ctx context.Context) error {
@@ -205,8 +199,7 @@ func (c *Collector) loadBufferFromRegistry(ctx context.Context) error {
 }
 
 func (c *Collector) collect(ctx context.Context) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
+	c.bufferMu.Lock()
 
 	var metrics domain.Metrics
 
@@ -221,11 +214,11 @@ func (c *Collector) collect(ctx context.Context) {
 
 	c.ApplyEMA(&metrics)
 
-	c.bufferMu.Lock()
 	if len(c.buffer) >= c.maxSamples {
 		c.buffer = c.buffer[1:]
 	}
 	c.buffer = append(c.buffer, metrics)
+
 	c.bufferMu.Unlock()
 
 	if _, err := c.registry.Append(ctx, c.registryKey, &metrics, 5000); err != nil {

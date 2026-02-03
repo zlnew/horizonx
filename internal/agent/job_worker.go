@@ -15,23 +15,21 @@ import (
 )
 
 type JobWorker struct {
-	cfg      *config.Config
-	log      logger.Logger
-	client   *Client
-	executor *executor.Executor
+	cfg *config.Config
+	log logger.Logger
+
+	httpClient *HttpClient
+	executor   *executor.Executor
 }
 
-func NewJobWorker(cfg *config.Config, log logger.Logger, metrics func() *domain.Metrics) *JobWorker {
+func NewJobWorker(cfg *config.Config, log logger.Logger, httpClient HttpClient, executor executor.Executor) *JobWorker {
 	return &JobWorker{
-		cfg:      cfg,
-		log:      log,
-		client:   NewClient(cfg),
-		executor: executor.NewExecutor("/var/lib/horizonx/apps", metrics, log),
-	}
-}
+		cfg: cfg,
+		log: log,
 
-func (w *JobWorker) Initialize() error {
-	return w.executor.Initialize()
+		httpClient: &httpClient,
+		executor:   &executor,
+	}
 }
 
 func (w *JobWorker) Start(ctx context.Context) error {
@@ -43,19 +41,18 @@ func (w *JobWorker) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			w.log.Info("job worker stopping...")
-			return ctx.Err()
-
+			w.log.Info("job worker stopped")
+			return nil
 		case <-ticker.C:
 			if err := w.pollAndExecuteJobs(ctx); err != nil {
-				w.log.Error("failed to poll jobs", "error", err)
+				w.log.Warn("failed to poll and execute jobs", "error", err)
 			}
 		}
 	}
 }
 
 func (w *JobWorker) pollAndExecuteJobs(ctx context.Context) error {
-	jobs, err := w.client.GetPendingJobs(ctx)
+	jobs, err := w.httpClient.GetPendingJobs(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch jobs: %w", err)
 	}
@@ -78,12 +75,12 @@ func (w *JobWorker) pollAndExecuteJobs(ctx context.Context) error {
 func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 	w.log.Debug("processing job", "job_id", job.ID)
 
-	if err := w.client.StartJob(ctx, job.ID); err != nil {
+	if err := w.httpClient.StartJob(ctx, job.ID); err != nil {
 		w.log.Error("failed to mark job as running", "job_id", job.ID, "error", err)
 		return err
 	}
 
-	execErr := w.execute(job)
+	execErr := w.execute(ctx, job)
 
 	status := domain.JobSuccess
 	if execErr != nil {
@@ -93,7 +90,7 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 		w.log.Debug("job executed successfully", "job_id", job.ID)
 	}
 
-	if err := w.client.FinishJob(ctx, job.ID, status); err != nil {
+	if err := w.httpClient.FinishJob(ctx, job.ID, status); err != nil {
 		w.log.Error("failed to mark job as finished", "job_id", job.ID, "error", err)
 		return err
 	}
@@ -101,8 +98,8 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 	return execErr
 }
 
-func (w *JobWorker) execute(job domain.Job) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	logCh := make(chan domain.EventLogEmitted, 200)
@@ -114,7 +111,7 @@ func (w *JobWorker) execute(job domain.Job) error {
 	go func() {
 		defer wg.Done()
 		for evt := range logCh {
-			err := w.client.SendLog(ctx, &domain.LogEmitRequest{
+			err := w.httpClient.SendLog(ctx, &domain.LogEmitRequest{
 				Timestamp:     evt.Timestamp,
 				Level:         evt.Level,
 				Source:        evt.Source,
@@ -136,7 +133,7 @@ func (w *JobWorker) execute(job domain.Job) error {
 	go func() {
 		defer wg.Done()
 		for evt := range commitCh {
-			if err := w.client.SendCommitInfo(
+			if err := w.httpClient.SendCommitInfo(
 				ctx,
 				evt.DeploymentID,
 				evt.Hash,
@@ -155,7 +152,7 @@ func (w *JobWorker) execute(job domain.Job) error {
 			return
 		}
 
-		if err := w.client.SendMetrics(ctx, metrics); err != nil {
+		if err := w.httpClient.SendMetrics(ctx, metrics); err != nil {
 			w.log.Error("failed to send metrics", "error", err)
 		}
 	})
@@ -166,7 +163,7 @@ func (w *JobWorker) execute(job domain.Job) error {
 			return
 		}
 
-		if err := w.client.SendAppHealthReports(ctx, reports); err != nil {
+		if err := w.httpClient.SendAppHealthReports(ctx, reports); err != nil {
 			w.log.Error("failed to send application health reports", "error", err)
 		}
 	})
@@ -202,7 +199,7 @@ func (w *JobWorker) execute(job domain.Job) error {
 		}
 	}
 
-	err := w.executor.Execute(context.Background(), &job, onEmit)
+	err := w.executor.Execute(ctx, &job, onEmit)
 
 	close(logCh)
 	close(commitCh)
