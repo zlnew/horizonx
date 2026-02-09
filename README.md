@@ -53,6 +53,7 @@ To run HorizonX components, you need:
 - **Operating System**: Linux.
 - **Go**: Version 1.25.4 or higher (to compile binaries).
 - **Database**: PostgreSQL 13+.
+- **Redis**: Required for caching and real-time features.
 - **Git**: **Required** for cloning repositories and deployment operations. The Agent uses Git to clone your repositories.
 - **Docker & Docker Compose**: **Required** for Application Management features (Deploy, Start, Stop, Restart). The Agent uses Docker Compose to manage your deployments.
 
@@ -88,7 +89,7 @@ make build
 
 # Run Agent (replace credentials with real ones from DB/UI)
 export HORIZONX_API_URL="http://localhost:3000"
-export HORIZONX_WS_URL="ws://localhost:3000/ws/agent"
+export HORIZONX_WS_URL="ws://localhost:3000/agent/ws"
 export HORIZONX_SERVER_API_TOKEN="hzx_secret"
 export HORIZONX_SERVER_ID="123"
 
@@ -114,12 +115,12 @@ Run this on the machine that will host the Control Plane.
     sudo ./scripts/install-server.sh
     ```
     *   **Installs to**: `/usr/local/bin/horizonx-server`
-    *   **Config**: `/etc/horizonx/server.env`
+    *   **Config**: `/var/lib/horizonx/server.env`
     *   **Logs**: `/var/log/horizonx/server.log`
     *   **Systemd Service**: `horizonx-server`
 
 3.  **Post-Install**:
-    *   Edit `/etc/horizonx/server.env` with your production `DATABASE_URL` and `JWT_SECRET`.
+    *   Edit `/var/lib/horizonx/server.env` with your production `DATABASE_URL`, `REDIS_ADDR`, and `JWT_SECRET`.
     *   Restart the service: `sudo systemctl restart horizonx-server`
 
 ### 2. Installing an Agent
@@ -135,12 +136,12 @@ Run this on every remote server you want to monitor and deploy applications to.
     sudo ./scripts/install-agent.sh
     ```
     *   **Installs to**: `/usr/local/bin/horizonx-agent`
-    *   **Config**: `/etc/horizonx/agent.env`
+    *   **Config**: `/var/lib/horizonx/agent.env`
     *   **Logs**: `/var/log/horizonx/agent.log`
     *   **Systemd Service**: `horizonx-agent`
 
 3.  **Post-Install**:
-    *   Edit `/etc/horizonx/agent.env`. You **MUST** set the `HORIZONX_API_URL`, `HORIZONX_WS_URL`, `HORIZONX_SERVER_API_TOKEN`, and `HORIZONX_SERVER_ID`.
+    *   Edit `/var/lib/horizonx/agent.env`. You **MUST** set the `HORIZONX_API_URL`, `HORIZONX_WS_URL`, `HORIZONX_SERVER_API_TOKEN`, and `HORIZONX_SERVER_ID`.
     *   Restart the service: `sudo systemctl restart horizonx-agent`
 
 ---
