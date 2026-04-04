@@ -29,6 +29,9 @@ if ! id -u "$USER_NAME" >/dev/null 2>&1; then
 else
   echo "[*] User exists, skipping"
 fi
+echo "[*] Ensuring docker access"
+getent group docker >/dev/null || groupadd docker
+usermod -aG docker "$USER_NAME"
 
 # =============================
 # Directories
