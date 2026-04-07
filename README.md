@@ -7,11 +7,18 @@ HorizonX serves as the command center for your infrastructure. It allows you to 
 > **Note**: This repository contains the **Backend Server** code.  
 > The **Frontend Dashboard** can be found here: [https://github.com/zlnew/horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard)
 
-![](screenshots/server-monitoring.png)
-![](screenshots/server-management.png)
-![](screenshots/application-overview.png)
-![](screenshots/application-management.png)
-![](screenshots/application-deployment-details.png)
+<table>
+  <tr>
+    <td><img src="screenshots/server-monitoring.png" width="200"></td>
+    <td><img src="screenshots/server-management.png" width="200"></td>
+    <td><img src="screenshots/application-overview.png" width="200"></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/application-management.png" width="200"></td>
+    <td><img src="screenshots/application-deployment-details.png" width="200"></td>
+    <td></td>
+  </tr>
+</table>
 
 ---
 
