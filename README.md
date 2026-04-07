@@ -90,12 +90,15 @@ Use these steps to run the project locally for testing or development.
 cp .env.example .env
 # Open .env and set your HTTP_ADDR, ALLOWED_ORIGINS, DATABASE_URL, etc.
 
+# Build binary
+make build
+
 # Initialize Database
-make migrate-up
-make seed # (Optional: Adds dummy data)
+bin/migrate -op=up
+bin/seed # (Optional: Adds dummy data)
 
 # Start Server
-make run-server
+bin/server
 ```
 
 ### 2. Connect a Node (Agent)
@@ -115,7 +118,7 @@ HORIZONX_WS_URL="ws://localhost:3000/agent/ws"
 HORIZONX_SERVER_API_TOKEN="hzx_secret"
 HORIZONX_SERVER_ID="123"
 
-sudo ./bin/agent
+sudo bin/agent
 ```
 
 For development purpose, its highly recommended to start agent as root to be able to collect server metrics.
@@ -206,6 +209,3 @@ Run this on every remote server you want to monitor and deploy applications to.
 ## 🛠️ Development Tools
 
 - `make build`: Compiles all binaries to `bin/`.
-- `make clean`: Removes the `bin/` directory.
-- `make migrate-up`: Applies database migrations.
-- `make migrate-fresh`: Resets the database (Warning: Data loss).
