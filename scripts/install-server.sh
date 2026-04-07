@@ -484,7 +484,7 @@ LimitNOFILE=65535
 
 StandardOutput=append:$LOG_DIR/server.log
 StandardError=append:$LOG_DIR/server.error.log
-LogIdentifier=horizonx-server
+SyslogIdentifier=horizonx-server
 
 [Install]
 WantedBy=multi-user.target

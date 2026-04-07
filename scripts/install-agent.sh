@@ -586,6 +586,7 @@ LimitNOFILE=65535
 ReadWritePaths=$DATA_DIR $LOG_DIR
 StandardOutput=append:$LOG_DIR/agent.log
 StandardError=append:$LOG_DIR/agent.error.log
+SyslogIdentifier=horizonx-agent
 
 [Install]
 WantedBy=multi-user.target
