@@ -9,14 +9,16 @@ HorizonX serves as the command center for your infrastructure. It allows you to 
 
 <table>
   <tr>
-    <td><img src="screenshots/server-monitoring.png" width="200"></td>
-    <td><img src="screenshots/server-management.png" width="200"></td>
-    <td><img src="screenshots/application-overview.png" width="200"></td>
+    <td><img src="screenshots/server-monitoring.png" width="500"></td>
+    <td><img src="screenshots/application-deployment-details.png" width="500"></td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td><img src="screenshots/application-management.png" width="200"></td>
-    <td><img src="screenshots/application-deployment-details.png" width="200"></td>
-    <td></td>
+    <td><img src="screenshots/application-overview.png" width="333.4"></td>
+    <td><img src="screenshots/application-management.png" width="333.4"></td>
+    <td><img src="screenshots/server-management.png" width="333.4"></td>
   </tr>
 </table>
 
