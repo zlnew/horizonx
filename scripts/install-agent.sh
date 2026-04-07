@@ -249,6 +249,7 @@ fi
 if [ ! -f "$CONFIG_DIR" ]; then
   echo "[*] Creating env file"
   cat > "$CONFIG_DIR" <<EOF
+APP_ENV=production
 HORIZONX_API_URL=http://localhost:3000
 HORIZONX_WS_URL=ws://localhost:3000/agent/ws
 HORIZONX_SERVER_API_TOKEN=hzx_secret

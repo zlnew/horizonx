@@ -78,6 +78,7 @@ chown root:root "$INSTALL_DIR"
 if [ ! -f "$CONFIG_DIR" ]; then
   echo "[*] Creating default server env at $CONFIG_DIR..."
   cat > "$CONFIG_DIR" <<EOF
+APP_ENV=production
 TIME_ZONE="Local"
 HTTP_ADDR=":3000"
 ALLOWED_ORIGINS="http://localhost:5173,http://localhost:5174"

@@ -13,9 +13,7 @@ import (
 	"horizonx/internal/agent/command"
 )
 
-type Manager struct {
-	workDir string
-}
+type Manager struct{}
 
 type Container struct {
 	ID       string `json:"ID"`
@@ -27,23 +25,11 @@ type Container struct {
 	ExitCode int    `json:"ExitCode"`
 }
 
-func NewManager(workDir string) *Manager {
-	return &Manager{workDir: workDir}
+func NewManager() *Manager {
+	return &Manager{}
 }
 
-func (m *Manager) Init() error {
-	if err := os.MkdirAll(m.workDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create work directory: %w", err)
-	}
-
-	return nil
-}
-
-func (m *Manager) GetAppDir(appID int64) string {
-	return filepath.Join(m.workDir, fmt.Sprintf("app-%d", appID))
-}
-
-func (m *Manager) ComposeUp(ctx context.Context, appID int64, detached, build bool, handlers ...command.StreamHandler) (string, error) {
+func (m *Manager) ComposeUp(ctx context.Context, workDir string, detached, build bool, handlers ...command.StreamHandler) (string, error) {
 	args := []string{"compose", "up"}
 	if detached {
 		args = append(args, "-d")
@@ -52,57 +38,56 @@ func (m *Manager) ComposeUp(ctx context.Context, appID int64, detached, build bo
 		args = append(args, "--build")
 	}
 
-	cmd := command.NewCommand(m.GetAppDir(appID), "docker", args...)
+	cmd := command.NewCommand(workDir, "docker", args...)
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeDown(ctx context.Context, appID int64, removeVolumes bool, handlers ...command.StreamHandler) (string, error) {
+func (m *Manager) ComposeDown(ctx context.Context, workDir string, removeVolumes bool, handlers ...command.StreamHandler) (string, error) {
 	args := []string{"compose", "down"}
 	if removeVolumes {
 		args = append(args, "-v")
 	}
 
-	cmd := command.NewCommand(m.GetAppDir(appID), "docker", args...)
+	cmd := command.NewCommand(workDir, "docker", args...)
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeStop(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(m.GetAppDir(appID), "docker", "compose", "stop")
+func (m *Manager) ComposeStop(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "docker", "compose", "stop")
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeStart(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(m.GetAppDir(appID), "docker", "compose", "start")
+func (m *Manager) ComposeStart(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "docker", "compose", "start")
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeRestart(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(m.GetAppDir(appID), "docker", "compose", "restart")
+func (m *Manager) ComposeRestart(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "docker", "compose", "restart")
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeLogs(ctx context.Context, appID int64, tail int, handlers ...command.StreamHandler) (string, error) {
+func (m *Manager) ComposeLogs(ctx context.Context, workDir string, tail int, handlers ...command.StreamHandler) (string, error) {
 	args := []string{"compose", "logs"}
 	if tail > 0 {
 		args = append(args, "--tail", fmt.Sprintf("%d", tail))
 	}
 
-	cmd := command.NewCommand(m.GetAppDir(appID), "docker", args...)
+	cmd := command.NewCommand(workDir, "docker", args...)
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposePs(ctx context.Context, appID int64, json bool, handlers ...command.StreamHandler) (string, error) {
+func (m *Manager) ComposePs(ctx context.Context, workDir string, json bool, handlers ...command.StreamHandler) (string, error) {
 	args := []string{"compose", "ps"}
 	if json {
 		args = append(args, "--format", "json")
 	}
 
-	cmd := command.NewCommand(m.GetAppDir(appID), "docker", args...)
+	cmd := command.NewCommand(workDir, "docker", args...)
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ValidateDockerComposeFile(appID int64) error {
-	appDir := m.GetAppDir(appID)
+func (m *Manager) ValidateDockerComposeFile(workDir string) error {
 	files := []string{
 		"docker-compose.yml",
 		"docker-compose.yaml",
@@ -111,7 +96,7 @@ func (m *Manager) ValidateDockerComposeFile(appID int64) error {
 	}
 
 	for _, f := range files {
-		if _, err := os.Stat(filepath.Join(appDir, f)); err == nil {
+		if _, err := os.Stat(filepath.Join(workDir, f)); err == nil {
 			return nil
 		}
 	}
@@ -119,9 +104,8 @@ func (m *Manager) ValidateDockerComposeFile(appID int64) error {
 	return fmt.Errorf("no docker-compose file found")
 }
 
-func (m *Manager) WriteEnvFile(appID int64, envVars map[string]string) error {
-	appDir := m.GetAppDir(appID)
-	envPath := filepath.Join(appDir, ".env")
+func (m *Manager) WriteEnvFile(workDir string, envVars map[string]string) error {
+	envPath := filepath.Join(workDir, ".env")
 
 	var buf bytes.Buffer
 	for k, v := range envVars {

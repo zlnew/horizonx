@@ -2,27 +2,27 @@ package domain
 
 import "github.com/google/uuid"
 
+type AppInfo struct {
+	ApplicationID int64  `json:"application_id"`
+	AppDir        string `json:"app_dir"`
+}
+
 type DeployAppPayload struct {
 	ApplicationID int64             `json:"application_id"`
 	DeploymentID  int64             `json:"deployment_id"`
+	AppDir        string            `json:"app_dir"`
 	RepoURL       string            `json:"repo_url"`
 	Branch        string            `json:"branch"`
 	EnvVars       map[string]string `json:"env_vars,omitempty"`
 }
 
-type StartAppPayload struct {
-	ApplicationID int64 `json:"application_id"`
-}
+type StartAppPayload = AppInfo
 
-type StopAppPayload struct {
-	ApplicationID int64 `json:"application_id"`
-}
+type StopAppPayload = AppInfo
 
-type RestartAppPayload struct {
-	ApplicationID int64 `json:"application_id"`
-}
+type RestartAppPayload = AppInfo
 
 type AppHealthCheckPayload struct {
-	ServerID        uuid.UUID `json:"server_id"`
-	ApplicationsIDs []int64   `json:"application_ids"`
+	ServerID     uuid.UUID `json:"server_id"`
+	Applications []AppInfo `json:"applications"`
 }

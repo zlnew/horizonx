@@ -3,7 +3,6 @@ package git
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,59 +10,44 @@ import (
 	"horizonx/internal/agent/command"
 )
 
-type Manager struct {
-	workDir string
+type Manager struct{}
+
+func NewManager() *Manager {
+	return &Manager{}
 }
 
-func NewManager(workDir string) *Manager {
-	return &Manager{workDir: workDir}
-}
-
-func (m *Manager) GetAppDir(appID int64) string {
-	return filepath.Join(m.workDir, fmt.Sprintf("app-%d", appID))
-}
-
-func (m *Manager) CloneOrPull(ctx context.Context, appID int64, remoteURL, branch string, handlers ...command.StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-
-	if yes := m.IsGitRepo(appDir); yes {
-		return m.Pull(ctx, appID, branch, handlers...)
+func (m *Manager) CloneOrPull(ctx context.Context, workDir string, remoteURL, branch string, handlers ...command.StreamHandler) (string, error) {
+	if yes := m.IsGitRepo(workDir); yes {
+		return m.Pull(ctx, workDir, branch, handlers...)
 	}
 
-	return m.Clone(ctx, appID, remoteURL, branch, handlers...)
+	return m.Clone(ctx, workDir, remoteURL, branch, handlers...)
 }
 
-func (m *Manager) Clone(ctx context.Context, appID int64, remoteURL, branch string, handlers ...command.StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-	args := []string{"clone", "--branch", branch, "--depth", "1", remoteURL, appDir}
+func (m *Manager) Clone(ctx context.Context, workDir string, remoteURL, branch string, handlers ...command.StreamHandler) (string, error) {
+	args := []string{"clone", "--branch", branch, "--depth", "1", remoteURL, workDir}
 
-	cmd := command.NewCommand(appDir, "git", args...)
+	cmd := command.NewCommand(workDir, "git", args...)
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) Pull(ctx context.Context, appID int64, branch string, handlers ...command.StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-
-	checkout := command.NewCommand(appDir, "git", "checkout", branch)
+func (m *Manager) Pull(ctx context.Context, workDir string, branch string, handlers ...command.StreamHandler) (string, error) {
+	checkout := command.NewCommand(workDir, "git", "checkout", branch)
 	if output, err := checkout.Run(ctx, handlers...); err != nil {
 		return output, err
 	}
 
-	pull := command.NewCommand(appDir, "git", "pull", "origin", branch)
+	pull := command.NewCommand(workDir, "git", "pull", "origin", branch)
 	return pull.Run(ctx, handlers...)
 }
 
-func (m *Manager) GetCurrentCommit(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-
-	cmd := command.NewCommand(appDir, "git", "rev-parse", "HEAD")
+func (m *Manager) GetCurrentCommit(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "git", "rev-parse", "HEAD")
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) GetCommitMessage(ctx context.Context, appID int64, handlers ...command.StreamHandler) (string, error) {
-	appDir := m.GetAppDir(appID)
-
-	cmd := command.NewCommand(appDir, "git", "log", "-1", "--pretty=%B")
+func (m *Manager) GetCommitMessage(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "git", "log", "-1", "--pretty=%B")
 	return cmd.Run(ctx, handlers...)
 }
 

@@ -18,4 +18,4 @@ CREATE TABLE IF NOT EXISTS jobs (
     CONSTRAINT fk_job_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_jobs_server_status ON jobs (server_id, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_server_status ON jobs (server_id, status);

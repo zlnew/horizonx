@@ -16,4 +16,4 @@ CREATE TABLE IF NOT EXISTS deployments (
     CONSTRAINT fk_deployment_author FOREIGN KEY (deployed_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_deployments_app_id ON deployments(application_id);
+CREATE INDEX IF NOT EXISTS idx_deployments_app_id ON deployments(application_id);

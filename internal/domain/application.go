@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,7 +31,9 @@ type Application struct {
 	ID               int64             `json:"id"`
 	ServerID         uuid.UUID         `json:"server_id"`
 	Name             string            `json:"name"`
-	RepoURL          string            `json:"repo_url,omitempty"`
+	RepoName         string            `json:"repo_name"`
+	RepoURL          string            `json:"repo_url"`
+	SiteURL          string            `json:"site_url,omitempty"`
 	Branch           string            `json:"branch"`
 	Status           ApplicationStatus `json:"status"`
 	LastDeploymentAt *time.Time        `json:"last_deployment_at,omitempty"`
@@ -48,7 +51,9 @@ type ApplicationListOptions struct {
 type ApplicationCreateRequest struct {
 	ServerID uuid.UUID `json:"server_id" validate:"required"`
 	Name     string    `json:"name" validate:"required,min=3,max=100"`
-	RepoURL  string    `json:"repo_url" validate:"required"`
+	RepoName string    `json:"repo_name" validate:"required,max=100"`
+	RepoURL  string    `json:"repo_url" validate:"required,max=255"`
+	SiteURL  string    `json:"site_url" validate:"omitempty,max=255"`
 	Branch   string    `json:"branch" validate:"required"`
 
 	EnvVars []EnvironmentVariableRequest `json:"env_vars" validate:"omitempty,dive"`
@@ -56,7 +61,7 @@ type ApplicationCreateRequest struct {
 
 type ApplicationUpdateRequest struct {
 	Name    string `json:"name" validate:"required,min=3,max=100"`
-	RepoURL string `json:"repo_url" validate:"required"`
+	SiteURL string `json:"site_url" validate:"omitempty,max=255"`
 	Branch  string `json:"branch" validate:"required"`
 
 	EnvVars []EnvironmentVariableRequest `json:"env_vars" validate:"omitempty,dive"`
@@ -119,4 +124,8 @@ type ApplicationService interface {
 	AddEnvVar(ctx context.Context, appID int64, req EnvironmentVariableRequest) error
 	UpdateEnvVar(ctx context.Context, appID int64, key string, req EnvironmentVariableRequest) error
 	DeleteEnvVar(ctx context.Context, appID int64, key string) error
+}
+
+func GetAppDir(app *Application) string {
+	return fmt.Sprintf("%s-%d", app.RepoName, app.ID)
 }

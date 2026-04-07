@@ -28,7 +28,9 @@ func (r *ApplicationRepository) List(ctx context.Context, opts domain.Applicatio
 			id,
 			server_id,
 			name,
+			repo_name,
 			repo_url,
+			site_url,
 			branch,
 			status,
 			last_deployment_at,
@@ -93,7 +95,9 @@ func (r *ApplicationRepository) List(ctx context.Context, opts domain.Applicatio
 			&a.ID,
 			&a.ServerID,
 			&a.Name,
+			&a.RepoName,
 			&a.RepoURL,
+			&a.SiteURL,
 			&a.Branch,
 			&a.Status,
 			&a.LastDeploymentAt,
@@ -115,7 +119,7 @@ func (r *ApplicationRepository) List(ctx context.Context, opts domain.Applicatio
 
 func (r *ApplicationRepository) GetByID(ctx context.Context, appID int64) (*domain.Application, error) {
 	query := `
-		SELECT id, server_id, name, repo_url, branch, status, last_deployment_at, created_at, updated_at
+		SELECT id, server_id, name, repo_name, repo_url, site_url, branch, status, last_deployment_at, created_at, updated_at
 		FROM applications
 		WHERE id = $1 AND deleted_at IS NULL
 	`
@@ -125,7 +129,9 @@ func (r *ApplicationRepository) GetByID(ctx context.Context, appID int64) (*doma
 		&app.ID,
 		&app.ServerID,
 		&app.Name,
+		&app.RepoName,
 		&app.RepoURL,
+		&app.SiteURL,
 		&app.Branch,
 		&app.Status,
 		&app.LastDeploymentAt,
@@ -144,8 +150,8 @@ func (r *ApplicationRepository) GetByID(ctx context.Context, appID int64) (*doma
 
 func (r *ApplicationRepository) Create(ctx context.Context, app *domain.Application) (*domain.Application, error) {
 	query := `
-		INSERT INTO applications (server_id, name, repo_url, branch, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO applications (server_id, name, repo_name, repo_url, site_url, branch, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -154,7 +160,9 @@ func (r *ApplicationRepository) Create(ctx context.Context, app *domain.Applicat
 		ctx, query,
 		app.ServerID,
 		app.Name,
+		app.RepoName,
 		app.RepoURL,
+		app.SiteURL,
 		app.Branch,
 		domain.AppStatusUnknown,
 		now,
@@ -170,14 +178,14 @@ func (r *ApplicationRepository) Create(ctx context.Context, app *domain.Applicat
 func (r *ApplicationRepository) Update(ctx context.Context, app *domain.Application, appID int64) error {
 	query := `
 		UPDATE applications
-		SET name = $1, repo_url = $2, branch = $3, updated_at = $4
+		SET name = $1, site_url = $2, branch = $3, updated_at = $4
 		WHERE id = $5 AND deleted_at IS NULL
 	`
 
 	now := time.Now().UTC()
 	ct, err := r.db.Exec(ctx, query,
 		app.Name,
-		app.RepoURL,
+		app.SiteURL,
 		app.Branch,
 		now,
 		appID,

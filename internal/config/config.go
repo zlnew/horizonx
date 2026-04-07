@@ -12,6 +12,8 @@ import (
 )
 
 type Config struct {
+	AppEnv string
+
 	LogLevel  string
 	LogFormat string
 
@@ -35,6 +37,8 @@ type Config struct {
 
 func Load() *Config {
 	_ = godotenv.Load()
+
+	appEnv := getEnv("APP_ENV", "local")
 
 	// Logs
 	logLevel := getEnv("LOG_LEVEL", "info")
@@ -98,6 +102,8 @@ func Load() *Config {
 	}
 
 	return &Config{
+		AppEnv: appEnv,
+
 		LogLevel:  logLevel,
 		LogFormat: logFormat,
 

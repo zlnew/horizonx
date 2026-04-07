@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"horizonx/internal/agent/command"
@@ -22,16 +23,18 @@ type Executor struct {
 	git     *git.Manager
 	metrics func() *domain.Metrics
 
+	workDir string
+
 	log logger.Logger
 }
 
-func NewExecutor(log logger.Logger, metrics func() *domain.Metrics) *Executor {
-	workDir := "/var/lib/horizonx/apps"
-
+func NewExecutor(workDir string, log logger.Logger, metrics func() *domain.Metrics) *Executor {
 	return &Executor{
-		docker:  docker.NewManager(workDir),
-		git:     git.NewManager(workDir),
+		docker:  docker.NewManager(),
+		git:     git.NewManager(),
 		metrics: metrics,
+
+		workDir: workDir,
 
 		log: log,
 	}
@@ -43,14 +46,14 @@ func (e *Executor) Init() error {
 	}
 
 	if !e.docker.IsDockerComposeAvailable() {
-		return fmt.Errorf("docker compose is not available")
+		return fmt.Errorf("docker compose is not installed")
 	}
 
 	if !e.git.IsGitInstalled() {
 		return fmt.Errorf("git is not installed")
 	}
 
-	return e.docker.Init()
+	return e.createWorkDir()
 }
 
 func (e *Executor) Execute(ctx context.Context, job *domain.Job, emit EmitHandler) error {
@@ -73,6 +76,18 @@ func (e *Executor) Execute(ctx context.Context, job *domain.Job, emit EmitHandle
 	default:
 		return fmt.Errorf("unknown job type: %s", job.Type)
 	}
+}
+
+func (e *Executor) getAppWorkDir(dirName string) string {
+	return filepath.Join(e.workDir, dirName)
+}
+
+func (e *Executor) createWorkDir() error {
+	if err := os.MkdirAll(e.workDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create apps work directory: %w", err)
+	}
+
+	return nil
 }
 
 func (e *Executor) logStreamHandler(emit EmitHandler, action domain.LogAction, step domain.LogStep) command.StreamHandler {
@@ -121,20 +136,20 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 	action := domain.ActionAppHealthCheck
 	step := domain.StepDockerHealthCheck
 
-	reports := make([]domain.ApplicationHealth, 0, len(payload.ApplicationsIDs))
+	reports := make([]domain.ApplicationHealth, 0, len(payload.Applications))
 
-	for _, appID := range payload.ApplicationsIDs {
-		output, err := e.docker.ComposePs(ctx, appID, true)
+	for _, app := range payload.Applications {
+		output, err := e.docker.ComposePs(ctx, e.getAppWorkDir(app.AppDir), true)
 		if err != nil {
 			// TODO: implement application docker container status
 			e.log.Debug("failed to run docker compose ps",
 				"server_id", job.ServerID.String(),
-				"app_id", appID,
+				"app_id", app.ApplicationID,
 				"err", err.Error(),
 			)
 
 			reports = append(reports, domain.ApplicationHealth{
-				ApplicationID: appID,
+				ApplicationID: app.ApplicationID,
 				Status:        domain.AppStatusFailed,
 			})
 
@@ -143,7 +158,7 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 
 		if output == "" {
 			reports = append(reports, domain.ApplicationHealth{
-				ApplicationID: appID,
+				ApplicationID: app.ApplicationID,
 				Status:        domain.AppStatusUnknown,
 			})
 			continue
@@ -155,7 +170,7 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 				fmt.Sprintf(
 					"failed to parse compose ps output server_id=%s app_id=%d err=%v",
 					job.ServerID.String(),
-					appID,
+					app.ApplicationID,
 					err,
 				),
 				emit,
@@ -164,7 +179,7 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 			)
 
 			reports = append(reports, domain.ApplicationHealth{
-				ApplicationID: appID,
+				ApplicationID: app.ApplicationID,
 				Status:        domain.AppStatusFailed,
 			})
 
@@ -201,7 +216,7 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 		}
 
 		reports = append(reports, domain.ApplicationHealth{
-			ApplicationID: appID,
+			ApplicationID: app.ApplicationID,
 			Status:        status,
 		})
 	}
@@ -217,8 +232,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 		return err
 	}
 
-	appID := payload.ApplicationID
-	appDir := e.git.GetAppDir(appID)
+	appDir := e.getAppWorkDir(payload.AppDir)
 	action := domain.ActionAppDeploy
 
 	// Create app directory
@@ -227,7 +241,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Git clone or pull
-	if _, err := e.git.CloneOrPull(ctx, appID, payload.RepoURL, payload.Branch, e.logStreamHandler(
+	if _, err := e.git.CloneOrPull(ctx, appDir, payload.RepoURL, payload.Branch, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepGitClone,
@@ -244,7 +258,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 
 	// Get git commit info
 	if job.DeploymentID != nil {
-		hash, err := e.git.GetCurrentCommit(ctx, appID)
+		hash, err := e.git.GetCurrentCommit(ctx, appDir)
 		if err != nil {
 			e.logFatalHandler(
 				fmt.Sprintf("failed to get commit hash, %s", err.Error()),
@@ -255,7 +269,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 			return err
 		}
 
-		message, err := e.git.GetCommitMessage(ctx, appID)
+		message, err := e.git.GetCommitMessage(ctx, appDir)
 		if err != nil {
 			e.logFatalHandler(
 				fmt.Sprintf("failed to get commit message, %s", err.Error()),
@@ -275,7 +289,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Validate docker compose file
-	if err := e.docker.ValidateDockerComposeFile(appID); err != nil {
+	if err := e.docker.ValidateDockerComposeFile(appDir); err != nil {
 		e.logFatalHandler(
 			fmt.Sprintf("failed to validate docker compose file, %s", err.Error()),
 			emit,
@@ -287,7 +301,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 
 	// Write env
 	if len(payload.EnvVars) > 0 {
-		if err := e.docker.WriteEnvFile(appID, payload.EnvVars); err != nil {
+		if err := e.docker.WriteEnvFile(appDir, payload.EnvVars); err != nil {
 			e.logFatalHandler(
 				fmt.Sprintf("failed to write env, %s", err.Error()),
 				emit,
@@ -299,7 +313,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Docker compose down
-	if _, err := e.docker.ComposeDown(ctx, appID, false, e.logStreamHandler(
+	if _, err := e.docker.ComposeDown(ctx, appDir, false, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerStop,
@@ -315,7 +329,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Docker compose up
-	if _, err := e.docker.ComposeUp(ctx, appID, true, true, e.logStreamHandler(
+	if _, err := e.docker.ComposeUp(ctx, appDir, true, true, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerBuild,
@@ -338,9 +352,7 @@ func (e *Executor) startApp(ctx context.Context, job *domain.Job, emit EmitHandl
 		return err
 	}
 
-	appID := payload.ApplicationID
-
-	if _, err := e.docker.ComposeStart(ctx, appID, e.logStreamHandler(
+	if _, err := e.docker.ComposeStart(ctx, e.getAppWorkDir(payload.AppDir), e.logStreamHandler(
 		emit,
 		domain.ActionAppStart,
 		domain.StepDockerStart,
@@ -363,9 +375,7 @@ func (e *Executor) stopApp(ctx context.Context, job *domain.Job, emit EmitHandle
 		return err
 	}
 
-	appID := payload.ApplicationID
-
-	if _, err := e.docker.ComposeStop(ctx, appID, e.logStreamHandler(
+	if _, err := e.docker.ComposeStop(ctx, e.getAppWorkDir(payload.AppDir), e.logStreamHandler(
 		emit,
 		domain.ActionAppStop,
 		domain.StepDockerStop,
@@ -388,9 +398,7 @@ func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHan
 		return err
 	}
 
-	appID := payload.ApplicationID
-
-	if _, err := e.docker.ComposeRestart(ctx, appID, e.logStreamHandler(
+	if _, err := e.docker.ComposeRestart(ctx, e.getAppWorkDir(payload.AppDir), e.logStreamHandler(
 		emit,
 		domain.ActionAppRestart,
 		domain.StepDockerRestart,

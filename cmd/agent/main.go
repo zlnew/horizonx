@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/joho/godotenv"
@@ -52,10 +54,19 @@ func main() {
 	}
 	defer redisClient.Close()
 
+	appsWorkDir := "/var/lib/horizonx/apps"
+	if cfg.AppEnv != "production" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
+		appsWorkDir = filepath.Join(cwd, "apps")
+	}
+
 	registry := redis.NewRegistry(redisClient)
 	httpClient := agent.NewHttpClient(cfg)
 	collector := metrics.NewCollector(cfg, appLog, registry)
-	executor := executor.NewExecutor(appLog, collector.Latest)
+	executor := executor.NewExecutor(appsWorkDir, appLog, collector.Latest)
 	worker := agent.NewJobWorker(cfg, appLog, *httpClient, *executor)
 	conn := agent.NewAgent(cfg, appLog)
 

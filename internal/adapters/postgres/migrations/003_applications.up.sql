@@ -2,8 +2,10 @@ CREATE TABLE IF NOT EXISTS applications (
     id BIGSERIAL PRIMARY KEY,
     server_id UUID NOT NULL,
     name VARCHAR(100) NOT NULL,
-    repo_url VARCHAR(255),
-    branch VARCHAR(100) DEFAULT 'main',
+    repo_name VARCHAR(100) NOT NULL,
+    repo_url VARCHAR(255) NOT NULL,
+    site_url VARCHAR(255),
+    branch VARCHAR(100) NOT NULL DEFAULT 'main',
 
     status VARCHAR(20) DEFAULT 'stopped',
     last_deployment_at TIMESTAMPTZ,
@@ -24,9 +26,13 @@ CREATE TABLE IF NOT EXISTS environment_variables (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
 
-    CONSTRAINT fk_env_app FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE,
-    UNIQUE (application_id, key)
+    CONSTRAINT fk_env_app
+        FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE,
+
+    CONSTRAINT unique_env_key
+        UNIQUE (application_id, key)
 );
 
-CREATE INDEX idx_apps_server_id ON applications(server_id);
-CREATE INDEX idx_env_app_id ON environment_variables(application_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_apps_server_id_repo_name ON applications(server_id, repo_name) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_apps_server_id ON applications(server_id);
+CREATE INDEX IF NOT EXISTS idx_env_app_id ON environment_variables(application_id);

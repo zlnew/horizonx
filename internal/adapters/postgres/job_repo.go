@@ -291,11 +291,12 @@ func (r *JobRepository) Retry(ctx context.Context, jobID int64, j *domain.Job) (
 	query := `
 		UPDATE jobs
 		SET
-			status = $2,
-			queued_at = $3,
+			payload = $2,
+			status = $3,
+			queued_at = $4,
 			started_at = null,
 			finished_at = null,
-			expired_at = $4
+			expired_at = $5
 		WHERE id = $1
 		RETURNING
 			id,
@@ -312,6 +313,7 @@ func (r *JobRepository) Retry(ctx context.Context, jobID int64, j *domain.Job) (
 
 	err := r.db.QueryRow(ctx, query,
 		jobID,
+		j.Payload,
 		j.Status,
 		j.QueuedAt,
 		j.ExpiredAt,

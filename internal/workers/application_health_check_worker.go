@@ -41,18 +41,21 @@ func (w *ApplicationHealthCheckWorker) Run(ctx context.Context) error {
 		payload, exists := jobPayloads[app.ServerID]
 		if !exists {
 			payload = domain.AppHealthCheckPayload{
-				ServerID:        app.ServerID,
-				ApplicationsIDs: []int64{},
+				ServerID:     app.ServerID,
+				Applications: []domain.AppInfo{},
 			}
 		}
 
 		seen := make(map[int64]bool)
-		for _, appID := range payload.ApplicationsIDs {
-			seen[appID] = true
+		for _, a := range payload.Applications {
+			seen[a.ApplicationID] = true
 		}
 
 		if !seen[app.ID] {
-			payload.ApplicationsIDs = append(payload.ApplicationsIDs, app.ID)
+			payload.Applications = append(payload.Applications, domain.AppInfo{
+				ApplicationID: app.ID,
+				AppDir:        domain.GetAppDir(app),
+			})
 		}
 
 		jobPayloads[app.ServerID] = payload
@@ -65,7 +68,7 @@ func (w *ApplicationHealthCheckWorker) Run(ctx context.Context) error {
 	jobType := domain.JobTypeAppHealthCheck
 
 	for _, p := range jobPayloads {
-		if len(p.ApplicationsIDs) == 0 {
+		if len(p.Applications) == 0 {
 			w.log.Debug("there is no applications to check, skipping...", "server_id", p.ServerID.String())
 			continue
 		}
@@ -114,6 +117,7 @@ func (w *ApplicationHealthCheckWorker) Run(ctx context.Context) error {
 
 			queuedAt := time.Now().UTC()
 			data := &domain.Job{
+				Payload:  payload,
 				Status:   domain.JobQueued,
 				QueuedAt: &queuedAt,
 			}
