@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"horizonx/internal/agent/command"
@@ -29,26 +30,18 @@ func NewManager() *Manager {
 	return &Manager{}
 }
 
-func (m *Manager) ComposeUp(ctx context.Context, workDir string, detached, build bool, handlers ...command.StreamHandler) (string, error) {
-	args := []string{"compose", "up"}
-	if detached {
-		args = append(args, "-d")
-	}
-	if build {
-		args = append(args, "--build")
-	}
-
-	cmd := command.NewCommand(workDir, "docker", args...)
+func (m *Manager) Build(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "docker", append([]string{"build"}, args...)...)
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ComposeDown(ctx context.Context, workDir string, removeVolumes bool, handlers ...command.StreamHandler) (string, error) {
-	args := []string{"compose", "down"}
-	if removeVolumes {
-		args = append(args, "-v")
-	}
+func (m *Manager) ComposeUp(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "docker", append([]string{"compose", "up"}, args...)...)
+	return cmd.Run(ctx, handlers...)
+}
 
-	cmd := command.NewCommand(workDir, "docker", args...)
+func (m *Manager) ComposeDown(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "docker", append([]string{"compose", "down"}, args...)...)
 	return cmd.Run(ctx, handlers...)
 }
 
@@ -87,7 +80,7 @@ func (m *Manager) ComposePs(ctx context.Context, workDir string, json bool, hand
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) ValidateDockerComposeFile(workDir string) error {
+func (m *Manager) GetDockerComposeFile(workDir string) (string, error) {
 	files := []string{
 		"docker-compose.yml",
 		"docker-compose.yaml",
@@ -96,20 +89,45 @@ func (m *Manager) ValidateDockerComposeFile(workDir string) error {
 	}
 
 	for _, f := range files {
-		if _, err := os.Stat(filepath.Join(workDir, f)); err == nil {
-			return nil
+		path := filepath.Join(workDir, f)
+
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
 		}
 	}
 
-	return fmt.Errorf("no docker-compose file found")
+	return "", fmt.Errorf("docker compose file not found")
+}
+
+func (m *Manager) GetDockerfile(workDir string) (string, error) {
+	files := []string{
+		"docker/Dockerfile",
+		"Dockerfile",
+	}
+
+	for _, f := range files {
+		path := filepath.Join(workDir, f)
+
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+
+	return "", fmt.Errorf("Dockerfile not found")
 }
 
 func (m *Manager) WriteEnvFile(workDir string, envVars map[string]string) error {
 	envPath := filepath.Join(workDir, ".env")
 
 	var buf bytes.Buffer
-	for k, v := range envVars {
-		v = strings.ReplaceAll(v, "\n", "\\n")
+	keys := make([]string, 0, len(envVars))
+	for k := range envVars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := strings.ReplaceAll(envVars[k], "\n", "\\n")
 		buf.WriteString(fmt.Sprintf("%s=\"%s\"\n", k, v))
 	}
 

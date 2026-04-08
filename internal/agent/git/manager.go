@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"horizonx/internal/agent/command"
 )
@@ -43,7 +44,13 @@ func (m *Manager) Pull(ctx context.Context, workDir string, branch string, handl
 
 func (m *Manager) GetCurrentCommit(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
 	cmd := command.NewCommand(workDir, "git", "rev-parse", "HEAD")
-	return cmd.Run(ctx, handlers...)
+
+	out, err := cmd.Run(ctx, handlers...)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(out), nil
 }
 
 func (m *Manager) GetCommitMessage(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {

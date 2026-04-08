@@ -54,7 +54,7 @@ func (w *ApplicationHealthCheckWorker) Run(ctx context.Context) error {
 		if !seen[app.ID] {
 			payload.Applications = append(payload.Applications, domain.AppInfo{
 				ApplicationID: app.ID,
-				AppDir:        domain.GetAppDir(app),
+				AppKey:        domain.GetAppKey(app),
 			})
 		}
 

@@ -126,6 +126,6 @@ type ApplicationService interface {
 	DeleteEnvVar(ctx context.Context, appID int64, key string) error
 }
 
-func GetAppDir(app *Application) string {
+func GetAppKey(app *Application) string {
 	return fmt.Sprintf("%s-%d", app.RepoName, app.ID)
 }

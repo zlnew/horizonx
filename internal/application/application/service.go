@@ -214,7 +214,7 @@ func (s *Service) Deploy(ctx context.Context, appID int64, deployedBy int64) (*d
 	payload := domain.DeployAppPayload{
 		ApplicationID: appID,
 		DeploymentID:  deployment.ID,
-		AppDir:        domain.GetAppDir(app),
+		AppKey:        domain.GetAppKey(app),
 		RepoURL:       app.RepoURL,
 		Branch:        app.Branch,
 		EnvVars:       envMap,
@@ -258,7 +258,7 @@ func (s *Service) Start(ctx context.Context, appID int64) error {
 
 	payload := domain.StartAppPayload{
 		ApplicationID: appID,
-		AppDir:        domain.GetAppDir(app),
+		AppKey:        domain.GetAppKey(app),
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -290,7 +290,7 @@ func (s *Service) Stop(ctx context.Context, appID int64) error {
 
 	payload := domain.StopAppPayload{
 		ApplicationID: appID,
-		AppDir:        domain.GetAppDir(app),
+		AppKey:        domain.GetAppKey(app),
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -322,7 +322,7 @@ func (s *Service) Restart(ctx context.Context, appID int64) error {
 
 	payload := domain.RestartAppPayload{
 		ApplicationID: appID,
-		AppDir:        domain.GetAppDir(app),
+		AppKey:        domain.GetAppKey(app),
 	}
 
 	payloadBytes, err := json.Marshal(payload)
