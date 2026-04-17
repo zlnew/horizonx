@@ -30,6 +30,11 @@ func NewManager() *Manager {
 	return &Manager{}
 }
 
+func (m *Manager) Cmd(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
+	cmd := command.NewCommand(workDir, "docker", args...)
+	return cmd.Run(ctx, handlers...)
+}
+
 func (m *Manager) Build(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
 	cmd := command.NewCommand(workDir, "docker", append([]string{"build"}, args...)...)
 	return cmd.Run(ctx, handlers...)

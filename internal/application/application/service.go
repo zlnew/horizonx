@@ -150,7 +150,6 @@ func (s *Service) Delete(ctx context.Context, appID int64) error {
 	}
 
 	targets := []string{
-		string(domain.AppStatusRunning),
 		string(domain.AppStatusDeploying),
 		string(domain.AppStatusStarting),
 		string(domain.AppStatusRestarting),
@@ -158,9 +157,31 @@ func (s *Service) Delete(ctx context.Context, appID int64) error {
 	}
 	if domain.ContainsAny(string(app.Status), targets) {
 		return fmt.Errorf(
-			"application cannot be deleted while it is %s; stop the application first",
+			"application cannot be deleted while it is %s; please wait for the operation to finish.",
 			app.Status,
 		)
+	}
+
+	payload := domain.AppDestroyPayload{
+		ApplicationID: app.ID,
+		AppKey:        domain.GetAppKey(app),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	job := &domain.Job{
+		TraceID:       uuid.New(),
+		ServerID:      app.ServerID,
+		ApplicationID: &appID,
+		Type:          domain.JobTypeAppDestroy,
+		Payload:       payloadBytes,
+	}
+
+	if _, err := s.jobSvc.Create(ctx, job); err != nil {
+		return err
 	}
 
 	return s.repo.Delete(ctx, appID)
@@ -211,7 +232,7 @@ func (s *Service) Deploy(ctx context.Context, appID int64, deployedBy int64) (*d
 		return nil, fmt.Errorf("failed to create deployment record: %w", err)
 	}
 
-	payload := domain.DeployAppPayload{
+	payload := domain.AppDeployPayload{
 		ApplicationID: appID,
 		DeploymentID:  deployment.ID,
 		AppKey:        domain.GetAppKey(app),
@@ -256,7 +277,7 @@ func (s *Service) Start(ctx context.Context, appID int64) error {
 		return err
 	}
 
-	payload := domain.StartAppPayload{
+	payload := domain.AppStartPayload{
 		ApplicationID: appID,
 		AppKey:        domain.GetAppKey(app),
 	}
@@ -288,7 +309,7 @@ func (s *Service) Stop(ctx context.Context, appID int64) error {
 		return fmt.Errorf("application is already stopped")
 	}
 
-	payload := domain.StopAppPayload{
+	payload := domain.AppStopPayload{
 		ApplicationID: appID,
 		AppKey:        domain.GetAppKey(app),
 	}
@@ -320,7 +341,7 @@ func (s *Service) Restart(ctx context.Context, appID int64) error {
 		return err
 	}
 
-	payload := domain.RestartAppPayload{
+	payload := domain.AppRestartPayload{
 		ApplicationID: appID,
 		AppKey:        domain.GetAppKey(app),
 	}

@@ -74,6 +74,8 @@ func (e *Executor) Execute(ctx context.Context, job *domain.Job, emit EmitHandle
 		return e.stopApp(ctx, job, emit)
 	case domain.JobTypeAppRestart:
 		return e.restartApp(ctx, job, emit)
+	case domain.JobTypeAppDestroy:
+		return e.destroyApp(ctx, job, emit)
 	default:
 		return fmt.Errorf("unknown job type: %s", job.Type)
 	}
@@ -228,7 +230,7 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 }
 
 func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
-	var payload domain.DeployAppPayload
+	var payload domain.AppDeployPayload
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return err
 	}
@@ -396,7 +398,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 }
 
 func (e *Executor) startApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
-	var payload domain.StartAppPayload
+	var payload domain.AppStartPayload
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return err
 	}
@@ -419,7 +421,7 @@ func (e *Executor) startApp(ctx context.Context, job *domain.Job, emit EmitHandl
 }
 
 func (e *Executor) stopApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
-	var payload domain.StopAppPayload
+	var payload domain.AppStopPayload
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return err
 	}
@@ -442,7 +444,7 @@ func (e *Executor) stopApp(ctx context.Context, job *domain.Job, emit EmitHandle
 }
 
 func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
-	var payload domain.RestartAppPayload
+	var payload domain.AppRestartPayload
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return err
 	}
@@ -459,6 +461,65 @@ func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHan
 			domain.StepDockerRestart,
 		)
 		return err
+	}
+
+	return nil
+}
+
+func (e *Executor) destroyApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
+	var payload domain.AppDestroyPayload
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return err
+	}
+
+	workDir := e.getAppWorkDir(payload.AppKey)
+	imageName := payload.AppKey
+
+	// Stopping container
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"stop", imageName}, e.logStreamHandler(
+		emit,
+		domain.ActionAppDestroy,
+		domain.StepDockerStop,
+	)); err != nil {
+		e.logFatalHandler(
+			fmt.Sprintf("failed to stopping container, %s", err.Error()),
+			emit,
+			domain.ActionAppDestroy,
+			domain.StepDockerStop,
+		)
+		return err
+	}
+
+	backupName := fmt.Sprintf("%s:backup", imageName)
+
+	// Commiting backup
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"commit", imageName, backupName}, e.logStreamHandler(
+		emit,
+		domain.ActionAppDestroy,
+		domain.StepDockerCommit,
+	)); err != nil {
+		e.logFatalHandler(
+			fmt.Sprintf("failed to commiting backup, %s", err.Error()),
+			emit,
+			domain.ActionAppDestroy,
+			domain.StepDockerCommit,
+		)
+		return nil
+	}
+
+	// Remove container
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"rm", imageName}, e.logStreamHandler(
+		emit,
+		domain.ActionAppDestroy,
+		domain.StepDockerRemove,
+	)); err != nil {
+		e.logFatalHandler(
+			fmt.Sprintf("failed to removing container, %s", err.Error()),
+			emit,
+			domain.ActionAppDestroy,
+			domain.StepDockerRemove,
+		)
+		return nil
 	}
 
 	return nil

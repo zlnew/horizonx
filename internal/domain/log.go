@@ -36,17 +36,22 @@ const (
 	ActionAppStart       LogAction = "app_start"
 	ActionAppStop        LogAction = "app_stop"
 	ActionAppRestart     LogAction = "app_restart"
+	ActionAppDestroy     LogAction = "app_destroy"
 	ActionAppHealthCheck LogAction = "app_health_check"
 )
 
 const (
 	StepGitClone          LogStep = "git_clone"
+	StepGitInfo           LogStep = "git_info"
 	StepBuildPrepare      LogStep = "build_prepare"
 	StepDockerBuild       LogStep = "docker_build"
 	StepDockerStart       LogStep = "docker_start"
 	StepDockerStop        LogStep = "docker_stop"
 	StepDockerRestart     LogStep = "docker_restart"
 	StepDockerHealthCheck LogStep = "docker_health_check"
+	StepDockerCommit      LogStep = "docker_commit"
+	StepDockerSave        LogStep = "docker_save"
+	StepDockerRemove      LogStep = "docker_remove"
 )
 
 const (
