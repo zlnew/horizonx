@@ -142,7 +142,9 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 	reports := make([]domain.ApplicationHealth, 0, len(payload.Applications))
 
 	for _, app := range payload.Applications {
-		output, err := e.docker.ComposePs(ctx, e.getAppWorkDir(app.AppKey), true)
+		workDir := e.getAppWorkDir(app.AppKey)
+
+		output, err := e.docker.Cmd(ctx, workDir, []string{"compose", "ps", "--format", "json"})
 		if err != nil {
 			// TODO: implement application docker container status
 			e.log.Debug("failed to run docker compose ps",
@@ -235,16 +237,16 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 		return err
 	}
 
-	appDir := e.getAppWorkDir(payload.AppKey)
+	workDir := e.getAppWorkDir(payload.AppKey)
 	action := domain.ActionAppDeploy
 
-	// Create app directory
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
+	// Create app work directory
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return err
 	}
 
 	// Git clone or pull
-	if _, err := e.git.CloneOrPull(ctx, appDir, payload.RepoURL, payload.Branch, e.logStreamHandler(
+	if _, err := e.git.CloneOrPull(ctx, workDir, payload.RepoURL, payload.Branch, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepGitClone,
@@ -260,7 +262,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Get git commit info
-	commitHash, err := e.git.GetCurrentCommit(ctx, appDir)
+	commitHash, err := e.git.GetCurrentCommit(ctx, workDir)
 	if err != nil {
 		e.logFatalHandler(
 			fmt.Sprintf("failed to get commit hash, %s", err.Error()),
@@ -272,7 +274,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Get git commit message
-	commitMessage, err := e.git.GetCommitMessage(ctx, appDir)
+	commitMessage, err := e.git.GetCommitMessage(ctx, workDir)
 	if err != nil {
 		e.logFatalHandler(
 			fmt.Sprintf("failed to get commit message, %s", err.Error()),
@@ -291,7 +293,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	})
 
 	// Get docker compose file
-	if _, err := e.docker.GetDockerComposeFile(appDir); err != nil {
+	if _, err := e.docker.GetDockerComposeFile(workDir); err != nil {
 		e.logFatalHandler(
 			fmt.Sprintf("failed to get docker compose file, %s", err.Error()),
 			emit,
@@ -302,7 +304,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Get Dockerfile
-	dockerfilePath, err := e.docker.GetDockerfile(appDir)
+	dockerfilePath, err := e.docker.GetDockerfile(workDir)
 	if err != nil {
 		e.logFatalHandler(
 			fmt.Sprintf("failed to get Dockerfile, %s", err.Error()),
@@ -316,9 +318,9 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	// Write user env
 	userEnvVars := payload.EnvVars
 	if len(userEnvVars) > 0 {
-		if err := e.docker.WriteEnvFile(appDir, userEnvVars); err != nil {
+		if err := e.docker.WriteEnvFile(workDir, userEnvVars); err != nil {
 			e.logFatalHandler(
-				fmt.Sprintf("failed to write env, %s", err.Error()),
+				fmt.Sprintf("failed to write user env, %s", err.Error()),
 				emit,
 				action,
 				domain.StepBuildPrepare,
@@ -332,13 +334,13 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	appContainerName := payload.AppKey
 
 	// Docker build image
-	if _, err := e.docker.Build(ctx, appDir, []string{"-t", appImage, "-f", dockerfilePath, "."}, e.logStreamHandler(
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"build", "-t", appImage, "-f", dockerfilePath, "."}, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerBuild,
 	)); err != nil {
 		e.logFatalHandler(
-			fmt.Sprintf("failed to run docker build, %s", err.Error()),
+			fmt.Sprintf("failed to build image, %s", err.Error()),
 			emit,
 			action,
 			domain.StepDockerBuild,
@@ -353,9 +355,9 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	envVars["APP_IMAGE"] = appImage
 	envVars["APP_CONTAINER_NAME"] = appContainerName
 
-	if err := e.docker.WriteEnvFile(appDir, envVars); err != nil {
+	if err := e.docker.WriteEnvFile(workDir, envVars); err != nil {
 		e.logFatalHandler(
-			fmt.Sprintf("failed to write env, %s", err.Error()),
+			fmt.Sprintf("failed to write user and build env, %s", err.Error()),
 			emit,
 			action,
 			domain.StepDockerBuild,
@@ -364,7 +366,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Docker compose down
-	if _, err := e.docker.ComposeDown(ctx, appDir, []string{}, e.logStreamHandler(
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "down"}, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerStart,
@@ -380,7 +382,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	}
 
 	// Docker compose up
-	if _, err := e.docker.ComposeUp(ctx, appDir, []string{"-d", "--force-recreate"}, e.logStreamHandler(
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerStart,
@@ -403,7 +405,9 @@ func (e *Executor) startApp(ctx context.Context, job *domain.Job, emit EmitHandl
 		return err
 	}
 
-	if _, err := e.docker.ComposeStart(ctx, e.getAppWorkDir(payload.AppKey), e.logStreamHandler(
+	workDir := e.getAppWorkDir(payload.AppKey)
+
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "start"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppStart,
 		domain.StepDockerStart,
@@ -426,7 +430,9 @@ func (e *Executor) stopApp(ctx context.Context, job *domain.Job, emit EmitHandle
 		return err
 	}
 
-	if _, err := e.docker.ComposeStop(ctx, e.getAppWorkDir(payload.AppKey), e.logStreamHandler(
+	workDir := e.getAppWorkDir(payload.AppKey)
+
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "stop"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppStop,
 		domain.StepDockerStop,
@@ -449,13 +455,15 @@ func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHan
 		return err
 	}
 
-	if _, err := e.docker.ComposeUp(ctx, e.getAppWorkDir(payload.AppKey), []string{"-d", "--force-recreate"}, e.logStreamHandler(
+	workDir := e.getAppWorkDir(payload.AppKey)
+
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppRestart,
 		domain.StepDockerRestart,
 	)); err != nil {
 		e.logFatalHandler(
-			fmt.Sprintf("failed to run docker compose restart, %s", err.Error()),
+			fmt.Sprintf("failed to run docker compose up, %s", err.Error()),
 			emit,
 			domain.ActionAppRestart,
 			domain.StepDockerRestart,

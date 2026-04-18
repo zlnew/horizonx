@@ -35,56 +35,6 @@ func (m *Manager) Cmd(ctx context.Context, workDir string, args []string, handle
 	return cmd.Run(ctx, handlers...)
 }
 
-func (m *Manager) Build(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(workDir, "docker", append([]string{"build"}, args...)...)
-	return cmd.Run(ctx, handlers...)
-}
-
-func (m *Manager) ComposeUp(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(workDir, "docker", append([]string{"compose", "up"}, args...)...)
-	return cmd.Run(ctx, handlers...)
-}
-
-func (m *Manager) ComposeDown(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(workDir, "docker", append([]string{"compose", "down"}, args...)...)
-	return cmd.Run(ctx, handlers...)
-}
-
-func (m *Manager) ComposeStop(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(workDir, "docker", "compose", "stop")
-	return cmd.Run(ctx, handlers...)
-}
-
-func (m *Manager) ComposeStart(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(workDir, "docker", "compose", "start")
-	return cmd.Run(ctx, handlers...)
-}
-
-func (m *Manager) ComposeRestart(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {
-	cmd := command.NewCommand(workDir, "docker", "compose", "restart")
-	return cmd.Run(ctx, handlers...)
-}
-
-func (m *Manager) ComposeLogs(ctx context.Context, workDir string, tail int, handlers ...command.StreamHandler) (string, error) {
-	args := []string{"compose", "logs"}
-	if tail > 0 {
-		args = append(args, "--tail", fmt.Sprintf("%d", tail))
-	}
-
-	cmd := command.NewCommand(workDir, "docker", args...)
-	return cmd.Run(ctx, handlers...)
-}
-
-func (m *Manager) ComposePs(ctx context.Context, workDir string, json bool, handlers ...command.StreamHandler) (string, error) {
-	args := []string{"compose", "ps"}
-	if json {
-		args = append(args, "--format", "json")
-	}
-
-	cmd := command.NewCommand(workDir, "docker", args...)
-	return cmd.Run(ctx, handlers...)
-}
-
 func (m *Manager) GetDockerComposeFile(workDir string) (string, error) {
 	files := []string{
 		"docker-compose.yml",
