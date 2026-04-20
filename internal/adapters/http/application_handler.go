@@ -217,7 +217,7 @@ func (h *ApplicationHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ApplicationHandler) Deploy(w http.ResponseWriter, r *http.Request) {
-	userCtx, ok := middleware.GetUser(r.Context())
+	userCtx, ok := domain.GetUserContext(r.Context())
 	if !ok {
 		h.writer.Write(w, http.StatusUnauthorized, &response.Response{
 			Message: "unauthorized",

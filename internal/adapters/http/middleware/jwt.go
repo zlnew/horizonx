@@ -32,7 +32,7 @@ func JWT(cfg *config.Config) func(http.Handler) http.Handler {
 				Role: claims.Role,
 			}
 
-			ctx := context.WithValue(r.Context(), userContextKey, userCtx)
+			ctx := domain.SetUserContext(r.Context(), userCtx)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

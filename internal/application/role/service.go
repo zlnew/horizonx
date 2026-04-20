@@ -3,7 +3,6 @@ package role
 import (
 	"context"
 
-	"horizonx/internal/adapters/http/middleware"
 	"horizonx/internal/domain"
 )
 
@@ -34,7 +33,7 @@ var roleHasPermissions = map[domain.RoleConst]map[domain.PermissionConst]bool{
 }
 
 func (s *Service) HasPermission(ctx context.Context, perm domain.PermissionConst) error {
-	userCtx, ok := middleware.GetUser(ctx)
+	userCtx, ok := domain.GetUserContext(ctx)
 	if !ok {
 		return domain.ErrUnauthorized
 	}

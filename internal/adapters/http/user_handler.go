@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"horizonx/internal/adapters/http/middleware"
 	"horizonx/internal/adapters/http/request"
 	"horizonx/internal/adapters/http/response"
 	"horizonx/internal/adapters/http/validator"
@@ -161,7 +160,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Destroy(w http.ResponseWriter, r *http.Request) {
-	userCtx, ok := middleware.GetUser(r.Context())
+	userCtx, ok := domain.GetUserContext(r.Context())
 	if !ok {
 		h.writer.Write(w, http.StatusUnauthorized, &response.Response{
 			Message: "unauthorized",

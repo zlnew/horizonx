@@ -37,6 +37,19 @@ type AuthClaims struct {
 	jwt.RegisteredClaims
 }
 
+type contextKey struct{}
+
+var UserContextKey = contextKey{}
+
+func SetUserContext(ctx context.Context, u UserContext) context.Context {
+	return context.WithValue(ctx, UserContextKey, u)
+}
+
+func GetUserContext(ctx context.Context) (UserContext, bool) {
+	u, ok := ctx.Value(UserContextKey).(UserContext)
+	return u, ok
+}
+
 func GenerateToken() (string, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {

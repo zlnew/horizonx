@@ -3,7 +3,6 @@ package account
 import (
 	"context"
 
-	"horizonx/internal/adapters/http/middleware"
 	"horizonx/internal/domain"
 
 	"golang.org/x/crypto/bcrypt"
@@ -18,7 +17,7 @@ func NewService(repo domain.UserRepository) domain.AccountService {
 }
 
 func (s *Service) UpdateProfile(ctx context.Context, req domain.AccountProfileRequest) error {
-	userCtx, ok := middleware.GetUser(ctx)
+	userCtx, ok := domain.GetUserContext(ctx)
 	if !ok {
 		return domain.ErrUnauthorized
 	}
@@ -34,7 +33,7 @@ func (s *Service) UpdateProfile(ctx context.Context, req domain.AccountProfileRe
 }
 
 func (s *Service) ChangePassword(ctx context.Context, req domain.AccountPasswordRequest) error {
-	userCtx, ok := middleware.GetUser(ctx)
+	userCtx, ok := domain.GetUserContext(ctx)
 	if !ok {
 		return domain.ErrUnauthorized
 	}

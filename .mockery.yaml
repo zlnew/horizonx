@@ -1,0 +1,46 @@
+# .mockery.yaml
+with-expecter: true
+issue-845-fix: true
+
+packages:
+  horizonx/internal/domain:
+    interfaces:
+      ApplicationRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks
+
+      DeploymentRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks
+
+      JobRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks
+
+      LogRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks
+
+      MetricsRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks
+
+      RoleRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks
+
+      ServerRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks
+
+      UserRepository:
+        config:
+          dir: "internal/mocks"
+          outpkg: mocks

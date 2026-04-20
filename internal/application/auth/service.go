@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"horizonx/internal/adapters/http/middleware"
 	"horizonx/internal/domain"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -28,7 +27,7 @@ func NewService(repo domain.UserRepository, jwtSecret string, jwtExpiry time.Dur
 }
 
 func (s *Service) GetUser(ctx context.Context) (*domain.User, error) {
-	userCtx, ok := middleware.GetUser(ctx)
+	userCtx, ok := domain.GetUserContext(ctx)
 	if !ok {
 		return nil, domain.ErrUnauthorized
 	}
