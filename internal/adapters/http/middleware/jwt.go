@@ -15,7 +15,7 @@ var userContextKey = userContextKeyType{}
 func JWT(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cookie, err := r.Cookie("access_token")
+			cookie, err := r.Cookie("horizonx_access_token")
 			if err != nil {
 				http.Error(w, "Unauthorized: No token found", http.StatusUnauthorized)
 				return

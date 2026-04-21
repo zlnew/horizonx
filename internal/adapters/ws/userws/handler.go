@@ -51,7 +51,7 @@ func NewHandler(hub *Hub, log logger.Logger, secret string, allowedOrigins []str
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 	var clientID string
 
-	cookie, err := r.Cookie("access_token")
+	cookie, err := r.Cookie("horizonx_access_token")
 	if err == nil {
 		tokenString := cookie.Value
 		claims, err := domain.ValidateToken(tokenString, h.secret)

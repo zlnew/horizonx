@@ -14,14 +14,14 @@ func CSRF(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
-				if _, err := r.Cookie("csrf_token"); err != nil {
+				if _, err := r.Cookie("horizonx_csrf_token"); err != nil {
 					setCSRFCookie(w, cfg)
 				}
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			cookie, err := r.Cookie("csrf_token")
+			cookie, err := r.Cookie("horizonx_csrf_token")
 			if err != nil {
 				http.Error(w, "Missing CSRF cookie", http.StatusForbidden)
 				return
@@ -47,7 +47,7 @@ func setCSRFCookie(w http.ResponseWriter, cfg *config.Config) {
 	token := generateRandomString(32)
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "csrf_token",
+		Name:     "horizonx_csrf_token",
 		Value:    token,
 		Path:     "/",
 		Expires:  time.Now().Add(cfg.JWTExpiry),

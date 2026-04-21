@@ -90,7 +90,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "access_token",
+		Name:     "horizonx_access_token",
 		Value:    res.AccessToken,
 		Path:     "/",
 		Expires:  time.Now().Add(h.cfg.JWTExpiry),
@@ -106,7 +106,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "access_token",
+		Name:     "horizonx_access_token",
 		Value:    "",
 		Path:     "/",
 		Expires:  time.Unix(0, 0),
@@ -117,7 +117,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	})
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "csrf_token",
+		Name:     "horizonx_csrf_token",
 		Value:    "",
 		Path:     "/",
 		Expires:  time.Unix(0, 0),
