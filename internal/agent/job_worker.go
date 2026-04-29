@@ -122,20 +122,40 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 	return execErr
 }
 
+var jobTimeouts = map[domain.JobType]time.Duration{
+	domain.JobTypeAppDeploy:      30 * time.Second,
+	domain.JobTypeAppStart:       45 * time.Second,
+	domain.JobTypeAppStop:        2 * time.Minute,
+	domain.JobTypeAppRestart:     10 * time.Minute,
+	domain.JobTypeAppHealthCheck: 30 * time.Second,
+	domain.JobTypeAppDestroy:     5 * time.Minute,
+	domain.JobTypeMetricsCollect: 30 * time.Second,
+}
+
+const defaultJobTimeout = 5 * time.Minute
+
+func jobTimeout(t domain.JobType) time.Duration {
+	if d, ok := jobTimeouts[t]; ok {
+		return d
+	}
+	return defaultJobTimeout
+}
+
 func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, jobTimeout(job.Type))
 	defer cancel()
 
-	logCh := make(chan domain.EventLogEmitted, 200)
-	commitCh := make(chan domain.EventCommitInfoEmitted, 10)
+	logCh := make(chan domain.EventLogEmitted, 500)
+	commitCh := make(chan domain.EventCommitInfoEmitted, 1)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	sendCtx := context.WithoutCancel(ctx)
 	go func() {
 		defer wg.Done()
 		for evt := range logCh {
-			err := w.httpClient.SendLog(ctx, &domain.LogEmitRequest{
+			err := w.httpClient.SendLog(sendCtx, &domain.LogEmitRequest{
 				Timestamp:     evt.Timestamp,
 				Level:         evt.Level,
 				Source:        evt.Source,
@@ -158,7 +178,7 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 		defer wg.Done()
 		for evt := range commitCh {
 			if err := w.httpClient.SendCommitInfo(
-				ctx,
+				sendCtx,
 				evt.DeploymentID,
 				evt.Hash,
 				evt.Message,
@@ -198,7 +218,11 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 			return
 		}
 
-		logCh <- evt
+		select {
+		case logCh <- evt:
+		default:
+			w.log.Warn("log channel full, dropping event")
+		}
 	})
 
 	bus.Subscribe("commit_info", func(event any) {
@@ -207,7 +231,11 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 			return
 		}
 
-		commitCh <- evt
+		select {
+		case commitCh <- evt:
+		default:
+			w.log.Warn("commit channel full, dropping event")
+		}
 	})
 
 	onEmit := func(event any) {
