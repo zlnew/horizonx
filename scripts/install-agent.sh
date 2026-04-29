@@ -161,7 +161,7 @@ load_env_file() {
       REDIS_USERNAME)            CFG_REDIS_USERNAME="$val" ;;
       REDIS_PASSWORD)            CFG_REDIS_PASSWORD="$val" ;;
       REDIS_DB)                  CFG_REDIS_DB="$val" ;;
-      JOB_WORKER_COUNT)          CFG_JOB_WORKER_COUNT="$val" ;;
+      AGENT_JOB_WORKER_COUNT)    CFG_JOB_WORKER_COUNT="$val" ;;
       LOG_LEVEL)                 CFG_LOG_LEVEL="$val" ;;
       LOG_FORMAT)                CFG_LOG_FORMAT="$val" ;;
       *) echo "  [!] Unrecognised key in env file, skipping: $key" ;;
@@ -315,7 +315,7 @@ else
   echo "    REDIS_PASSWORD            = <empty>"
 fi
 echo "    REDIS_DB                  = $CFG_REDIS_DB"
-echo "    JOB_WORKER_COUNT          = $CFG_JOB_WORKER_COUNT"
+echo "    AGENT_JOB_WORKER_COUNT    = $CFG_JOB_WORKER_COUNT"
 echo "    LOG_LEVEL                 = $CFG_LOG_LEVEL"
 echo "    LOG_FORMAT                = $CFG_LOG_FORMAT"
 echo ""
