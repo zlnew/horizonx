@@ -28,6 +28,7 @@ type Config struct {
 	AgentTargetWsURL    string
 	AgentServerAPIToken string
 	AgentServerID       uuid.UUID
+	AgentJobWorkerCount int
 
 	RedisAddress  string
 	RedisUsername string
@@ -90,6 +91,13 @@ func Load() *Config {
 		}
 	}
 
+	agentJobWorkerCount := 10
+	if raw := os.Getenv("AGENT_JOB_WORKER_COUNT"); raw != "" {
+		if count, err := strconv.Atoi(raw); err == nil {
+			agentJobWorkerCount = count
+		}
+	}
+
 	// REDIS
 	redisAddress := getEnv("REDIS_ADDR", "localhost:6379")
 	redisUsername := getEnv("REDIS_USERNAME", "")
@@ -118,6 +126,7 @@ func Load() *Config {
 		AgentTargetWsURL:    agentTargetWsURL,
 		AgentServerAPIToken: agentServerAPIToken,
 		AgentServerID:       agentServerID,
+		AgentJobWorkerCount: agentJobWorkerCount,
 
 		RedisAddress:  redisAddress,
 		RedisUsername: redisUsername,

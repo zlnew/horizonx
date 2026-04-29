@@ -18,6 +18,7 @@ Options:
   --redis-username <user>     Override REDIS_USERNAME
   --redis-password <pass>     Override REDIS_PASSWORD
   --redis-db <db>             Override REDIS_DB
+  --job-worker-count <count>  Override AGENT_JOB_WORKER_COUNT
   --log-level <level>         Override LOG_LEVEL (debug|info|warn|error)
   --log-format <format>       Override LOG_FORMAT (text|json)
   --app-env <env>             Override APP_ENV (production|development)
@@ -47,6 +48,7 @@ CFG_REDIS_ADDR="localhost:6379"
 CFG_REDIS_USERNAME=""
 CFG_REDIS_PASSWORD=""
 CFG_REDIS_DB="0"
+CFG_JOB_WORKER_COUNT="10"
 CFG_LOG_LEVEL="info"
 CFG_LOG_FORMAT="text"
 
@@ -63,6 +65,7 @@ OVERRIDE_REDIS_ADDR=""
 OVERRIDE_REDIS_USERNAME=""
 OVERRIDE_REDIS_PASSWORD=""
 OVERRIDE_REDIS_DB=""
+OVERRIDE_JOB_WORKER_COUNT=""
 OVERRIDE_LOG_LEVEL=""
 OVERRIDE_LOG_FORMAT=""
 
@@ -95,6 +98,9 @@ while [[ $# -gt 0 ]]; do
     --redis-db)
       [[ -z "${2:-}" ]] && { echo "[!] --redis-db requires a value"; exit 1; }
       OVERRIDE_REDIS_DB="$2"; shift 2 ;;
+    --job-worker-count)
+      [[ -z "${2:-}" ]] && { echo "[!] --job-worker-count requires a value"; exit 1; }
+      OVERRIDE_JOB_WORKER_COUNT="$2"; shift 2 ;;
     --log-level)
       [[ -z "${2:-}" ]] && { echo "[!] --log-level requires a value"; exit 1; }
       OVERRIDE_LOG_LEVEL="$2"; shift 2 ;;
@@ -155,6 +161,7 @@ load_env_file() {
       REDIS_USERNAME)            CFG_REDIS_USERNAME="$val" ;;
       REDIS_PASSWORD)            CFG_REDIS_PASSWORD="$val" ;;
       REDIS_DB)                  CFG_REDIS_DB="$val" ;;
+      JOB_WORKER_COUNT)          CFG_JOB_WORKER_COUNT="$val" ;;
       LOG_LEVEL)                 CFG_LOG_LEVEL="$val" ;;
       LOG_FORMAT)                CFG_LOG_FORMAT="$val" ;;
       *) echo "  [!] Unrecognised key in env file, skipping: $key" ;;
@@ -163,17 +170,18 @@ load_env_file() {
 }
 
 apply_overrides() {
-  if [[ -n "${OVERRIDE_APP_ENV:-}" ]];        then CFG_APP_ENV="$OVERRIDE_APP_ENV"; fi
-  if [[ -n "${OVERRIDE_API_URL:-}" ]];        then CFG_API_URL="$OVERRIDE_API_URL"; fi
-  if [[ -n "${OVERRIDE_WS_URL:-}" ]];         then CFG_WS_URL="$OVERRIDE_WS_URL"; fi
-  if [[ -n "${OVERRIDE_API_TOKEN:-}" ]];      then CFG_API_TOKEN="$OVERRIDE_API_TOKEN"; fi
-  if [[ -n "${OVERRIDE_SERVER_ID:-}" ]];      then CFG_SERVER_ID="$OVERRIDE_SERVER_ID"; fi
-  if [[ -n "${OVERRIDE_REDIS_ADDR:-}" ]];     then CFG_REDIS_ADDR="$OVERRIDE_REDIS_ADDR"; fi
-  if [[ -n "${OVERRIDE_REDIS_USERNAME:-}" ]]; then CFG_REDIS_USERNAME="$OVERRIDE_REDIS_USERNAME"; fi
-  if [[ -n "${OVERRIDE_REDIS_PASSWORD:-}" ]]; then CFG_REDIS_PASSWORD="$OVERRIDE_REDIS_PASSWORD"; fi
-  if [[ -n "${OVERRIDE_REDIS_DB:-}" ]];       then CFG_REDIS_DB="$OVERRIDE_REDIS_DB"; fi
-  if [[ -n "${OVERRIDE_LOG_LEVEL:-}" ]];      then CFG_LOG_LEVEL="$OVERRIDE_LOG_LEVEL"; fi
-  if [[ -n "${OVERRIDE_LOG_FORMAT:-}" ]];     then CFG_LOG_FORMAT="$OVERRIDE_LOG_FORMAT"; fi
+  if [[ -n "${OVERRIDE_APP_ENV:-}" ]];          then CFG_APP_ENV="$OVERRIDE_APP_ENV"; fi
+  if [[ -n "${OVERRIDE_API_URL:-}" ]];          then CFG_API_URL="$OVERRIDE_API_URL"; fi
+  if [[ -n "${OVERRIDE_WS_URL:-}" ]];           then CFG_WS_URL="$OVERRIDE_WS_URL"; fi
+  if [[ -n "${OVERRIDE_API_TOKEN:-}" ]];        then CFG_API_TOKEN="$OVERRIDE_API_TOKEN"; fi
+  if [[ -n "${OVERRIDE_SERVER_ID:-}" ]];        then CFG_SERVER_ID="$OVERRIDE_SERVER_ID"; fi
+  if [[ -n "${OVERRIDE_REDIS_ADDR:-}" ]];       then CFG_REDIS_ADDR="$OVERRIDE_REDIS_ADDR"; fi
+  if [[ -n "${OVERRIDE_REDIS_USERNAME:-}" ]];   then CFG_REDIS_USERNAME="$OVERRIDE_REDIS_USERNAME"; fi
+  if [[ -n "${OVERRIDE_REDIS_PASSWORD:-}" ]];   then CFG_REDIS_PASSWORD="$OVERRIDE_REDIS_PASSWORD"; fi
+  if [[ -n "${OVERRIDE_REDIS_DB:-}" ]];         then CFG_REDIS_DB="$OVERRIDE_REDIS_DB"; fi
+  if [[ -n "${OVERRIDE_JOB_WORKER_COUNT:-}" ]]; then CFG_JOB_WORKER_COUNT="$OVERRIDE_JOB_WORKER_COUNT"; fi
+  if [[ -n "${OVERRIDE_LOG_LEVEL:-}" ]];        then CFG_LOG_LEVEL="$OVERRIDE_LOG_LEVEL"; fi
+  if [[ -n "${OVERRIDE_LOG_FORMAT:-}" ]];       then CFG_LOG_FORMAT="$OVERRIDE_LOG_FORMAT"; fi
 }
 
 # =============================
@@ -220,6 +228,12 @@ validate_config() {
   # REDIS_DB must be an integer
   if [[ ! "$CFG_REDIS_DB" =~ ^[0-9]+$ ]]; then
     echo "[!] Invalid REDIS_DB: '$CFG_REDIS_DB'. Must be a non-negative integer"
+    errors=$((errors + 1))
+  fi
+
+  # AGENT_JOB_WORKER_COUNT must be an integer
+  if [[ ! "$CFG_JOB_WORKER_COUNT" =~ ^[0-9]+$ ]]; then
+    echo "[!] Invalid AGENT_JOB_WORKER_COUNT: '$CFG_JOB_WORKER_COUNT'. Must be a non-negative integer"
     errors=$((errors + 1))
   fi
 
@@ -301,6 +315,7 @@ else
   echo "    REDIS_PASSWORD            = <empty>"
 fi
 echo "    REDIS_DB                  = $CFG_REDIS_DB"
+echo "    JOB_WORKER_COUNT          = $CFG_JOB_WORKER_COUNT"
 echo "    LOG_LEVEL                 = $CFG_LOG_LEVEL"
 echo "    LOG_FORMAT                = $CFG_LOG_FORMAT"
 echo ""

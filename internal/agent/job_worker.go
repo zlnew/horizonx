@@ -56,16 +56,40 @@ func (w *JobWorker) pollAndExecuteJobs(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch jobs: %w", err)
 	}
-
 	if len(jobs) == 0 {
 		return nil
 	}
 
 	w.log.Debug("received jobs", "count", len(jobs))
 
+	jobCh := make(chan domain.Job, len(jobs))
 	for _, job := range jobs {
-		if err := w.processJob(ctx, job); err != nil {
-			w.log.Error("failed to process job", "job_id", job.ID, "error", err)
+		jobCh <- job
+	}
+	close(jobCh)
+
+	errCh := make(chan error, len(jobs))
+
+	var wg sync.WaitGroup
+
+	for range w.cfg.AgentJobWorkerCount {
+		wg.Go(func() {
+			for job := range jobCh {
+				select {
+				case <-ctx.Done():
+					return
+				case errCh <- w.processJob(ctx, job):
+				}
+			}
+		})
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for jobErr := range errCh {
+		if jobErr != nil {
+			w.log.Error("failed to process job", "error", jobErr)
 		}
 	}
 
