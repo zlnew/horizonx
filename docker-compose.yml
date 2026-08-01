@@ -1,0 +1,33 @@
+# Dev compose for the HorizonX control plane (Go).
+# No custom Dockerfile in this repo — we run the source with the official Go
+# image and mount the working tree. Production installs use scripts/install-server.sh.
+services:
+  server:
+    image: golang:1.25-alpine
+    container_name: horizonx-server
+    working_dir: /app
+    command: ['go', 'run', './cmd/server']
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HTTP_ADDR: ':3000'
+      DATABASE_URL: ${HORIZONX_DATABASE_URL:-postgres://postgres:secret@personal-postgres:5432/horizonx?sslmode=disable}
+      REDIS_ADDR: ${HORIZONX_REDIS_ADDR:-personal-redis:6379}
+      JWT_SECRET: ${HORIZONX_JWT_SECRET:-changeme-dev-secret}
+      JWT_EXPIRY: ${HORIZONX_JWT_EXPIRY:-24h}
+    volumes:
+      - .:/app
+      - go-mod-cache:/go/pkg/mod
+    ports:
+      - '127.0.0.1:${HORIZONX_PORT:-3002}:3000'
+    restart: unless-stopped
+    networks:
+      - personal-network
+
+volumes:
+  go-mod-cache:
+
+networks:
+  personal-network:
+    external: true
