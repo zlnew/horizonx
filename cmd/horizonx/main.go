@@ -10,6 +10,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -36,6 +37,8 @@ func main() {
 		return
 	case "upgrade":
 		err = app.RunUpgrade()
+	case "migrate":
+		err = runMigrate(os.Args[2:])
 	case "help", "--help", "-h":
 		usage()
 		return
@@ -58,6 +61,7 @@ Usage:
   horizonx server     Run the control-plane server (API + /metrics + WebSocket)
   horizonx agent      Run an app-host agent (deploys docker-compose apps)
   horizonx setup      Bootstrap a control plane: secrets, .env, compose, systemd
+  horizonx migrate    Apply/rollback database migrations (-op=up|down|version|force)
   horizonx version    Print the build version
   horizonx upgrade    Self-update to the latest release
   horizonx help       Show this help
@@ -68,4 +72,18 @@ Install (one-liner):
 Setup:
   horizonx setup                  # defaults into ./horizonx-setup
   horizonx setup --host 203.0.113.10 --dir /opt/horizonx`)
+}
+
+// runMigrate parses the migrate subcommand flags and delegates to the shared
+// app.RunMigrate implementation (same engine as cmd/migrate).
+func runMigrate(args []string) error {
+	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+	envFile := fs.String("env-file", "", "path to .env file to load (optional)")
+	cmd := fs.String("op", "", "operation: up, down, version, force")
+	steps := fs.Int("steps", 0, "number of steps for up/down (0 = all); version number for force")
+	dsn := fs.String("dsn", "", "database url (postgres://user:***@host:port/db); overrides DATABASE_URL env")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return app.RunMigrate(*envFile, *dsn, *cmd, *steps)
 }

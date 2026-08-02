@@ -1,0 +1,59 @@
+# Production compose for the HorizonX control plane — used by the HorizonX agent.
+# The agent builds on deploy (`compose up -d --force-recreate`), attaches to the
+# shared personal-network, and reaches shared personal-postgres / personal-redis
+# via env. Migrations run once (migrate service) before the server starts.
+#
+# The dashboard is a SEPARATE app (horizonx-dashboard repo) with its own prod
+# compose — it is not bundled here.
+#
+# Env overrides come from HorizonX env vars (written to .env):
+#   HORIZONX_PORT (default 3002, host), DATABASE_URL, REDIS_ADDR, JWT_SECRET,
+#   APP_ENV, ALLOWED_ORIGINS
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${APP_IMAGE:-horizonx:latest}
+    container_name: ${APP_CONTAINER_NAME:-horizonx}-migrate
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:secret@personal-postgres:5432/horizonx}
+      REDIS_ADDR: ${REDIS_ADDR:-personal-redis:6379}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required in production}
+    entrypoint: ["horizonx", "migrate", "-op=up"]
+    restart: "no"
+    networks:
+      - personal-network
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${APP_IMAGE:-horizonx:latest}
+    container_name: ${APP_CONTAINER_NAME:-horizonx}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      HTTP_ADDR: :3000
+      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:secret@personal-postgres:5432/horizonx}
+      REDIS_ADDR: ${REDIS_ADDR:-personal-redis:6379}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required in production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3003}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - '127.0.0.1:${HORIZONX_PORT:-3002}:3000'
+    restart: unless-stopped
+    networks:
+      - personal-network
+
+networks:
+  personal-network:
+    external: true
