@@ -450,7 +450,6 @@ func (r *JobRepository) CountsByStatus(ctx context.Context) (*domain.JobStatusCo
 			COUNT(*) FILTER (WHERE status = 'expired'),
 			COUNT(*)
 		FROM jobs
-		WHERE deleted_at IS NULL
 	`
 
 	var counts domain.JobStatusCounts
