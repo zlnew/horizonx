@@ -1,0 +1,5 @@
+.git
+**/apps
+.env
+.env.*
+!.env.example

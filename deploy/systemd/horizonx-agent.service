@@ -1,0 +1,35 @@
+# HorizonX app-host agent — systemd unit.
+# Install on each app host:  sudo cp horizonx-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now horizonx-agent
+#
+# The agent needs a working docker CLI + compose (it runs `docker compose` in
+# /var/lib/horizonx/apps/<app>). Put the agent env (HORIZONX_SERVER_ID,
+# HORIZONX_SERVER_API_TOKEN, HORIZONX_API_URL, HORIZONX_WS_URL, REDIS_ADDR)
+# in /etc/horizonx/.env on the app host.
+
+[Unit]
+Description=HorizonX app-host agent
+Documentation=https://github.com/zlnew/horizonx
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=horizonx
+Group=horizonx
+WorkingDirectory=/var/lib/horizonx/apps
+EnvironmentFile=/etc/horizonx/.env
+ExecStart=/usr/local/bin/horizonx agent
+Restart=always
+RestartSec=5
+# The agent shells out to docker/git — keep it a normal user in the docker group.
+SupplementaryGroups=docker
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/horizonx /etc/horizonx
+
+[Install]
+WantedBy=multi-user.target
