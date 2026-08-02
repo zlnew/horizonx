@@ -37,8 +37,13 @@ func (f *fakeJobService) Finish(_ context.Context, jobID int64, _ domain.JobStat
 	if f.failError != nil {
 		return nil, f.failError
 	}
+
 	f.finished = append(f.finished, jobID)
 	return nil, nil
+}
+
+func (f *fakeJobService) Summary(context.Context) (*domain.JobStatusCounts, error) {
+	return &domain.JobStatusCounts{}, nil
 }
 
 func jobPtr(id int64, startedAt *time.Time) *domain.Job {

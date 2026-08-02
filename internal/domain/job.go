@@ -69,6 +69,15 @@ type JobFinishRequest struct {
 	Status JobStatus `json:"status"`
 }
 
+type JobStatusCounts struct {
+	Queued    int64 `json:"queued"`
+	Running   int64 `json:"running"`
+	Success   int64 `json:"success"`
+	Failed    int64 `json:"failed"`
+	Expired   int64 `json:"expired"`
+	Total     int64 `json:"total"`
+}
+
 type JobRepository interface {
 	List(ctx context.Context, opts JobListOptions) ([]*Job, int64, error)
 	GetPending(ctx context.Context, serverID uuid.UUID) ([]*Job, error)
@@ -78,6 +87,7 @@ type JobRepository interface {
 	Retry(ctx context.Context, jobID int64, j *Job) (*Job, error)
 	MarkRunning(ctx context.Context, jobID int64) (*Job, error)
 	MarkFinished(ctx context.Context, jobID int64, status JobStatus) (*Job, error)
+	CountsByStatus(ctx context.Context) (*JobStatusCounts, error)
 }
 
 type JobService interface {
@@ -89,4 +99,5 @@ type JobService interface {
 	Retry(ctx context.Context, jobID int64, j *Job) (*Job, error)
 	Start(ctx context.Context, jobID int64) (*Job, error)
 	Finish(ctx context.Context, jobID int64, status JobStatus) (*Job, error)
+	Summary(ctx context.Context) (*JobStatusCounts, error)
 }

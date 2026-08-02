@@ -184,3 +184,9 @@ func (s *JobService) Finish(ctx context.Context, jobID int64, status domain.JobS
 
 	return job, err
 }
+
+// Summary returns job queue counts by status.
+// P2-17: queue visibility — feeds GET /jobs/summary.
+func (s *JobService) Summary(ctx context.Context) (*domain.JobStatusCounts, error) {
+	return s.repo.CountsByStatus(ctx)
+}

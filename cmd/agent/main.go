@@ -16,6 +16,7 @@ import (
 	"horizonx/internal/agent/executor"
 	"horizonx/internal/config"
 	"horizonx/internal/logger"
+	"horizonx/internal/version"
 	"horizonx/internal/metrics"
 )
 
@@ -35,7 +36,7 @@ func main() {
 		log.Fatal("FATAL: HORIZONX_SERVER_ID is missing or invalid in .env!")
 	}
 
-	appLog.Info("horizonx agent: starting...", "server_id", cfg.AgentServerID)
+	appLog.Info("horizonx agent: starting...", "server_id", cfg.AgentServerID, "version", version.Version)
 
 	ctx := context.Background()
 	runtimeCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)

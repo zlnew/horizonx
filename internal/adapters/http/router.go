@@ -5,12 +5,14 @@ import (
 	"net/http"
 	"time"
 
+	"horizonx/internal/adapters/http/metrics"
 	"horizonx/internal/adapters/http/middleware"
 	"horizonx/internal/adapters/http/middleware/ratelimit"
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
 	"horizonx/internal/config"
 	"horizonx/internal/domain"
+	"horizonx/internal/logger"
 )
 
 type RouterDeps struct {
@@ -29,6 +31,9 @@ type RouterDeps struct {
 
 	RoleService   domain.RoleService
 	ServerService domain.ServerService
+
+	MetricsRegistry *metrics.Registry
+	Logger          logger.Logger
 }
 
 func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
@@ -36,13 +41,19 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	globalMw := middleware.New()
 	globalMw.Use(middleware.CORS(cfg))
+	if deps.Logger != nil {
+		globalMw.Use(middleware.RequestLog(deps.Logger))
+	}
+	if deps.MetricsRegistry != nil {
+		globalMw.Use(metricsMiddleware(deps.MetricsRegistry))
+	}
 
 	userStack := middleware.New()
 	userStack.Use(middleware.JWT(cfg))
 	userStack.Use(middleware.CSRF(cfg))
 
 	agentStack := middleware.New()
-	agentStack.Use(middleware.Agent(deps.ServerService))
+	agentStack.Use(middleware.Agent(deps.ServerService, deps.Logger))
 
 	metricsReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermMetricsRead))
 
@@ -64,6 +75,15 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	})
+
+	// P2-14: Prometheus scrape endpoint. Public (no auth) — exposes only
+	// operational counters, no sensitive data. Refresh gauges before serving.
+	if deps.MetricsRegistry != nil {
+		mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			deps.MetricsRegistry.Refresh()
+			deps.MetricsRegistry.Handler().ServeHTTP(w, r)
+		}))
+	}
 
 	// WEBSOCKET
 	mux.HandleFunc("GET /ws/user", deps.WsUser.Serve)
@@ -89,6 +109,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// JOBS
 	mux.Handle("GET /jobs", userStack.ThenFunc(deps.Job.Index))
 	mux.Handle("GET /jobs/{id}", userStack.ThenFunc(deps.Job.Show))
+
+	// P2-17: queue depth summary (no pagination — tiny fixed-size response).
+	mux.Handle("GET /jobs/summary", userStack.ThenFunc(deps.Job.Summary))
 
 	// SERVERS
 	mux.Handle("GET /servers", serverReadStack.ThenFunc(deps.Server.Index))

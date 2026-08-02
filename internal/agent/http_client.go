@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"horizonx/internal/config"
+	"horizonx/internal/version"
 	"horizonx/internal/domain"
 )
 
@@ -22,6 +23,12 @@ func NewHttpClient(cfg *config.Config) *HttpClient {
 		cfg:  cfg,
 		http: &http.Client{Timeout: 5 * time.Minute},
 	}
+}
+
+func (c *HttpClient) setAuthHeaders(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	// P2-18: agent version pinning — server warns on mismatch.
+	req.Header.Set(version.AgentVersionHeader, version.Version)
 }
 
 func (c *HttpClient) UpdateServerOSInfo(ctx context.Context, req domain.OSInfo) error {
@@ -38,7 +45,7 @@ func (c *HttpClient) UpdateServerOSInfo(ctx context.Context, req domain.OSInfo) 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(httpReq)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -61,7 +68,7 @@ func (c *HttpClient) GetPendingJobs(ctx context.Context) ([]domain.Job, error) {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -92,7 +99,7 @@ func (c *HttpClient) StartJob(ctx context.Context, jobID int64) error {
 		return err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -125,7 +132,7 @@ func (c *HttpClient) FinishJob(ctx context.Context, jobID int64, status domain.J
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -154,7 +161,7 @@ func (c *HttpClient) SendAppHealthReports(ctx context.Context, req []domain.Appl
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(httpReq)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -183,7 +190,7 @@ func (c *HttpClient) SendMetrics(ctx context.Context, req *domain.Metrics) error
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(httpReq)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -212,7 +219,7 @@ func (c *HttpClient) SendLog(ctx context.Context, req *domain.LogEmitRequest) er
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(httpReq)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -246,7 +253,7 @@ func (c *HttpClient) SendCommitInfo(ctx context.Context, deploymentID int64, com
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.cfg.AgentServerID.String()+"."+c.cfg.AgentServerAPIToken)
+	c.setAuthHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
