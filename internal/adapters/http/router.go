@@ -3,8 +3,10 @@ package http
 
 import (
 	"net/http"
+	"time"
 
 	"horizonx/internal/adapters/http/middleware"
+	"horizonx/internal/adapters/http/middleware/ratelimit"
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
 	"horizonx/internal/config"
@@ -53,6 +55,11 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	appReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppRead))
 	appWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppWrite))
 
+	// P1-10: brute-force guard on the public login endpoint — 5 attempts per
+	// IP per minute, then HTTP 429.
+	loginLimiter := ratelimit.New(5, time.Minute)
+	loginStack := middleware.New().Use(loginLimiter.Middleware(ratelimit.ClientIP))
+
 	// HEALTH
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
@@ -64,7 +71,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// AUTH
 	mux.Handle("GET /auth/user", userStack.ThenFunc(deps.Auth.User))
-	mux.Handle("POST /auth/login", http.HandlerFunc(deps.Auth.Login))
+	mux.Handle("POST /auth/login", loginStack.ThenFunc(deps.Auth.Login))
 	mux.Handle("POST /auth/logout", userStack.ThenFunc(deps.Auth.Logout))
 
 	// AGENT ENDPOINTS

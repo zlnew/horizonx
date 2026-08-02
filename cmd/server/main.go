@@ -12,6 +12,7 @@ import (
 	"horizonx/internal/adapters/http/response"
 	"horizonx/internal/adapters/http/validator"
 	"horizonx/internal/adapters/postgres"
+	"horizonx/internal/security"
 	"horizonx/internal/adapters/redis"
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
@@ -40,8 +41,16 @@ func main() {
 	cfg := config.Load()
 	log := logger.New(cfg)
 
-	if cfg.JWTSecret == "" {
-		panic("FATAL: JWT_SECRET is mandatory for Server!")
+	// P1-12: JWT_SECRET is the linchpin of auth + env-var encryption (P1-11).
+	// Refuse to boot in production with an empty or known-dev default secret —
+	// a predictable secret means forged tokens and decryptable env vars.
+	devDefaults := map[string]bool{
+		"":                   true,
+		"changeme-dev-secret": true,
+		"secret":             true,
+	}
+	if cfg.JWTSecret == "" || (cfg.AppEnv == "production" && devDefaults[cfg.JWTSecret]) {
+		panic("FATAL: JWT_SECRET must be set to a strong random value (production refuses dev defaults)")
 	}
 
 	dbPool, err := postgres.Init(cfg.DatabaseURL)
@@ -75,7 +84,9 @@ func main() {
 	userRepo := postgres.NewUserRepository(dbPool)
 	jobRepo := postgres.NewJobRepository(dbPool)
 	metricsRepo := postgres.NewMetricsRepository(dbPool)
-	applicationRepo := postgres.NewApplicationRepository(dbPool)
+	// P1-11: env var values are encrypted at rest with a key derived from
+	// JWT_SECRET (AES-256-GCM). No second secret to manage.
+	applicationRepo := postgres.NewApplicationRepository(dbPool, security.KeyFromSecret(cfg.JWTSecret))
 	deploymentRepo := postgres.NewDeploymentRepository(dbPool)
 
 	// Services

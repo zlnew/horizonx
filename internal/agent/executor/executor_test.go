@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"horizonx/internal/agent/command"
 	"horizonx/internal/domain"
@@ -33,7 +34,12 @@ func (f *fakeDocker) Cmd(_ context.Context, _ string, args []string, _ ...comman
 		}
 	}
 	if len(args) >= 2 && args[0] == "compose" && args[1] == "ps" {
-		return f.psOutput, f.psErr
+		if f.psOutput != "" || f.psErr != nil {
+			return f.psOutput, f.psErr
+		}
+		// Default: one healthy running container so the post-deploy health
+		// gate (P1-9) passes.
+		return `[{"ID":"a","Name":"demo-app-1","State":"running","Health":"","ExitCode":0}]`, nil
 	}
 	return "ok", nil
 }
@@ -136,13 +142,16 @@ func TestDeployUsesInPlaceRecreateWithoutDown(t *testing.T) {
 		t.Fatalf("unexpected deploy error: %v", err)
 	}
 
-	var hasUp, hasDown bool
+	var hasUp, hasDown, hasGate bool
 	for _, call := range docker.cmdCalls {
 		if strings.Contains(call, "compose up -d --force-recreate") {
 			hasUp = true
 		}
 		if strings.Contains(call, "compose down") {
 			hasDown = true
+		}
+		if strings.Contains(call, "compose ps --format json") {
+			hasGate = true
 		}
 	}
 
@@ -151,6 +160,9 @@ func TestDeployUsesInPlaceRecreateWithoutDown(t *testing.T) {
 	}
 	if hasDown {
 		t.Fatalf("deploy must not run compose down (zero-downtime), got: %v", docker.cmdCalls)
+	}
+	if !hasGate {
+		t.Fatalf("deploy must run the post-deploy health gate (compose ps), got: %v", docker.cmdCalls)
 	}
 }
 
@@ -283,7 +295,7 @@ func TestRollbackUsesPreviousImageTag(t *testing.T) {
 
 func TestRollbackRejectsEmptyImageTag(t *testing.T) {
 	docker := &fakeDocker{}
-	git := &fakeGit{commit: "0123456789abcdef0123456789abcdef01234567", msg: "test"}
+	git := &fakeGit{commit: "abc123", msg: "test"}
 
 	ex := NewExecutorWithDeps(docker, git, "/tmp/apps", noopLogger(), nil)
 
@@ -299,5 +311,42 @@ func TestRollbackRejectsEmptyImageTag(t *testing.T) {
 	}
 	if len(docker.cmdCalls) != 0 {
 		t.Fatalf("rollback must not run docker when image tag is empty: %v", docker.cmdCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// P1-9: post-deploy health gate — deploy must FAIL when the app crashes on boot
+// ---------------------------------------------------------------------------
+
+func TestDeployFailsWhenAppCrashesOnBoot(t *testing.T) {
+	docker := &fakeDocker{psOutput: `[{"ID":"a","Name":"demo-app-1","State":"exited","Health":"","ExitCode":1}]`}
+	git := &fakeGit{commit: "0123456789abcdef0123456789abcdef01234567", msg: "test"}
+
+	ex := NewExecutorWithDeps(docker, git, "/tmp/apps", noopLogger(), nil)
+
+	err := ex.Execute(context.Background(), deployJob(t), emitNoop)
+	if err == nil {
+		t.Fatal("expected deploy to fail when the app crashes on boot")
+	}
+	if !strings.Contains(err.Error(), "crashed on boot") {
+		t.Fatalf("expected crash-on-boot error, got: %v", err)
+	}
+}
+
+func TestDeployHealthGateTimesOutOnUnknownState(t *testing.T) {
+	// Container stays "created" (not running, not failed) — the gate must
+	// time out and fail the deploy rather than hang forever.
+	docker := &fakeDocker{psOutput: `[{"ID":"a","Name":"demo-app-1","State":"created","Health":"","ExitCode":0}]`}
+	git := &fakeGit{commit: "0123456789abcdef0123456789abcdef01234567", msg: "test"}
+
+	ex := NewExecutorWithDeps(docker, git, "/tmp/apps", noopLogger(), nil)
+
+	workDir := ex.getAppWorkDir("demo-app-1")
+	err := ex.waitForAppRunning(context.Background(), workDir, "demo-app-1", emitNoop, domain.ActionAppDeploy, domain.StepDockerHealthCheck, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected health gate to time out for app stuck in 'created' state")
+	}
+	if !strings.Contains(err.Error(), "did not become ready") {
+		t.Fatalf("expected timeout error, got: %v", err)
 	}
 }

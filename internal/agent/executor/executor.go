@@ -19,6 +19,10 @@ import (
 
 type EmitHandler = func(event any)
 
+// healthGateTimeout bounds how long a deploy/rollback waits for the app to
+// actually come up after `compose up` before failing the job (P1-9).
+const healthGateTimeout = 60 * time.Second
+
 // DockerRunner is the subset of docker.Manager the executor needs. Defined as
 // an interface so the deploy pipeline can be unit-tested with a fake.
 type DockerRunner interface {
@@ -289,6 +293,72 @@ func aggregateContainerHealth(containers []docker.Container) domain.ApplicationS
 	return domain.AppStatusRunning
 }
 
+// waitForAppRunning polls `compose ps` until the app reaches a terminal state
+// (P1-9: post-deploy health gate). A deploy that builds and recreates cleanly
+// but whose container crashes on boot must be marked FAILED, not success —
+// otherwise the control plane flips the app to "running" while it's dead.
+// Returns nil when the app is Running, an error when it is Failed/Dead or the
+// deadline passes with the app still starting.
+func (e *Executor) waitForAppRunning(
+	ctx context.Context,
+	workDir string,
+	appKey string,
+	emit EmitHandler,
+	action domain.LogAction,
+	step domain.LogStep,
+	timeout time.Duration,
+) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		output, err := e.docker.Cmd(ctx, workDir, []string{"compose", "ps", "--format", "json"})
+		if err != nil {
+			// compose ps can fail transiently while containers are created.
+			if time.Now().After(deadline) {
+				e.logFatalHandler(
+					fmt.Sprintf("app %s did not become ready: compose ps failed: %v", appKey, err),
+					emit, action, step,
+				)
+				return fmt.Errorf("app %s did not become ready: %w", appKey, err)
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		if output != "" {
+			if containers, parseErr := parseComposePs(output); parseErr == nil {
+				status := aggregateContainerHealth(containers)
+				switch status {
+				case domain.AppStatusRunning:
+					return nil
+				case domain.AppStatusFailed:
+					e.logFatalHandler(
+						fmt.Sprintf("app %s crashed on boot (health gate failed)", appKey),
+						emit, action, step,
+					)
+					return fmt.Errorf("app %s crashed on boot (health gate failed)", appKey)
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			e.logFatalHandler(
+				fmt.Sprintf("app %s did not become ready within %s (health gate timeout)", appKey, timeout),
+				emit, action, step,
+			)
+			return fmt.Errorf("app %s did not become ready within %s", appKey, timeout)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
 	var payload domain.AppDeployPayload
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
@@ -429,11 +499,11 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 		return err
 	}
 
-	// Docker compose up — in-place recreate (P0-3: zero-downtime).
-	// Previously this did `compose down` then `compose up`, which created a
-	// hard outage window between the two and took the old stack down before
-	// the new one was ready. `compose up -d --force-recreate` recreates
-	// containers in place, keeping the network/volumes.
+	// Docker compose up — in-place recreate (P0-3: zero-downtime). The
+	// post-deploy health gate below (P1-9) then waits for the app to
+	// actually come up before the job reports success — a build that
+	// recreates cleanly but crashes on boot must flip the app to failed,
+	// not optimistically claim "running".
 	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
@@ -445,6 +515,12 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 			action,
 			domain.StepDockerStart,
 		)
+		return err
+	}
+
+	// P1-9: post-deploy health gate — only report success once the app is
+	// actually running, not merely "compose up returned 0".
+	if err := e.waitForAppRunning(ctx, workDir, payload.AppKey, emit, action, domain.StepDockerHealthCheck, healthGateTimeout); err != nil {
 		return err
 	}
 
@@ -566,6 +642,8 @@ func (e *Executor) rollbackApp(ctx context.Context, job *domain.Job, emit EmitHa
 		return err
 	}
 
+	// Recreate with the previous image. Health-gated like a deploy (P1-9):
+	// the rollback only succeeds once the stack is actually running again.
 	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
@@ -577,6 +655,10 @@ func (e *Executor) rollbackApp(ctx context.Context, job *domain.Job, emit EmitHa
 			action,
 			step,
 		)
+		return err
+	}
+
+	if err := e.waitForAppRunning(ctx, workDir, payload.AppKey, emit, action, domain.StepDockerHealthCheck, healthGateTimeout); err != nil {
 		return err
 	}
 

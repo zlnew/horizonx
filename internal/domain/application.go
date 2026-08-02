@@ -78,6 +78,7 @@ type EnvironmentVariable struct {
 	Key           string    `json:"key"`
 	Value         string    `json:"value"`
 	IsPreview     bool      `json:"is_preview"`
+	ValueEncrypted bool     `json:"value_encrypted"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
