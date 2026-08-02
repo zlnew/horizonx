@@ -1,0 +1,86 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries (linux + darwin, amd64 + arm64)
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for os in linux darwin; do
+            for arch in amd64 arm64; do
+              a="$arch"
+              [ "$a" = "amd64" ] && a="x86_64"
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+                go build -ldflags "-s -w -X horizonx/internal/version.Version=${VERSION}" \
+                -o "dist/horizonx-${os}-${a}" ./cmd/horizonx
+            done
+          done
+
+      - name: Package tarballs + checksums
+        run: |
+          set -euxo pipefail
+          for f in dist/horizonx-*; do
+            name="$(basename "$f")"
+            tar -czf "dist/${name}.tar.gz" -C dist "${name}"
+          done
+          cd dist
+          sha256sum horizonx-*.tar.gz > SHA256SUMS
+          ls -la
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/horizonx-*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+
+  images:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/zlnew/horizonx:${{ github.ref_name }}
+            ghcr.io/zlnew/horizonx:latest
+          build-args: |
+            VERSION=${{ github.ref_name }}
