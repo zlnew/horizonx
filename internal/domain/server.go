@@ -20,6 +20,9 @@ type Server struct {
 	OSInfo    *OSInfo   `json:"os_info,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// P3-20: number of applications deployed on this server (fleet overview).
+	ApplicationCount int64 `json:"application_count"`
 }
 
 type ServerListOptions struct {

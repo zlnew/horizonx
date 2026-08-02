@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,6 +36,9 @@ func (r *DeploymentRepository) List(ctx context.Context, opts domain.DeploymentL
 			d.triggered_at,
 			d.started_at,
 			d.finished_at,
+			d.env_snapshot,
+			d.previous_deployment_id,
+			d.previous_commit_hash,
 			u.id,
 			u.name,
 			u.email,
@@ -119,6 +123,9 @@ func (r *DeploymentRepository) List(ctx context.Context, opts domain.DeploymentL
 			&d.TriggeredAt,
 			&d.StartedAt,
 			&d.FinishedAt,
+			&d.EnvSnapshot,
+			&d.PreviousDeploymentID,
+			&d.PreviousCommitHash,
 			&userID,
 			&userName,
 			&userEmail,
@@ -159,6 +166,9 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, deploymentID int64) 
 			d.triggered_at,
 			d.started_at,
 			d.finished_at,
+			d.env_snapshot,
+			d.previous_deployment_id,
+			d.previous_commit_hash,
 			u.id,
 			u.name,
 			u.email,
@@ -187,6 +197,9 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, deploymentID int64) 
 		&d.TriggeredAt,
 		&d.StartedAt,
 		&d.FinishedAt,
+		&d.EnvSnapshot,
+		&d.PreviousDeploymentID,
+		&d.PreviousCommitHash,
 		&uID,
 		&uName,
 		&uEmail,
@@ -340,6 +353,51 @@ func (r *DeploymentRepository) UpdateCommitInfo(ctx context.Context, deploymentI
 			return nil, domain.ErrDeploymentNotFound
 		}
 		return nil, fmt.Errorf("failed to update deployment commit info: %w", err)
+	}
+
+	return &d, nil
+}
+
+func (r *DeploymentRepository) UpdateEnvSnapshot(ctx context.Context, deploymentID int64, snapshot map[string]string) (*domain.Deployment, error) {
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("marshal env snapshot: %w", err)
+	}
+
+	query := `
+		UPDATE deployments d
+		SET env_snapshot = $1,
+		    previous_deployment_id = (
+		        SELECT p.id FROM deployments p
+		        WHERE p.application_id = d.application_id
+		          AND p.id < d.id
+		          AND p.status = 'success'
+		        ORDER BY p.id DESC LIMIT 1
+		    ),
+		    previous_commit_hash = (
+		        SELECT p.commit_hash FROM deployments p
+		        WHERE p.application_id = d.application_id
+		          AND p.id < d.id
+		          AND p.status = 'success'
+		        ORDER BY p.id DESC LIMIT 1
+		    )
+		WHERE d.id = $2
+		RETURNING d.id, d.application_id, d.env_snapshot, d.previous_deployment_id, d.previous_commit_hash
+	`
+
+	var d domain.Deployment
+	err = r.db.QueryRow(ctx, query, raw, deploymentID).Scan(
+		&d.ID,
+		&d.ApplicationID,
+		&d.EnvSnapshot,
+		&d.PreviousDeploymentID,
+		&d.PreviousCommitHash,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrDeploymentNotFound
+		}
+		return nil, fmt.Errorf("failed to update deployment env snapshot: %w", err)
 	}
 
 	return &d, nil

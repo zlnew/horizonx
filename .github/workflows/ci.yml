@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+      - name: Build binaries
+        run: |
+          CGO_ENABLED=0 go build ./cmd/horizonx ./cmd/server ./cmd/agent
