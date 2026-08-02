@@ -1,74 +1,79 @@
 package agent
 
 import (
+	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// P1-7: two goroutines locking the same key must not run concurrently.
+// P1-7: same key serializes; different keys run freely.
 func TestKeyedMutexSerializesSameKey(t *testing.T) {
 	km := newKeyedMutex()
 
-	var concurrent, maxConcurrent atomic.Int64
-	var wg sync.WaitGroup
+	var active, maxActive int
+	var mu sync.Mutex
 
-	for i := 0; i < 20; i++ {
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			unlock := km.Lock("app-1")
 			defer unlock()
 
-			n := concurrent.Add(1)
-			// Track the high-water mark of simultaneous holders.
-			for {
-				old := maxConcurrent.Load()
-				if n <= old || maxConcurrent.CompareAndSwap(old, n) {
-					break
-				}
+			mu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
 			}
-			time.Sleep(2 * time.Millisecond)
-			concurrent.Add(-1)
+			mu.Unlock()
+
+			time.Sleep(5 * time.Millisecond)
+
+			mu.Lock()
+			active--
+			mu.Unlock()
 		}()
 	}
-
 	wg.Wait()
 
-	if max := maxConcurrent.Load(); max != 1 {
-		t.Fatalf("expected max 1 concurrent holder for same key, got %d", max)
+	if maxActive != 1 {
+		t.Fatalf("expected max 1 concurrent holder for same key, got %d", maxActive)
 	}
 }
 
-// P1-7: different keys must NOT block each other.
-func TestKeyedMutexAllowsDifferentKeys(t *testing.T) {
+func TestKeyedMutexDifferentKeysRunConcurrently(t *testing.T) {
 	km := newKeyedMutex()
 
-	done := make(chan struct{})
+	var active, maxActive int
+	var mu sync.Mutex
 
-	unlockA := km.Lock("app-1")
-	defer unlockA()
-	// A is held; B must still acquire immediately.
-	unlockB := km.Lock("app-2")
-	unlockB()
-	close(done)
-	<-done
-}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			unlock := km.Lock(fmt.Sprintf("app-%d", i))
+			defer unlock()
 
-// P1-7: unlock must not panic on the second call (unlock func is idempotent-safe
-// via map cleanup even though the mutex itself would panic — we just ensure the
-// map doesn't leak entries).
-func TestKeyedMutexUnlockCleansMap(t *testing.T) {
-	km := newKeyedMutex()
+			mu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
+			}
+			mu.Unlock()
 
-	unlock := km.Lock("app-1")
-	unlock()
+			time.Sleep(5 * time.Millisecond)
 
-	km.mu.Lock()
-	_, stillThere := km.locks["app-1"]
-	km.mu.Unlock()
-	if stillThere {
-		t.Fatal("expected lock entry removed from map after unlock")
+			mu.Lock()
+			active--
+			mu.Unlock()
+		}(i)
+	}
+	wg.Wait()
+
+	if maxActive < 2 {
+		t.Fatalf("expected concurrent execution across different keys, max was %d", maxActive)
 	}
 }

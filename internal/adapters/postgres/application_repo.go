@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"horizonx/internal/domain"
+	"horizonx/internal/security"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,10 +17,14 @@ import (
 
 type ApplicationRepository struct {
 	db *pgxpool.Pool
+
+	// encKey is the AES-256 key used for environment-variable values at rest
+	// (P1-11). Empty means legacy mode: store plaintext, don't decrypt.
+	encKey []byte
 }
 
-func NewApplicationRepository(db *pgxpool.Pool) domain.ApplicationRepository {
-	return &ApplicationRepository{db: db}
+func NewApplicationRepository(db *pgxpool.Pool, encKey []byte) domain.ApplicationRepository {
+	return &ApplicationRepository{db: db, encKey: encKey}
 }
 
 func (r *ApplicationRepository) List(ctx context.Context, opts domain.ApplicationListOptions) ([]*domain.Application, int64, error) {
@@ -273,25 +278,33 @@ func (r *ApplicationRepository) SyncEnvVars(ctx context.Context, appID int64, en
 	for _, e := range envVars {
 		keys = append(keys, e.Key)
 
+		encValue, err := r.encryptEnvValue(e.Value)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt env var %q: %w", e.Key, err)
+		}
+
 		batch.Queue(`
 			INSERT INTO environment_variables (
 				application_id,
 				key,
 				value,
+				value_encrypted,
 				is_preview,
 				created_at,
 				updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (application_id, key)
 			DO UPDATE SET
 				value = EXCLUDED.value,
+				value_encrypted = EXCLUDED.value_encrypted,
 				is_preview = EXCLUDED.is_preview,
 				updated_at = EXCLUDED.updated_at
 		`,
 			appID,
 			e.Key,
-			e.Value,
+			encValue,
+			len(r.encKey) > 0,
 			e.IsPreview,
 			now,
 			now,
@@ -324,9 +337,26 @@ func (r *ApplicationRepository) SyncEnvVars(ctx context.Context, appID int64, en
 	return nil
 }
 
+// encryptEnvValue encrypts a plaintext env var value for storage. In legacy
+// mode (no key configured) it returns the value unchanged.
+func (r *ApplicationRepository) encryptEnvValue(value string) (string, error) {
+	if len(r.encKey) == 0 {
+		return value, nil
+	}
+	return security.Encrypt(value, r.encKey)
+}
+
+// decryptEnvValue reverses encryptEnvValue. Legacy plaintext rows pass through.
+func (r *ApplicationRepository) decryptEnvValue(value string, encrypted bool) (string, error) {
+	if !encrypted || len(r.encKey) == 0 {
+		return value, nil
+	}
+	return security.Decrypt(value, r.encKey)
+}
+
 func (r *ApplicationRepository) ListEnvVars(ctx context.Context, appID int64) ([]domain.EnvironmentVariable, error) {
 	query := `
-		SELECT id, application_id, key, value, is_preview, created_at, updated_at
+		SELECT id, application_id, key, value, value_encrypted, is_preview, created_at, updated_at
 		FROM environment_variables
 		WHERE application_id = $1
 		ORDER BY key ASC
@@ -346,6 +376,7 @@ func (r *ApplicationRepository) ListEnvVars(ctx context.Context, appID int64) ([
 			&env.ApplicationID,
 			&env.Key,
 			&env.Value,
+			&env.ValueEncrypted,
 			&env.IsPreview,
 			&env.CreatedAt,
 			&env.UpdatedAt,
@@ -353,6 +384,12 @@ func (r *ApplicationRepository) ListEnvVars(ctx context.Context, appID int64) ([
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan env var: %w", err)
 		}
+
+		decrypted, err := r.decryptEnvValue(env.Value, env.ValueEncrypted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt env var %q: %w", env.Key, err)
+		}
+		env.Value = decrypted
 		envVars = append(envVars, env)
 	}
 
@@ -360,19 +397,25 @@ func (r *ApplicationRepository) ListEnvVars(ctx context.Context, appID int64) ([
 }
 
 func (r *ApplicationRepository) CreateEnvVar(ctx context.Context, env *domain.EnvironmentVariable) error {
+	encValue, err := r.encryptEnvValue(env.Value)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt env var %q: %w", env.Key, err)
+	}
+
 	query := `
-		INSERT INTO environment_variables (application_id, key, value, is_preview, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO environment_variables (application_id, key, value, value_encrypted, is_preview, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (application_id, key) 
-		DO UPDATE SET value = EXCLUDED.value, is_preview = EXCLUDED.is_preview, updated_at = EXCLUDED.updated_at
+		DO UPDATE SET value = EXCLUDED.value, value_encrypted = EXCLUDED.value_encrypted, is_preview = EXCLUDED.is_preview, updated_at = EXCLUDED.updated_at
 		RETURNING id, created_at, updated_at
 	`
 
 	now := time.Now().UTC()
-	err := r.db.QueryRow(ctx, query,
+	err = r.db.QueryRow(ctx, query,
 		env.ApplicationID,
 		env.Key,
-		env.Value,
+		encValue,
+		len(r.encKey) > 0,
 		env.IsPreview,
 		now,
 		now,
@@ -385,14 +428,20 @@ func (r *ApplicationRepository) CreateEnvVar(ctx context.Context, env *domain.En
 }
 
 func (r *ApplicationRepository) UpdateEnvVar(ctx context.Context, env *domain.EnvironmentVariable) error {
+	encValue, err := r.encryptEnvValue(env.Value)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt env var %q: %w", env.Key, err)
+	}
+
 	query := `
 		UPDATE environment_variables
-		SET value = $1, is_preview = $2, updated_at = $3
-		WHERE application_id = $4 AND key = $5
+		SET value = $1, value_encrypted = $2, is_preview = $3, updated_at = $4
+		WHERE application_id = $5 AND key = $6
 	`
 
 	ct, err := r.db.Exec(ctx, query,
-		env.Value,
+		encValue,
+		len(r.encKey) > 0,
 		env.IsPreview,
 		time.Now().UTC(),
 		env.ApplicationID,
