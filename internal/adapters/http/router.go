@@ -113,6 +113,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// APPLICATION ACTIONS
 	mux.Handle("POST /applications/{id}/deploy", appWriteStack.ThenFunc(deps.Application.Deploy))
+	mux.Handle("POST /applications/{id}/rollback", appWriteStack.ThenFunc(deps.Application.Rollback))
 	mux.Handle("POST /applications/{id}/start", appWriteStack.ThenFunc(deps.Application.Start))
 	mux.Handle("POST /applications/{id}/stop", appWriteStack.ThenFunc(deps.Application.Stop))
 	mux.Handle("POST /applications/{id}/restart", appWriteStack.ThenFunc(deps.Application.Restart))

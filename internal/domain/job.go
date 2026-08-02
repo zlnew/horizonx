@@ -24,6 +24,7 @@ const (
 	JobTypeAppStart       JobType = "app_start"
 	JobTypeAppStop        JobType = "app_stop"
 	JobTypeAppRestart     JobType = "app_restart"
+	JobTypeAppRollback    JobType = "app_rollback"
 	JobTypeAppHealthCheck JobType = "app_health_check"
 	JobTypeAppDestroy     JobType = "app_destroy"
 	JobTypeMetricsCollect JobType = "metrics_collect"
