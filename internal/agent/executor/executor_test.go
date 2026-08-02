@@ -33,7 +33,7 @@ func (f *fakeDocker) Cmd(_ context.Context, _ string, args []string, _ ...comman
 			return "", err
 		}
 	}
-	if len(args) >= 2 && args[0] == "compose" && args[1] == "ps" {
+	if containsSub(args, []string{"compose", "ps"}) {
 		if f.psOutput != "" || f.psErr != nil {
 			return f.psOutput, f.psErr
 		}
@@ -42,6 +42,20 @@ func (f *fakeDocker) Cmd(_ context.Context, _ string, args []string, _ ...comman
 		return `[{"ID":"a","Name":"demo-app-1","State":"running","Health":"","ExitCode":0}]`, nil
 	}
 	return "ok", nil
+}
+
+// containsSub reports whether the arg slice contains all needle values in order.
+func containsSub(args, needles []string) bool {
+	idx := 0
+	for _, a := range args {
+		if a == needles[idx] {
+			idx++
+			if idx == len(needles) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (f *fakeDocker) GetDockerComposeFile(string) (string, error)   { return "compose.yml", nil }
@@ -110,7 +124,7 @@ func emitNoop(any) {}
 
 func TestDeployBuildFailureAborts(t *testing.T) {
 	docker := &fakeDocker{cmdErrs: map[string]error{
-		"build -t demo-app-1:0123456789abcdef0123456789abcdef01234567 -f Dockerfile .": errors.New("build exploded"),
+		"compose -f compose.yml build": errors.New("build exploded"),
 	}}
 	git := &fakeGit{commit: "0123456789abcdef0123456789abcdef01234567", msg: "test"}
 
@@ -122,8 +136,8 @@ func TestDeployBuildFailureAborts(t *testing.T) {
 	}
 
 	for _, call := range docker.cmdCalls {
-		if strings.Contains(call, "compose") {
-			t.Fatalf("compose command executed after build failure: %q", call)
+		if strings.Contains(call, "compose up") || strings.Contains(call, "compose down") {
+			t.Fatalf("compose up/down executed after build failure: %q", call)
 		}
 	}
 }
@@ -144,13 +158,13 @@ func TestDeployUsesInPlaceRecreateWithoutDown(t *testing.T) {
 
 	var hasUp, hasDown, hasGate bool
 	for _, call := range docker.cmdCalls {
-		if strings.Contains(call, "compose up -d --force-recreate") {
+		if strings.Contains(call, "up -d --force-recreate") {
 			hasUp = true
 		}
 		if strings.Contains(call, "compose down") {
 			hasDown = true
 		}
-		if strings.Contains(call, "compose ps --format json") {
+		if strings.Contains(call, "ps --format json") {
 			hasGate = true
 		}
 	}
@@ -248,6 +262,33 @@ func TestHealthCheckSingleObjectFallback(t *testing.T) {
 	}
 }
 
+// P5: `docker compose ps --format json` emits newline-delimited JSON objects
+// (one per container) for multi-service apps — the parser must handle JSONL.
+func TestHealthCheckParsesJSONL(t *testing.T) {
+	jsonl := `{"ID":"a","Name":"demo-app-1","State":"running","Health":"","ExitCode":0}
+{"ID":"b","Name":"demo-app-1-web","State":"running","Health":"","ExitCode":0}`
+	docker := &fakeDocker{psOutput: jsonl}
+	git := &fakeGit{commit: "0123456789abcdef0123456789abcdef01234567", msg: "test"}
+
+	ex := NewExecutorWithDeps(docker, git, "/tmp/apps", noopLogger(), nil)
+
+	payload, _ := json.Marshal(domain.AppHealthCheckPayload{
+		Applications: []domain.AppInfo{{ApplicationID: 1, AppKey: "demo-app-1"}},
+	})
+	job := &domain.Job{Type: domain.JobTypeAppHealthCheck, Payload: payload}
+
+	var reports []domain.ApplicationHealth
+	ex.Execute(context.Background(), job, func(evt any) {
+		if r, ok := evt.([]domain.ApplicationHealth); ok {
+			reports = r
+		}
+	})
+
+	if len(reports) != 1 || reports[0].Status != domain.AppStatusRunning {
+		t.Fatalf("JSONL health parse failed: %+v", reports)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // P0-4: rollback rewrites env to the previous image and recreates in place
 // ---------------------------------------------------------------------------
@@ -284,7 +325,7 @@ func TestRollbackUsesPreviousImageTag(t *testing.T) {
 
 	found := false
 	for _, call := range docker.cmdCalls {
-		if strings.Contains(call, "compose up -d --force-recreate") {
+		if strings.Contains(call, "up -d --force-recreate") {
 			found = true
 		}
 	}

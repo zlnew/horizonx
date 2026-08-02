@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"horizonx/internal/agent/command"
@@ -115,6 +116,19 @@ func (e *Executor) getAppWorkDir(dirName string) string {
 	return filepath.Join(e.workDir, dirName)
 }
 
+// composeCmd runs a `docker compose` subcommand against the repo's compose
+// file. The file is resolved per-call (prod compose preferred, see
+// Manager.GetDockerComposeFile) and passed explicitly via -f so the right
+// file is used even when the repo ships both dev + prod composes.
+func (e *Executor) composeCmd(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
+	composeFile, err := e.docker.GetDockerComposeFile(workDir)
+	if err != nil {
+		return "", err
+	}
+	fullArgs := append([]string{"compose", "-f", composeFile}, args...)
+	return e.docker.Cmd(ctx, workDir, fullArgs, handlers...)
+}
+
 func (e *Executor) createWorkDir() error {
 	if err := os.MkdirAll(e.workDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create apps work directory: %w", err)
@@ -174,7 +188,7 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 	for _, app := range payload.Applications {
 		workDir := e.getAppWorkDir(app.AppKey)
 
-		output, err := e.docker.Cmd(ctx, workDir, []string{"compose", "ps", "--format", "json"})
+		output, err := e.composeCmd(ctx, workDir, []string{"ps", "--format", "json"})
 		if err != nil {
 			// TODO: implement application docker container status
 			e.log.Debug("failed to run docker compose ps",
@@ -235,20 +249,44 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 	return nil
 }
 
-// parseComposePs parses `docker compose ps --format json` output, which is a
-// JSON array for multi-service apps and a single object for one-service apps.
+// parseComposePs parses `docker compose ps --format json` output. Docker
+// emits newline-delimited JSON objects (one per container) — not an array —
+// so we accept: a JSON array, a single object, or JSONL (split on lines).
 func parseComposePs(output string) ([]docker.Container, error) {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return nil, fmt.Errorf("empty compose ps output")
+	}
+
+	// Fast path: single object or array.
+	var one docker.Container
+	if err := json.Unmarshal([]byte(trimmed), &one); err == nil {
+		return []docker.Container{one}, nil
+	}
+
 	var many []docker.Container
-	if err := json.Unmarshal([]byte(output), &many); err == nil {
+	if err := json.Unmarshal([]byte(trimmed), &many); err == nil {
 		return many, nil
 	}
 
-	var one docker.Container
-	if err := json.Unmarshal([]byte(output), &one); err != nil {
-		return nil, err
+	// JSONL: one object per line (docker compose ps --format json).
+	var containers []docker.Container
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var c docker.Container
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			return nil, err
+		}
+		containers = append(containers, c)
 	}
 
-	return []docker.Container{one}, nil
+	if len(containers) == 0 {
+		return nil, fmt.Errorf("no containers parsed from compose ps output")
+	}
+	return containers, nil
 }
 
 // aggregateContainerHealth collapses a slice of container states into a single
@@ -313,7 +351,7 @@ func (e *Executor) waitForAppRunning(
 	defer ticker.Stop()
 
 	for {
-		output, err := e.docker.Cmd(ctx, workDir, []string{"compose", "ps", "--format", "json"})
+		output, err := e.composeCmd(ctx, workDir, []string{"ps", "--format", "json"})
 		if err != nil {
 			// compose ps can fail transiently while containers are created.
 			if time.Now().After(deadline) {
@@ -431,18 +469,6 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 		return err
 	}
 
-	// Get Dockerfile
-	dockerfilePath, err := e.docker.GetDockerfile(workDir)
-	if err != nil {
-		e.logFatalHandler(
-			fmt.Sprintf("failed to get Dockerfile, %s", err.Error()),
-			emit,
-			action,
-			domain.StepBuildPrepare,
-		)
-		return err
-	}
-
 	// Write user env
 	userEnvVars := payload.EnvVars
 	if len(userEnvVars) > 0 {
@@ -461,27 +487,9 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	appImage := fmt.Sprintf("%s:%s", payload.AppKey, commitHash)
 	appContainerName := payload.AppKey
 
-	// Docker build image
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"build", "-t", appImage, "-f", dockerfilePath, "."}, e.logStreamHandler(
-		emit,
-		action,
-		domain.StepDockerBuild,
-	)); err != nil {
-		e.logFatalHandler(
-			fmt.Sprintf("failed to build image, %s", err.Error()),
-			emit,
-			action,
-			domain.StepDockerBuild,
-		)
-		// CRITICAL (P0-1): a failed build must abort the deploy. Falling
-		// through used to run `compose down` on the RUNNING app and then
-		// `compose up` a broken/absent image — a bad build took the old,
-		// working app down. Return the error so the job is marked failed
-		// and the running stack is left untouched.
-		return err
-	}
-
-	// Write user and build env
+	// Write user and build env (APP_IMAGE + APP_CONTAINER_NAME must exist BEFORE
+	// `compose build` so the compose file's image: ${APP_IMAGE} interpolates to
+	// the rollback tag — rollback replays that exact tag).
 	envVars := make(map[string]string)
 
 	maps.Copy(envVars, userEnvVars)
@@ -499,12 +507,31 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 		return err
 	}
 
+	// Build via compose (P2: multi-stage support). Building through compose
+	// (rather than a raw `docker build -f <Dockerfile>`) lets each service in
+	// the compose file pick its own build.target — a multi-stage Dockerfile
+	// whose last stage is e.g. nginx no longer produces the wrong runtime
+	// image. Compose tags each service per its image: field, so the primary
+	// app image lands on APP_IMAGE (the rollback tag).
+	if _, err := e.composeCmd(ctx, workDir, []string{"build"}, e.logStreamHandler(
+		emit,
+		action,
+		domain.StepDockerBuild,
+	)); err != nil {
+		// CRITICAL (P0-1): a failed build must abort the deploy. Falling
+		// through used to run `compose down` on the RUNNING app and then
+		// `compose up` a broken/absent image — a bad build took the old,
+		// working app down. Return the error so the job is marked failed
+		// and the running stack is left untouched.
+		return err
+	}
+
 	// Docker compose up — in-place recreate (P0-3: zero-downtime). The
 	// post-deploy health gate below (P1-9) then waits for the app to
 	// actually come up before the job reports success — a build that
 	// recreates cleanly but crashes on boot must flip the app to failed,
 	// not optimistically claim "running".
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerStart,
@@ -535,7 +562,7 @@ func (e *Executor) startApp(ctx context.Context, job *domain.Job, emit EmitHandl
 
 	workDir := e.getAppWorkDir(payload.AppKey)
 
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "start"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"start"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppStart,
 		domain.StepDockerStart,
@@ -560,7 +587,7 @@ func (e *Executor) stopApp(ctx context.Context, job *domain.Job, emit EmitHandle
 
 	workDir := e.getAppWorkDir(payload.AppKey)
 
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "stop"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"stop"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppStop,
 		domain.StepDockerStop,
@@ -585,7 +612,7 @@ func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHan
 
 	workDir := e.getAppWorkDir(payload.AppKey)
 
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppRestart,
 		domain.StepDockerRestart,
@@ -644,7 +671,7 @@ func (e *Executor) rollbackApp(ctx context.Context, job *domain.Job, emit EmitHa
 
 	// Recreate with the previous image. Health-gated like a deploy (P1-9):
 	// the rollback only succeeds once the stack is actually running again.
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
 		step,
