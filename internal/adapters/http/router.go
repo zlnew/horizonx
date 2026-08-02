@@ -28,6 +28,7 @@ type RouterDeps struct {
 	Metrics     *MetricsHandler
 	Application *ApplicationHandler
 	Deployment  *DeploymentHandler
+	AuditLog    *AuditLogHandler
 
 	RoleService   domain.RoleService
 	ServerService domain.ServerService
@@ -151,6 +152,10 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// DEPLOYMENTS
 	mux.Handle("GET /applications/{id}/deployments", appReadStack.ThenFunc(deps.Deployment.Index))
 	mux.Handle("GET /applications/{id}/deployments/{deployment_id}", appReadStack.ThenFunc(deps.Deployment.Show))
+	mux.Handle("GET /applications/{id}/deployments/{deployment_id}/diff", appReadStack.ThenFunc(deps.Deployment.Diff))
+
+	// AUDIT LOG
+	mux.Handle("GET /audit-logs", userStack.ThenFunc(deps.AuditLog.Index))
 
 	// ENVIRONMENT VARIABLES
 	mux.Handle("POST /applications/{id}/env", appWriteStack.ThenFunc(deps.Application.AddEnvVar))

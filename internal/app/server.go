@@ -24,6 +24,7 @@ import (
 	"horizonx/internal/application/account"
 	"horizonx/internal/application/application"
 	"horizonx/internal/application/auth"
+	"horizonx/internal/application/auditlog"
 	"horizonx/internal/application/deployment"
 	"horizonx/internal/application/job"
 	logSvc "horizonx/internal/application/log"
@@ -94,6 +95,7 @@ func RunServer() error {
 	// JWT_SECRET (AES-256-GCM). No second secret to manage.
 	applicationRepo := postgres.NewApplicationRepository(dbPool, security.KeyFromSecret(cfg.JWTSecret))
 	deploymentRepo := postgres.NewDeploymentRepository(dbPool)
+	auditLogRepo := postgres.NewAuditLogRepository(dbPool)
 
 	// Services
 	logService := logSvc.NewService(logRepo, bus)
@@ -106,6 +108,7 @@ func RunServer() error {
 	metricsService := metrics.NewService(metricsRepo, redisRegistry, bus, log)
 	deploymentService := deployment.NewService(deploymentRepo, logService, bus)
 	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus)
+	auditLogService := auditlog.NewService(auditLogRepo)
 
 	// Event Listeners
 	applicationListener := application.NewListener(applicationService, log)
@@ -123,6 +126,10 @@ func RunServer() error {
 		bus.Subscribe("deployment_status_changed", notifier.Handle)
 	}
 
+	// P3-19: audit log — record deploy/app/server events.
+	auditSubscriber := auditlog.NewSubscriber(auditLogService)
+	auditSubscriber.Register(bus)
+
 	// HTTP Handlers
 	jsonDecoder := request.NewJSONDecoder()
 	jsonWriter := response.NewJSONWriter(log)
@@ -137,6 +144,7 @@ func RunServer() error {
 	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
 	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
 	applicationHandler := http.NewApplicationHandler(applicationService, jsonDecoder, jsonWriter, validator)
+	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)
 
 	// WebSocket Handlers
 	wsUserhub := userws.NewHub(runtimeCtx, log)
@@ -164,6 +172,7 @@ func RunServer() error {
 		Metrics:     metricsHandler,
 		Application: applicationHandler,
 		Deployment:  deploymentHandler,
+		AuditLog:    auditLogHandler,
 
 		RoleService:   roleService,
 		ServerService: serverService,

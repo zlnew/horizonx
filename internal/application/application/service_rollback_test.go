@@ -39,6 +39,12 @@ func (f *fakeDeploymentSvc) UpdateStatus(context.Context, int64, domain.Deployme
 func (f *fakeDeploymentSvc) UpdateCommitInfo(context.Context, int64, string, string) error {
 	return nil
 }
+func (f *fakeDeploymentSvc) UpdateEnvSnapshot(context.Context, int64, map[string]string) error {
+	return nil
+}
+func (f *fakeDeploymentSvc) Diff(context.Context, int64) (*domain.DeploymentDiff, error) {
+	return nil, nil
+}
 
 func commitPtr(s string) *string { return &s }
 

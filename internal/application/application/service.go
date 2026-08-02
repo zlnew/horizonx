@@ -232,6 +232,11 @@ func (s *Service) Deploy(ctx context.Context, appID int64, deployedBy int64) (*d
 		return nil, fmt.Errorf("failed to create deployment record: %w", err)
 	}
 
+	// P3-19: snapshot the env vars used for this deploy (for the diff view).
+	if err := s.deploymentSvc.UpdateEnvSnapshot(ctx, deployment.ID, envMap); err != nil {
+		return nil, fmt.Errorf("failed to snapshot env vars: %w", err)
+	}
+
 	payload := domain.AppDeployPayload{
 		ApplicationID: appID,
 		DeploymentID:  deployment.ID,

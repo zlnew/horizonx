@@ -3,6 +3,7 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 
 	"horizonx/internal/domain"
 	"horizonx/internal/event"
@@ -172,4 +173,72 @@ func (s *Service) UpdateCommitInfo(ctx context.Context, deploymentID int64, comm
 	}
 
 	return nil
+}
+
+func (s *Service) UpdateEnvSnapshot(ctx context.Context, deploymentID int64, snapshot map[string]string) error {
+	_, err := s.repo.UpdateEnvSnapshot(ctx, deploymentID, snapshot)
+	return err
+}
+
+func (s *Service) Diff(ctx context.Context, deploymentID int64) (*domain.DeploymentDiff, error) {
+	d, err := s.repo.GetByID(ctx, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+
+	diff := &domain.DeploymentDiff{
+		DeploymentID:  d.ID,
+		CommitTo:      d.CommitHash,
+		CommitMessage: d.CommitMessage,
+		EnvAdditions:  []domain.EnvDiffEntry{},
+		EnvRemovals:   []domain.EnvDiffEntry{},
+		EnvUpdates:    []domain.EnvDiffEntry{},
+	}
+
+	cur := map[string]string{}
+	if len(d.EnvSnapshot) > 0 {
+		_ = json.Unmarshal(d.EnvSnapshot, &cur)
+	}
+
+	if d.PreviousDeploymentID == nil {
+		// No previous deployment — every env var is an addition.
+		for k, v := range cur {
+			diff.EnvAdditions = append(diff.EnvAdditions, domain.EnvDiffEntry{Key: k, New: v})
+		}
+		return diff, nil
+	}
+
+	prev, err := s.repo.GetByID(ctx, *d.PreviousDeploymentID)
+	if err != nil {
+		// Previous deployment vanished — degrade to "no previous" diff.
+		for k, v := range cur {
+			diff.EnvAdditions = append(diff.EnvAdditions, domain.EnvDiffEntry{Key: k, New: v})
+		}
+		return diff, nil
+	}
+
+	diff.HasPrevious = true
+	diff.CommitFrom = prev.CommitHash
+
+	prevEnv := map[string]string{}
+	if len(prev.EnvSnapshot) > 0 {
+		_ = json.Unmarshal(prev.EnvSnapshot, &prevEnv)
+	}
+
+	for k, v := range cur {
+		oldV, existed := prevEnv[k]
+		switch {
+		case !existed:
+			diff.EnvAdditions = append(diff.EnvAdditions, domain.EnvDiffEntry{Key: k, New: v})
+		case oldV != v:
+			diff.EnvUpdates = append(diff.EnvUpdates, domain.EnvDiffEntry{Key: k, Old: oldV, New: v})
+		}
+	}
+	for k := range prevEnv {
+		if _, still := cur[k]; !still {
+			diff.EnvRemovals = append(diff.EnvRemovals, domain.EnvDiffEntry{Key: k, Old: prevEnv[k]})
+		}
+	}
+
+	return diff, nil
 }

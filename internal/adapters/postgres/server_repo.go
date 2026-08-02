@@ -25,24 +25,25 @@ func NewServerRepository(db *pgxpool.Pool) domain.ServerRepository {
 func (r *ServerRepository) List(ctx context.Context, opts domain.ServerListOptions) ([]*domain.Server, int64, error) {
 	baseQuery := `
 		SELECT
-			id,
-			name,
-			COALESCE(ip_address::text, ''),
-			is_online,
-			os_info,
-			created_at,
-			updated_at
-		FROM servers
+			s.id,
+			s.name,
+			COALESCE(s.ip_address::text, ''),
+			s.is_online,
+			s.os_info,
+			s.created_at,
+			s.updated_at,
+			(SELECT COUNT(*) FROM applications a WHERE a.server_id = s.id AND a.deleted_at IS NULL) AS application_count
+		FROM servers s
 	`
 
 	args := []any{}
 	conditions := []string{}
 	argCounter := 1
 
-	conditions = append(conditions, "deleted_at IS NULL")
+	conditions = append(conditions, "s.deleted_at IS NULL")
 
 	if opts.Search != "" {
-		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d OR ip_address::text ILIKE $%d)", argCounter, argCounter+1))
+		conditions = append(conditions, fmt.Sprintf("(s.name ILIKE $%d OR s.ip_address::text ILIKE $%d)", argCounter, argCounter+1))
 		searchParam := "%" + opts.Search + "%"
 		args = append(args, searchParam, searchParam)
 		argCounter += 2
@@ -50,9 +51,9 @@ func (r *ServerRepository) List(ctx context.Context, opts domain.ServerListOptio
 
 	if opts.IsOnline != nil {
 		if *opts.IsOnline {
-			conditions = append(conditions, "is_online IS TRUE")
+			conditions = append(conditions, "s.is_online IS TRUE")
 		} else {
-			conditions = append(conditions, "is_online IS FALSE")
+			conditions = append(conditions, "s.is_online IS FALSE")
 		}
 	}
 
@@ -60,11 +61,11 @@ func (r *ServerRepository) List(ctx context.Context, opts domain.ServerListOptio
 		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	baseQuery += " ORDER BY created_at ASC"
+	baseQuery += " ORDER BY s.created_at ASC"
 
 	var total int64
 	if opts.IsPaginate {
-		countQuery := "SELECT COUNT(*) FROM servers"
+		countQuery := "SELECT COUNT(*) FROM servers s"
 		if len(conditions) > 0 {
 			countQuery += " WHERE " + strings.Join(conditions, " AND ")
 		}
@@ -97,6 +98,7 @@ func (r *ServerRepository) List(ctx context.Context, opts domain.ServerListOptio
 			&s.OSInfo,
 			&s.CreatedAt,
 			&s.UpdatedAt,
+			&s.ApplicationCount,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan servers: %w", err)
 		}
