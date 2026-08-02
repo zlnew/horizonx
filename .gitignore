@@ -3,3 +3,4 @@ apps*
 .env
 .env.agent.production
 .env.server.production
+dist/
