@@ -67,6 +67,10 @@ func (f *fakeJobSvc) Start(context.Context, int64) (*domain.Job, error)         
 func (f *fakeJobSvc) Finish(context.Context, int64, domain.JobStatus) (*domain.Job, error) {
 	return nil, nil
 }
+func (f *fakeJobSvc) Summary(context.Context) (*domain.JobStatusCounts, error) {
+	return &domain.JobStatusCounts{}, nil
+}
+
 
 // P0-4: Rollback creates a job pointing at the last successful deployment's
 // image tag (<appKey>:<commitHash>).
