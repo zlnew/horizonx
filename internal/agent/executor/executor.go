@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"horizonx/internal/agent/command"
@@ -248,20 +249,44 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 	return nil
 }
 
-// parseComposePs parses `docker compose ps --format json` output, which is a
-// JSON array for multi-service apps and a single object for one-service apps.
+// parseComposePs parses `docker compose ps --format json` output. Docker
+// emits newline-delimited JSON objects (one per container) — not an array —
+// so we accept: a JSON array, a single object, or JSONL (split on lines).
 func parseComposePs(output string) ([]docker.Container, error) {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return nil, fmt.Errorf("empty compose ps output")
+	}
+
+	// Fast path: single object or array.
+	var one docker.Container
+	if err := json.Unmarshal([]byte(trimmed), &one); err == nil {
+		return []docker.Container{one}, nil
+	}
+
 	var many []docker.Container
-	if err := json.Unmarshal([]byte(output), &many); err == nil {
+	if err := json.Unmarshal([]byte(trimmed), &many); err == nil {
 		return many, nil
 	}
 
-	var one docker.Container
-	if err := json.Unmarshal([]byte(output), &one); err != nil {
-		return nil, err
+	// JSONL: one object per line (docker compose ps --format json).
+	var containers []docker.Container
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var c docker.Container
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			return nil, err
+		}
+		containers = append(containers, c)
 	}
 
-	return []docker.Container{one}, nil
+	if len(containers) == 0 {
+		return nil, fmt.Errorf("no containers parsed from compose ps output")
+	}
+	return containers, nil
 }
 
 // aggregateContainerHealth collapses a slice of container states into a single

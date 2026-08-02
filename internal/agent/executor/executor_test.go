@@ -262,6 +262,33 @@ func TestHealthCheckSingleObjectFallback(t *testing.T) {
 	}
 }
 
+// P5: `docker compose ps --format json` emits newline-delimited JSON objects
+// (one per container) for multi-service apps — the parser must handle JSONL.
+func TestHealthCheckParsesJSONL(t *testing.T) {
+	jsonl := `{"ID":"a","Name":"demo-app-1","State":"running","Health":"","ExitCode":0}
+{"ID":"b","Name":"demo-app-1-web","State":"running","Health":"","ExitCode":0}`
+	docker := &fakeDocker{psOutput: jsonl}
+	git := &fakeGit{commit: "0123456789abcdef0123456789abcdef01234567", msg: "test"}
+
+	ex := NewExecutorWithDeps(docker, git, "/tmp/apps", noopLogger(), nil)
+
+	payload, _ := json.Marshal(domain.AppHealthCheckPayload{
+		Applications: []domain.AppInfo{{ApplicationID: 1, AppKey: "demo-app-1"}},
+	})
+	job := &domain.Job{Type: domain.JobTypeAppHealthCheck, Payload: payload}
+
+	var reports []domain.ApplicationHealth
+	ex.Execute(context.Background(), job, func(evt any) {
+		if r, ok := evt.([]domain.ApplicationHealth); ok {
+			reports = r
+		}
+	})
+
+	if len(reports) != 1 || reports[0].Status != domain.AppStatusRunning {
+		t.Fatalf("JSONL health parse failed: %+v", reports)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // P0-4: rollback rewrites env to the previous image and recreates in place
 // ---------------------------------------------------------------------------
