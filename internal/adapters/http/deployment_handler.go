@@ -113,6 +113,35 @@ func (h *DeploymentHandler) Show(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Diff returns the P3 diff between this deployment and its previous successful one.
+func (h *DeploymentHandler) Diff(w http.ResponseWriter, r *http.Request) {
+	deploymentID, err := strconv.ParseInt(r.PathValue("deployment_id"), 10, 64)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid deployment id",
+		})
+		return
+	}
+
+	diff, err := h.svc.Diff(r.Context(), deploymentID)
+	if err != nil {
+		if errors.Is(err, domain.ErrDeploymentNotFound) {
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "deployment not found",
+			})
+			return
+		}
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to compute deployment diff",
+		})
+		return
+	}
+
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: diff,
+	})
+}
+
 func (h *DeploymentHandler) UpdateCommitInfo(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
