@@ -36,7 +36,14 @@ func (m *Manager) Cmd(ctx context.Context, workDir string, args []string, handle
 }
 
 func (m *Manager) GetDockerComposeFile(workDir string) (string, error) {
+	// Production compose is preferred when present — repos keep a dev
+	// docker-compose.yml for local work and ship docker-compose.prod.yml
+	// for the HorizonX agent (the roadmap convention).
 	files := []string{
+		"docker-compose.prod.yml",
+		"docker-compose.prod.yaml",
+		"compose.prod.yml",
+		"compose.prod.yaml",
 		"docker-compose.yml",
 		"docker-compose.yaml",
 		"compose.yml",
@@ -56,6 +63,8 @@ func (m *Manager) GetDockerComposeFile(workDir string) (string, error) {
 
 func (m *Manager) GetDockerfile(workDir string) (string, error) {
 	files := []string{
+		"docker/Dockerfile.prod",
+		"Dockerfile.prod",
 		"docker/Dockerfile",
 		"Dockerfile",
 	}
