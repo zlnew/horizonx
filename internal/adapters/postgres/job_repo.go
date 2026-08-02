@@ -437,3 +437,34 @@ func (r *JobRepository) MarkFinished(
 
 	return &job, nil
 }
+
+// CountsByStatus returns the number of jobs in each status.
+// P2-17: queue visibility — feeds the /jobs/summary endpoint and /metrics gauges.
+func (r *JobRepository) CountsByStatus(ctx context.Context) (*domain.JobStatusCounts, error) {
+	query := `
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'queued'),
+			COUNT(*) FILTER (WHERE status = 'running'),
+			COUNT(*) FILTER (WHERE status = 'success'),
+			COUNT(*) FILTER (WHERE status = 'failed'),
+			COUNT(*) FILTER (WHERE status = 'expired'),
+			COUNT(*)
+		FROM jobs
+		WHERE deleted_at IS NULL
+	`
+
+	var counts domain.JobStatusCounts
+	err := r.db.QueryRow(ctx, query).Scan(
+		&counts.Queued,
+		&counts.Running,
+		&counts.Success,
+		&counts.Failed,
+		&counts.Expired,
+		&counts.Total,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count jobs by status: %w", err)
+	}
+
+	return &counts, nil
+}

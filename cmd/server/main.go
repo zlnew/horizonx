@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"horizonx/internal/adapters/http"
+	httpmetrics "horizonx/internal/adapters/http/metrics"
 	"horizonx/internal/adapters/http/request"
 	"horizonx/internal/adapters/http/response"
 	"horizonx/internal/adapters/http/validator"
@@ -108,6 +109,9 @@ func main() {
 	deploymentListener := deployment.NewListener(deploymentService, log)
 	deploymentListener.Register(bus)
 
+	// P2-14: Prometheus registry (request counters + job queue gauges).
+	metricsRegistry := httpmetrics.NewRegistry(jobRepo, serverRepo, log)
+
 	// HTTP Handlers
 	jsonDecoder := request.NewJSONDecoder()
 	jsonWriter := response.NewJSONWriter(log)
@@ -152,6 +156,9 @@ func main() {
 
 		RoleService:   roleService,
 		ServerService: serverService,
+
+		MetricsRegistry: metricsRegistry,
+		Logger:          log,
 	})
 
 	// Worker Manager

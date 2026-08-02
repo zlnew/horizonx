@@ -46,6 +46,7 @@ type ServerRepository interface {
 	UpdateOSInfo(ctx context.Context, serverID uuid.UUID, osInfo OSInfo) error
 	UpdateStatus(ctx context.Context, serverID uuid.UUID, isOnline bool) error
 	Delete(ctx context.Context, serverID uuid.UUID) error
+	CountOnline(ctx context.Context) (int64, error)
 }
 
 type ServerService interface {

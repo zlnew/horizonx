@@ -279,3 +279,16 @@ func (r *ServerRepository) UpdateStatus(ctx context.Context, serverID uuid.UUID,
 	_, err := r.db.Exec(ctx, query, isOnline, now, serverID)
 	return err
 }
+
+// CountOnline returns the number of online (non-deleted) agent servers.
+// P2-14: feeds the horizonx_servers_online metric.
+func (r *ServerRepository) CountOnline(ctx context.Context) (int64, error) {
+	query := `SELECT COUNT(*) FROM servers WHERE is_online = TRUE AND deleted_at IS NULL`
+
+	var count int64
+	if err := r.db.QueryRow(ctx, query).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count online servers: %w", err)
+	}
+
+	return count, nil
+}
