@@ -39,8 +39,14 @@ jobs:
         run: |
           set -euxo pipefail
           for f in dist/horizonx-*; do
+            case "$f" in
+              *.tar.gz) continue ;;
+            esac
             name="$(basename "$f")"
-            tar -czf "dist/${name}.tar.gz" -C dist "${name}"
+            dir="dist/pkg/${name}"
+            mkdir -p "${dir}"
+            cp "$f" "${dir}/horizonx"
+            tar -czf "dist/${name}.tar.gz" -C "${dir}" horizonx
           done
           cd dist
           sha256sum horizonx-*.tar.gz > SHA256SUMS
