@@ -115,6 +115,19 @@ func (e *Executor) getAppWorkDir(dirName string) string {
 	return filepath.Join(e.workDir, dirName)
 }
 
+// composeCmd runs a `docker compose` subcommand against the repo's compose
+// file. The file is resolved per-call (prod compose preferred, see
+// Manager.GetDockerComposeFile) and passed explicitly via -f so the right
+// file is used even when the repo ships both dev + prod composes.
+func (e *Executor) composeCmd(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error) {
+	composeFile, err := e.docker.GetDockerComposeFile(workDir)
+	if err != nil {
+		return "", err
+	}
+	fullArgs := append([]string{"-f", composeFile, "compose"}, args...)
+	return e.docker.Cmd(ctx, workDir, fullArgs, handlers...)
+}
+
 func (e *Executor) createWorkDir() error {
 	if err := os.MkdirAll(e.workDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create apps work directory: %w", err)
@@ -174,7 +187,7 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 	for _, app := range payload.Applications {
 		workDir := e.getAppWorkDir(app.AppKey)
 
-		output, err := e.docker.Cmd(ctx, workDir, []string{"compose", "ps", "--format", "json"})
+		output, err := e.composeCmd(ctx, workDir, []string{"ps", "--format", "json"})
 		if err != nil {
 			// TODO: implement application docker container status
 			e.log.Debug("failed to run docker compose ps",
@@ -313,7 +326,7 @@ func (e *Executor) waitForAppRunning(
 	defer ticker.Stop()
 
 	for {
-		output, err := e.docker.Cmd(ctx, workDir, []string{"compose", "ps", "--format", "json"})
+		output, err := e.composeCmd(ctx, workDir, []string{"ps", "--format", "json"})
 		if err != nil {
 			// compose ps can fail transiently while containers are created.
 			if time.Now().After(deadline) {
@@ -504,7 +517,7 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	// actually come up before the job reports success — a build that
 	// recreates cleanly but crashes on boot must flip the app to failed,
 	// not optimistically claim "running".
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
 		domain.StepDockerStart,
@@ -535,7 +548,7 @@ func (e *Executor) startApp(ctx context.Context, job *domain.Job, emit EmitHandl
 
 	workDir := e.getAppWorkDir(payload.AppKey)
 
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "start"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"start"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppStart,
 		domain.StepDockerStart,
@@ -560,7 +573,7 @@ func (e *Executor) stopApp(ctx context.Context, job *domain.Job, emit EmitHandle
 
 	workDir := e.getAppWorkDir(payload.AppKey)
 
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "stop"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"stop"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppStop,
 		domain.StepDockerStop,
@@ -585,7 +598,7 @@ func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHan
 
 	workDir := e.getAppWorkDir(payload.AppKey)
 
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		domain.ActionAppRestart,
 		domain.StepDockerRestart,
@@ -644,7 +657,7 @@ func (e *Executor) rollbackApp(ctx context.Context, job *domain.Job, emit EmitHa
 
 	// Recreate with the previous image. Health-gated like a deploy (P1-9):
 	// the rollback only succeeds once the stack is actually running again.
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
+	if _, err := e.composeCmd(ctx, workDir, []string{"up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
 		step,

@@ -33,7 +33,7 @@ func (f *fakeDocker) Cmd(_ context.Context, _ string, args []string, _ ...comman
 			return "", err
 		}
 	}
-	if len(args) >= 2 && args[0] == "compose" && args[1] == "ps" {
+	if containsSub(args, []string{"compose", "ps"}) {
 		if f.psOutput != "" || f.psErr != nil {
 			return f.psOutput, f.psErr
 		}
@@ -42,6 +42,20 @@ func (f *fakeDocker) Cmd(_ context.Context, _ string, args []string, _ ...comman
 		return `[{"ID":"a","Name":"demo-app-1","State":"running","Health":"","ExitCode":0}]`, nil
 	}
 	return "ok", nil
+}
+
+// containsSub reports whether the arg slice contains all needle values in order.
+func containsSub(args, needles []string) bool {
+	idx := 0
+	for _, a := range args {
+		if a == needles[idx] {
+			idx++
+			if idx == len(needles) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (f *fakeDocker) GetDockerComposeFile(string) (string, error)   { return "compose.yml", nil }
