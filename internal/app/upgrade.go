@@ -86,7 +86,72 @@ func RunUpgrade() error {
 		return err
 	}
 
-	fmt.Printf("updated to horizonx %s. Restart your services to pick it up.\n", tag)
+	fmt.Printf("updated to horizonx %s.\n", tag)
+
+	// --- Restart the running service (the "wonder" part) ------------------
+	// Detect how we're installed and bounce the right unit so the new binary
+	// actually takes effect — no manual `systemctl restart` step.
+	rt := DetectRuntime()
+	if unit := rt.ActiveUnit(); unit != "" {
+		fmt.Printf("restarting %s…\n", unit)
+		return restartService(unit, rt.IsUserUnit(unit))
+	}
+	if rt.ComposeFile != "" {
+		fmt.Println("restarting docker compose stack…")
+		return restartCompose(rt.ComposeFile)
+	}
+	fmt.Println("no active systemd unit or compose stack detected — start it manually when ready.")
+	return nil
+}
+
+// restartService restarts a systemd unit, elevating via sudo when needed.
+// The running process cannot cleanly systemctl-restart itself (it gets
+// SIGTERM mid-run), so we spawn a detached helper that waits a beat, then
+// restarts the unit, then reaps.
+func restartService(unit string, userScope bool) error {
+	scope := ""
+	if userScope {
+		scope = "--user"
+	}
+	unitName := fmt.Sprintf("horizonx-upgrade-restart-%d", os.Getpid())
+	args := []string{"--unit=" + unitName, "--on-active=2", "--no-block"}
+	args = append(args, "systemctl")
+	if scope != "" {
+		args = append(args, scope)
+	}
+	args = append(args, "restart", unit)
+	if out, err := execCommand("systemd-run", args...).CombinedOutput(); err == nil {
+		return nil
+	} else if !strings.Contains(string(out), "systemd-run") {
+		// systemd-run may be missing; fall back to at.
+		if err := atRestart(unit, userScope); err != nil {
+			return fmt.Errorf("restart %s: %v (run manually: sudo systemctl restart %s)", unit, err, unit)
+		}
+	}
+	return nil
+}
+
+// atRestart schedules a one-shot restart via `at` when systemd-run is absent.
+func atRestart(unit string, userScope bool) error {
+	scope := ""
+	if userScope {
+		scope = "--user "
+	}
+	script := fmt.Sprintf("sleep 2; systemctl %srestart %s", scope, unit)
+	cmd := execCommand("bash", "-c", fmt.Sprintf("echo %q | at now + 1 minute", script))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("schedule restart via at: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// restartCompose runs docker compose up -d --force-recreate for the detected
+// compose file so the new server image takes effect.
+func restartCompose(composeFile string) error {
+	out, err := execCommand("docker", "compose", "-f", composeFile, "up", "-d", "--force-recreate").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker compose up: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

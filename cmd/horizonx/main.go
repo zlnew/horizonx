@@ -66,14 +66,15 @@ Usage:
   horizonx upgrade    Self-update to the latest release
   horizonx help       Show this help
 
-Install (one-liner):
+Install (one-liner, auto-sudo):
   curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
 
-Setup:
-  horizonx setup                  # defaults into ./horizonx-setup
-  horizonx setup --host 203.0.113.10 --dir /opt/horizonx`)
+Setup (interactive wizard):
+  horizonx setup                       # walks through mode, preflight, method, env
+  horizonx setup --mode agent --yes    # non-interactive agent install
+  horizonx setup --generate-only       # write files only, install manually
+  horizonx setup --host 203.0.113.10   # legacy: generate ./horizonx-setup only`)
 }
-
 // runMigrate parses the migrate subcommand flags and delegates to the shared
 // app.RunMigrate implementation (same engine as cmd/migrate).
 func runMigrate(args []string) error {

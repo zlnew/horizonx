@@ -68,21 +68,34 @@ if [ "$ACTUAL" != "$EXPECTED" ]; then
 fi
 ok "checksum verified"
 
-# --- Install ---------------------------------------------------------------
+# --- Auto-sudo -------------------------------------------------------------
+# Plain `curl | bash` should just work. If the target dir isn't writable by
+# this user, re-exec the script under sudo (saving it to a temp file first,
+# since a pipe can't be re-read).
 BIN_DIR="$PREFIX/bin"
+if [ "$(id -u)" -ne 0 ] && [ ! -w "$BIN_DIR" ]; then
+  if command -v sudo >/dev/null 2>&1; then
+    log "target ${BIN_DIR} needs root — re-running with sudo…"
+    SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
+    SCRIPT_TMP="$(mktemp)"
+    curl -fsSL "$SCRIPT_URL" -o "$SCRIPT_TMP"
+    exec sudo HORIZONX_PREFIX="$PREFIX" bash "$SCRIPT_TMP"
+  else
+    echo
+    echo "  Cannot write to ${BIN_DIR} (permission denied) and sudo is not available."
+    echo
+    echo "  Options:"
+    echo "    1. Re-run with sudo:          curl -fsSL ${GITHUB}/main/install.sh | sudo bash"
+    echo "    2. Install to your home dir:  HORIZONX_PREFIX=\$HOME/.local curl -fsSL ${GITHUB}/main/install.sh | bash"
+    echo "       (then add ~/.local/bin to your PATH)"
+    echo
+    die "no write permission for ${BIN_DIR}"
+  fi
+fi
+
+# --- Install ---------------------------------------------------------------
 mkdir -p "$BIN_DIR"
 log "extracting to ${BIN_DIR}…"
-if [ ! -w "$BIN_DIR" ]; then
-  echo
-  echo "  Cannot write to ${BIN_DIR} (permission denied)."
-  echo
-  echo "  Options:"
-  echo "    1. Re-run with sudo:          curl -fsSL ${GITHUB}/main/install.sh | sudo bash"
-  echo "    2. Install to your home dir:  HORIZONX_PREFIX=\$HOME/.local curl -fsSL ${GITHUB}/main/install.sh | bash"
-  echo "       (then add ~/.local/bin to your PATH)"
-  echo
-  die "no write permission for ${BIN_DIR}"
-fi
 tar -xzf "$TMP/horizonx.tar.gz" -C "$BIN_DIR" horizonx
 chmod +x "$BIN_DIR/horizonx"
 
