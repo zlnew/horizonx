@@ -72,6 +72,17 @@ ok "checksum verified"
 BIN_DIR="$PREFIX/bin"
 mkdir -p "$BIN_DIR"
 log "extracting to ${BIN_DIR}…"
+if [ ! -w "$BIN_DIR" ]; then
+  echo
+  echo "  Cannot write to ${BIN_DIR} (permission denied)."
+  echo
+  echo "  Options:"
+  echo "    1. Re-run with sudo:          curl -fsSL ${GITHUB}/main/install.sh | sudo bash"
+  echo "    2. Install to your home dir:  HORIZONX_PREFIX=\$HOME/.local curl -fsSL ${GITHUB}/main/install.sh | bash"
+  echo "       (then add ~/.local/bin to your PATH)"
+  echo
+  die "no write permission for ${BIN_DIR}"
+fi
 tar -xzf "$TMP/horizonx.tar.gz" -C "$BIN_DIR" horizonx
 chmod +x "$BIN_DIR/horizonx"
 
