@@ -1,11 +1,11 @@
 # HorizonX
 
-**The All-in-One Infrastructure Monitoring & Deployment Platform.**
+**Deploy and monitor your apps without babysitting SSH.**
 
-HorizonX serves as the command center for your infrastructure. It allows you to monitor the real-time health of your distributed servers and deploy applications seamlessly using GitOps principles. Whether you have one server or a hundred, HorizonX brings them all into a single, unified view.
+You have a few servers and a handful of apps. Every deploy means `ssh`, `git pull`, `systemctl restart`, and hoping nothing broke while you weren't watching. HorizonX is the control plane that fixes that: connect a lightweight agent to each box, and deploy, roll back, and monitor everything from one dashboard.
 
-> **Note**: This repository contains the **Backend Server** code.  
-> The **Frontend Dashboard** can be found here: [https://github.com/zlnew/horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard)
+> **Note**: This repository contains the **Backend Server** (Go control plane + agent).
+> The **Frontend Dashboard** lives here: [https://github.com/zlnew/horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard)
 
 <table>
   <tr>
@@ -14,133 +14,56 @@ HorizonX serves as the command center for your infrastructure. It allows you to 
   </tr>
 </table>
 
-<table>
-  <tr>
-    <td><img src="screenshots/application-overview.png" width="333.4"></td>
-    <td><img src="screenshots/application-management.png" width="333.4"></td>
-    <td><img src="screenshots/server-management.png" width="333.4"></td>
-  </tr>
-</table>
-
 ---
 
-## 🧩 How It Works
+## Why HorizonX?
 
-HorizonX is built on a **Client-Server** model designed for speed and security:
+Because the alternatives are either overkill or a pile of shell scripts.
 
-1.  **The Server (Control Plane)**:
-    - This is the central API.
-    - It stores all data, manages user accounts, and handles application state.
-    - You interact with this via a Web Dashboard.
+- **You don't need Kubernetes.** For a handful of apps on a few boxes, K8s is a second full-time job. HorizonX is one binary, one agent per box, one dashboard.
+- **You don't need to babysit deploys.** The agent pulls from git, builds the image, and health-gates the rollout — success only counts when the app is actually running. No more "it deployed" followed by a 502.
+- **You get real rollback.** Every deploy tags the image; rollback replays the previous tag. One click, no `git revert` ritual.
+- **You can see what's happening.** Live CPU/RAM/disk/network per server, plus deploy history and job logs — without another monitoring SaaS.
 
-2.  **The Agent (Runner)**:
-    - A lightweight, standalone program that you install on your Linux servers.
-    - It securely connects back to your **Server** via a persistent WebSocket connection.
-    - It pushes hardware metrics (CPU, RAM, usage) every second and listens for commands (like "Deploy App").
+**The shape of it** — a client-server model:
 
----
-
-## ✨ Key Features
-
-### 1. 📊 Real-Time Infrastructure Monitoring
-
-Forget about lagging charts. HorizonX provides **second-by-second** telemetry for your hardware.
-
-- **CPU**: See per-core load, temperatures, and power usage (Watts).
-- **Memory**: Visualize RAM and Swap usage to prevent OOM errors.
-- **Disk & Network**: Monitor I/O throughout, disk space, and network bandwidth in real-time.
-- **GPU Support**: Native monitoring for Nvidia GPUs for AI/ML workloads.
-
-### 2. 🚀 Zero-Downtime Application Deployments
-
-Deploy applications directly from your Git repositories (GitHub, GitLab, etc.).
-
-- **GitOps**: Push to your branch, and HorizonX pulls the latest code.
-- **Process Management**: HorizonX uses **Docker Compose** to manage the full application lifecycle (Deploy, Start, Stop, Restart), ensuring consistent environments.
-- **Env Vars**: Securely inject API keys and secrets into your running applications.
-
-### 3. 🛡️ Secure & Scalable
-
-- **Clean Architecture**: Built with a robust Go backend for high performance.
-- **Token Authentication**: Agents require a secure token to join your fleet, preventing unauthorized access.
-
----
-
-## � Requirements
-
-To run HorizonX components, you need:
-
-- **Operating System**: Linux.
-- **Go**: Version 1.25.4 or higher (to compile binaries).
-- **Database**: PostgreSQL 13+.
-- **Redis**: Required for caching and real-time features.
-- **Git**: **Required** for cloning repositories and deployment operations. The Agent uses Git to clone your repositories.
-- **Docker & Docker Compose**: **Required** for Application Management features (Deploy, Start, Stop, Restart). The Agent uses Docker Compose to manage your deployments.
-
----
-
-## 📦 Quick Start (Development)
-
-Use these steps to run the project locally for testing or development.
-
-### 1. Setup Control Plane (Server)
-
-```bash
-# Configure environment
-cp .env.example .env
-# Open .env and set your HTTP_ADDR, ALLOWED_ORIGINS, DATABASE_URL, etc.
-
-# Build binary
-make build
-
-# Initialize Database
-bin/migrate -op=up
-bin/seed # (Optional: Adds dummy data)
-
-# Start Server
-bin/server
+```
+┌─────────────┐   WebSocket    ┌──────────────┐
+│  Agent       │ ◄────────────► │  Server      │
+│  (per box)   │                │  (control    │
+│              │   push metrics │   plane)     │  ◄── Dashboard (Vue 3)
+└──────┬───────┘   receive jobs │              │
+       │                        └──────────────┘
+       │  docker compose
+       ▼
+   your apps
 ```
 
-### 2. Connect a Node (Agent)
-
-> Before setting up an agent, you need to setup **HorizonX Dashboard**: [https://github.com/zlnew/horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard).
-> After that, open horizonx dashboard, login and register a new server. You will get `HORIZONX_SERVER_API_TOKEN` and `HORIZONX_SERVER_ID`.
-
-```bash
-# Build binary
-make build
-
-# Setup .env
-HORIZONX_API_URL="http://localhost:3000"
-HORIZONX_WS_URL="ws://localhost:3000/agent/ws"
-
-# Copy the HORIZONX_SERVER_API_TOKEN and HORIZONX_SERVER_ID from registered server
-HORIZONX_SERVER_API_TOKEN="hzx_secret"
-HORIZONX_SERVER_ID="123"
-
-sudo bin/agent
-```
-
-For development purpose, its highly recommended to start agent as root to be able to collect server metrics.
-Note that if application's git repo url use ssh, please make sure root have ssh access to your git repository.
+1. **Server (control plane)** — the central API: apps, servers, users, deploy jobs. You talk to it through the dashboard.
+2. **Agent (runner)** — a single binary you install on each Linux box. It connects back over a persistent WebSocket, pushes hardware metrics, and executes commands like *Deploy App* using Docker Compose.
 
 ---
 
-## 🏭 Production Installation
+## Key features
 
-HorizonX ships as a single `horizonx` binary (subcommands: `server`, `agent`, `setup`, `upgrade`) with a one-line installer — the same pattern as modern SaaS tools.
+- **Real-time infrastructure monitoring** — CPU, memory, disk, network, GPU, per second, per server.
+- **Zero-downtime deployments** — GitOps pull → compose build → health-gated up. In-place recreate, never `compose down`.
+- **One-click rollback** — image tags are recorded per deploy; replay any previous tag.
+- **Env vars & secrets** — inject per-app environment without touching the repo.
+- **Multi-stage builds** — the agent builds through `docker compose build`, so each service gets the right target (php-fpm vs nginx) automatically.
+- **Secure by default** — token-authenticated agents, audit log, role-based access.
 
-### 1. Install (one-liner)
+---
+
+## Quick start
+
+### 1. Install the binary (one-liner)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
 ```
 
-What it does:
-- Detects your OS/arch (linux + darwin, amd64 + arm64)
-- Fetches the latest release tarball + `SHA256SUMS` from GitHub Releases
-- **Verifies the checksum** before touching anything
-- Installs `horizonx` to `/usr/local/bin` (override with `HORIZONX_PREFIX`)
+This fetches the latest release tarball, **verifies the SHA256 checksum**, and installs `horizonx` to `/usr/local/bin`.
 
 ### 2. Bootstrap the control plane
 
@@ -148,12 +71,11 @@ What it does:
 horizonx setup --host 203.0.113.10
 ```
 
-Generates into `./horizonx-setup/`:
-- `.env` — strong random `JWT_SECRET`, `HORIZONX_SERVER_ID` + `HORIZONX_SERVER_API_TOKEN` (agent credentials), DB/Redis wiring
-- `docker-compose.yml` — postgres + redis + server + dashboard (one command to stand up the whole stack)
-- `systemd/` — unit templates for bare-metal hosts
+Generates `./horizonx-setup/` with:
 
-Then:
+- `.env` — strong random `JWT_SECRET`, server ID + agent token, DB/Redis wiring
+- `docker-compose.yml` — postgres + redis + server + dashboard in one command
+- `systemd/` — unit templates for bare-metal hosts
 
 ```bash
 cd horizonx-setup
@@ -161,98 +83,59 @@ docker compose up -d          # control plane
 open http://<host>:8080       # dashboard
 ```
 
-### 3. Install agents on app hosts
+### 3. Connect an agent to an app host
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
-# then, with the credentials from `horizonx setup`:
+```
+
+Then, with the credentials from `horizonx setup`:
+
+```bash
 HORIZONX_SERVER_ID=<id> HORIZONX_SERVER_API_TOKEN=<token> \
 HORIZONX_API_URL=http://<host>:3000 HORIZONX_WS_URL=ws://<host>:3000/ws/agent \
 horizonx agent
 ```
 
-### 4. Upgrading
+For long-running installs, `horizonx setup` also prints systemd units:
+`sudo cp horizonx-setup/systemd/*.service /etc/systemd/system/` then
+`sudo systemctl daemon-reload && sudo systemctl enable --now horizonx-server`.
 
-```bash
-horizonx upgrade      # self-update to the latest release
-```
+### 4. Deploy your first app
 
-### Alternatives
+In the dashboard: **Applications → New** → point at a git repo + branch, set env vars → **Deploy**. The agent clones, builds, and health-gates the rollout. Deployments, rollbacks, and job logs are all in the UI.
 
-The legacy split-binary flow (`make build` + `scripts/install-server.sh` / `scripts/install-agent.sh`, systemd units for `horizonx-server` / `horizonx-agent`) still works and is documented below.
+### 5. Migrations
 
-### Legacy: build from source + systemd
-
-1.  **Build Binaries**:
-    ```bash
-    make build
-    ```
-2.  **Run Installer**:
-
-    ```bash
-    sudo ./scripts/install-server.sh
-
-    # If you want to seed default user
-    sudo ./scripts/install-server.sh --seed
-
-    ```
-
-    **What this does:**
-    - Installs binary to: `/usr/local/bin/horizonx-server`
-    - Configuration: `/var/lib/horizonx/server.env`
-    - Logs: `/var/log/horizonx/server.log` & `server.error.log`
-    - Systemd service: `horizonx-server`
-    - Runs as: `horizonx` user (non-root)
-    - Sets permissions for safe log & data directories
-
-3.  **Post-Install**:
-    - Edit `/var/lib/horizonx/server.env` with your production:
-      - `HTTP_ADDR`
-      - `ALLOWED_ORIGINS`
-      - `DATABASE_URL`
-      - `REDIS_ADDR`
-      - `JWT_SECRET`.
-    - Restart the service: `sudo systemctl restart horizonx-server`
-
-### 2. Installing an Agent
-
-> Before setting up an agent, you need to setup **HorizonX Dashboard**: [https://github.com/zlnew/horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard).
-> After that, open horizonx dashboard, login and register a new server. You will get `HORIZONX_SERVER_API_TOKEN` and `HORIZONX_SERVER_ID`.
-
-Run this on every remote server you want to monitor and deploy applications to.
-
-1.  **Build Binaries** (or copy `bin/agent` from your build server):
-    ```bash
-    make build
-    ```
-2.  **Run Installer**:
-
-    ```bash
-    sudo ./scripts/install-agent.sh
-    ```
-
-    **What this does:**
-    - Installs binary to: `/usr/local/bin/horizonx-agent`
-    - Configuration: `/var/lib/horizonx/agent.env`
-    - Logs: `/var/log/horizonx/agent.log` & `agent.error.log`
-    - Systemd service: `horizonx-agent`
-    - Runs as: `horizonx` user (non-root)
-    - Creates `.ssh` keys and config for Git access
-    - Adds `horizonx` user to Docker group for deployment access
-    - Sets hardware monitoring permissions (CPU, GPU, power, thermal, disk, network) via udev rules
-    - Sets Git SSH wrapper to ensure all repo operations use the dedicated key
-
-3.  **Post-Install**:
-    - Edit `/var/lib/horizonx/agent.env`. You **MUST** set:
-      - `HORIZONX_API_URL`
-      - `HORIZONX_WS_URL`
-      - `HORIZONX_SERVER_API_TOKEN`
-      - `HORIZONX_SERVER_ID`.
-    - Restart the service: `sudo systemctl restart horizonx-agent`
-    - Public SSH key is available at: `/var/lib/horizonx/.ssh/id_ed25519.pub` – **add this to your Git provider**.
+The compose file ships with a migrate gate — `horizonx migrate -op=up` runs before the server starts, so a fresh control plane always boots on a migrated schema.
 
 ---
 
-## 🛠️ Development Tools
+## Requirements
 
-- `make build`: Compiles all binaries to `bin/`.
+- **Linux** for the agent and server.
+- **PostgreSQL 13+** and **Redis** — or just use the bundled compose (postgres + redis included).
+- **Docker + Compose** on each app host (the agent deploys with `docker compose`).
+- **Git** on each app host (the agent clones repos).
+
+---
+
+## Development
+
+```bash
+# Unified binary (server/agent/setup/upgrade/migrate in one)
+go build -o bin/horizonx ./cmd/horizonx
+bin/horizonx server         # run the control plane
+
+# Legacy split binaries (still supported)
+make build                  # bin/server, bin/agent, bin/migrate, bin/seed
+
+# Tests
+go test ./...
+```
+
+The dashboard is developed in [horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard) (`npm install && npm run dev`).
+
+---
+
+*HorizonX was built to dogfood itself — the workspace that runs it is deployed through it.*
