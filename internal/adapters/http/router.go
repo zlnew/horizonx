@@ -3,12 +3,16 @@ package http
 
 import (
 	"net/http"
+	"time"
 
+	"horizonx/internal/adapters/http/metrics"
 	"horizonx/internal/adapters/http/middleware"
+	"horizonx/internal/adapters/http/middleware/ratelimit"
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
 	"horizonx/internal/config"
 	"horizonx/internal/domain"
+	"horizonx/internal/logger"
 )
 
 type RouterDeps struct {
@@ -27,6 +31,9 @@ type RouterDeps struct {
 
 	RoleService   domain.RoleService
 	ServerService domain.ServerService
+
+	MetricsRegistry *metrics.Registry
+	Logger          logger.Logger
 }
 
 func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
@@ -34,13 +41,19 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	globalMw := middleware.New()
 	globalMw.Use(middleware.CORS(cfg))
+	if deps.Logger != nil {
+		globalMw.Use(middleware.RequestLog(deps.Logger))
+	}
+	if deps.MetricsRegistry != nil {
+		globalMw.Use(metricsMiddleware(deps.MetricsRegistry))
+	}
 
 	userStack := middleware.New()
 	userStack.Use(middleware.JWT(cfg))
 	userStack.Use(middleware.CSRF(cfg))
 
 	agentStack := middleware.New()
-	agentStack.Use(middleware.Agent(deps.ServerService))
+	agentStack.Use(middleware.Agent(deps.ServerService, deps.Logger))
 
 	metricsReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermMetricsRead))
 
@@ -53,10 +66,24 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	appReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppRead))
 	appWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppWrite))
 
+	// P1-10: brute-force guard on the public login endpoint — 5 attempts per
+	// IP per minute, then HTTP 429.
+	loginLimiter := ratelimit.New(5, time.Minute)
+	loginStack := middleware.New().Use(loginLimiter.Middleware(ratelimit.ClientIP))
+
 	// HEALTH
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	})
+
+	// P2-14: Prometheus scrape endpoint. Public (no auth) — exposes only
+	// operational counters, no sensitive data. Refresh gauges before serving.
+	if deps.MetricsRegistry != nil {
+		mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			deps.MetricsRegistry.Refresh()
+			deps.MetricsRegistry.Handler().ServeHTTP(w, r)
+		}))
+	}
 
 	// WEBSOCKET
 	mux.HandleFunc("GET /ws/user", deps.WsUser.Serve)
@@ -64,7 +91,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// AUTH
 	mux.Handle("GET /auth/user", userStack.ThenFunc(deps.Auth.User))
-	mux.Handle("POST /auth/login", http.HandlerFunc(deps.Auth.Login))
+	mux.Handle("POST /auth/login", loginStack.ThenFunc(deps.Auth.Login))
 	mux.Handle("POST /auth/logout", userStack.ThenFunc(deps.Auth.Logout))
 
 	// AGENT ENDPOINTS
@@ -82,6 +109,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// JOBS
 	mux.Handle("GET /jobs", userStack.ThenFunc(deps.Job.Index))
 	mux.Handle("GET /jobs/{id}", userStack.ThenFunc(deps.Job.Show))
+
+	// P2-17: queue depth summary (no pagination — tiny fixed-size response).
+	mux.Handle("GET /jobs/summary", userStack.ThenFunc(deps.Job.Summary))
 
 	// SERVERS
 	mux.Handle("GET /servers", serverReadStack.ThenFunc(deps.Server.Index))
@@ -113,6 +143,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// APPLICATION ACTIONS
 	mux.Handle("POST /applications/{id}/deploy", appWriteStack.ThenFunc(deps.Application.Deploy))
+	mux.Handle("POST /applications/{id}/rollback", appWriteStack.ThenFunc(deps.Application.Rollback))
 	mux.Handle("POST /applications/{id}/start", appWriteStack.ThenFunc(deps.Application.Start))
 	mux.Handle("POST /applications/{id}/stop", appWriteStack.ThenFunc(deps.Application.Stop))
 	mux.Handle("POST /applications/{id}/restart", appWriteStack.ThenFunc(deps.Application.Restart))

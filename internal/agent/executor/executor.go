@@ -19,9 +19,32 @@ import (
 
 type EmitHandler = func(event any)
 
+// healthGateTimeout bounds how long a deploy/rollback waits for the app to
+// actually come up after `compose up` before failing the job (P1-9).
+const healthGateTimeout = 60 * time.Second
+
+// DockerRunner is the subset of docker.Manager the executor needs. Defined as
+// an interface so the deploy pipeline can be unit-tested with a fake.
+type DockerRunner interface {
+	Cmd(ctx context.Context, workDir string, args []string, handlers ...command.StreamHandler) (string, error)
+	GetDockerComposeFile(workDir string) (string, error)
+	GetDockerfile(workDir string) (string, error)
+	WriteEnvFile(workDir string, envVars map[string]string) error
+	IsDockerInstalled() bool
+	IsDockerComposeAvailable() bool
+}
+
+// GitRunner is the subset of git.Manager the executor needs.
+type GitRunner interface {
+	CloneOrPull(ctx context.Context, workDir, remoteURL, branch string, handlers ...command.StreamHandler) (string, error)
+	GetCurrentCommit(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error)
+	GetCommitMessage(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error)
+	IsGitInstalled() bool
+}
+
 type Executor struct {
-	docker  *docker.Manager
-	git     *git.Manager
+	docker DockerRunner
+	git    GitRunner
 	metrics func() *domain.Metrics
 
 	workDir string
@@ -30,9 +53,14 @@ type Executor struct {
 }
 
 func NewExecutor(workDir string, log logger.Logger, metrics func() *domain.Metrics) *Executor {
+	return NewExecutorWithDeps(docker.NewManager(), git.NewManager(), workDir, log, metrics)
+}
+
+// NewExecutorWithDeps wires explicit docker/git runners — used by tests with fakes.
+func NewExecutorWithDeps(docker DockerRunner, git GitRunner, workDir string, log logger.Logger, metrics func() *domain.Metrics) *Executor {
 	return &Executor{
-		docker:  docker.NewManager(),
-		git:     git.NewManager(),
+		docker:  docker,
+		git:     git,
 		metrics: metrics,
 
 		workDir: workDir,
@@ -74,6 +102,8 @@ func (e *Executor) Execute(ctx context.Context, job *domain.Job, emit EmitHandle
 		return e.stopApp(ctx, job, emit)
 	case domain.JobTypeAppRestart:
 		return e.restartApp(ctx, job, emit)
+	case domain.JobTypeAppRollback:
+		return e.rollbackApp(ctx, job, emit)
 	case domain.JobTypeAppDestroy:
 		return e.destroyApp(ctx, job, emit)
 	default:
@@ -169,8 +199,11 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 			continue
 		}
 
-		var c docker.Container
-		if err := json.Unmarshal([]byte(output), &c); err != nil {
+		// `docker compose ps --format json` emits a JSON ARRAY when the app
+		// has more than one service, and a single object when it has one.
+		// Parse the array first, fall back to a single object (P0-5).
+		containers, err := parseComposePs(output)
+		if err != nil {
 			e.logFatalHandler(
 				fmt.Sprintf(
 					"failed to parse compose ps output server_id=%s app_id=%d err=%v",
@@ -191,44 +224,139 @@ func (e *Executor) checkAppHealths(ctx context.Context, job *domain.Job, emit Em
 			continue
 		}
 
-		var status domain.ApplicationStatus
-
-		switch c.State {
-		case "running":
-			switch c.Health {
-			case "unhealthy":
-				status = domain.AppStatusFailed
-			case "starting":
-				status = domain.AppStatusStarting
-			default:
-				status = domain.AppStatusRunning
-			}
-		case "restarting":
-			status = domain.AppStatusRestarting
-		case "exited":
-			switch c.ExitCode {
-			case 0:
-				status = domain.AppStatusStopped
-			default:
-				status = domain.AppStatusFailed
-			}
-		case "paused":
-			status = domain.AppStatusUnknown
-		case "dead":
-			status = domain.AppStatusFailed
-		default:
-			status = domain.AppStatusUnknown
-		}
-
 		reports = append(reports, domain.ApplicationHealth{
 			ApplicationID: app.ApplicationID,
-			Status:        status,
+			Status:        aggregateContainerHealth(containers),
 		})
 	}
 
 	emit(reports)
 
 	return nil
+}
+
+// parseComposePs parses `docker compose ps --format json` output, which is a
+// JSON array for multi-service apps and a single object for one-service apps.
+func parseComposePs(output string) ([]docker.Container, error) {
+	var many []docker.Container
+	if err := json.Unmarshal([]byte(output), &many); err == nil {
+		return many, nil
+	}
+
+	var one docker.Container
+	if err := json.Unmarshal([]byte(output), &one); err != nil {
+		return nil, err
+	}
+
+	return []docker.Container{one}, nil
+}
+
+// aggregateContainerHealth collapses a slice of container states into a single
+// app-level status: any failed container fails the app; all running = running;
+// anything still starting = starting; otherwise unknown.
+func aggregateContainerHealth(containers []docker.Container) domain.ApplicationStatus {
+	if len(containers) == 0 {
+		return domain.AppStatusUnknown
+	}
+
+	hasStarting := false
+	for _, c := range containers {
+		switch c.State {
+		case "running":
+			if c.Health == "unhealthy" {
+				return domain.AppStatusFailed
+			}
+			if c.Health == "starting" {
+				hasStarting = true
+			}
+		case "restarting":
+			hasStarting = true
+		case "exited":
+			if c.ExitCode != 0 {
+				return domain.AppStatusFailed
+			}
+		case "dead":
+			return domain.AppStatusFailed
+		case "paused":
+			return domain.AppStatusUnknown
+		default:
+			// Unknown states (e.g. "created") don't fail the app, but mean
+			// it isn't fully up yet.
+			hasStarting = true
+		}
+	}
+
+	if hasStarting {
+		return domain.AppStatusStarting
+	}
+
+	return domain.AppStatusRunning
+}
+
+// waitForAppRunning polls `compose ps` until the app reaches a terminal state
+// (P1-9: post-deploy health gate). A deploy that builds and recreates cleanly
+// but whose container crashes on boot must be marked FAILED, not success —
+// otherwise the control plane flips the app to "running" while it's dead.
+// Returns nil when the app is Running, an error when it is Failed/Dead or the
+// deadline passes with the app still starting.
+func (e *Executor) waitForAppRunning(
+	ctx context.Context,
+	workDir string,
+	appKey string,
+	emit EmitHandler,
+	action domain.LogAction,
+	step domain.LogStep,
+	timeout time.Duration,
+) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		output, err := e.docker.Cmd(ctx, workDir, []string{"compose", "ps", "--format", "json"})
+		if err != nil {
+			// compose ps can fail transiently while containers are created.
+			if time.Now().After(deadline) {
+				e.logFatalHandler(
+					fmt.Sprintf("app %s did not become ready: compose ps failed: %v", appKey, err),
+					emit, action, step,
+				)
+				return fmt.Errorf("app %s did not become ready: %w", appKey, err)
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		if output != "" {
+			if containers, parseErr := parseComposePs(output); parseErr == nil {
+				status := aggregateContainerHealth(containers)
+				switch status {
+				case domain.AppStatusRunning:
+					return nil
+				case domain.AppStatusFailed:
+					e.logFatalHandler(
+						fmt.Sprintf("app %s crashed on boot (health gate failed)", appKey),
+						emit, action, step,
+					)
+					return fmt.Errorf("app %s crashed on boot (health gate failed)", appKey)
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			e.logFatalHandler(
+				fmt.Sprintf("app %s did not become ready within %s (health gate timeout)", appKey, timeout),
+				emit, action, step,
+			)
+			return fmt.Errorf("app %s did not become ready within %s", appKey, timeout)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
@@ -345,6 +473,12 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 			action,
 			domain.StepDockerBuild,
 		)
+		// CRITICAL (P0-1): a failed build must abort the deploy. Falling
+		// through used to run `compose down` on the RUNNING app and then
+		// `compose up` a broken/absent image — a bad build took the old,
+		// working app down. Return the error so the job is marked failed
+		// and the running stack is left untouched.
+		return err
 	}
 
 	// Write user and build env
@@ -365,23 +499,11 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 		return err
 	}
 
-	// Docker compose down
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "down"}, e.logStreamHandler(
-		emit,
-		action,
-		domain.StepDockerStart,
-	),
-	); err != nil {
-		e.logFatalHandler(
-			fmt.Sprintf("failed to run docker compose down, %s", err.Error()),
-			emit,
-			action,
-			domain.StepDockerStart,
-		)
-		return err
-	}
-
-	// Docker compose up
+	// Docker compose up — in-place recreate (P0-3: zero-downtime). The
+	// post-deploy health gate below (P1-9) then waits for the app to
+	// actually come up before the job reports success — a build that
+	// recreates cleanly but crashes on boot must flip the app to failed,
+	// not optimistically claim "running".
 	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
 		emit,
 		action,
@@ -393,6 +515,12 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 			action,
 			domain.StepDockerStart,
 		)
+		return err
+	}
+
+	// P1-9: post-deploy health gate — only report success once the app is
+	// actually running, not merely "compose up returned 0".
+	if err := e.waitForAppRunning(ctx, workDir, payload.AppKey, emit, action, domain.StepDockerHealthCheck, healthGateTimeout); err != nil {
 		return err
 	}
 
@@ -474,6 +602,69 @@ func (e *Executor) restartApp(ctx context.Context, job *domain.Job, emit EmitHan
 	return nil
 }
 
+// rollbackApp re-deploys the stack using a previously built image tag (P0-4).
+// The tag was recorded from the last successful deploy, so the image exists in
+// the local docker daemon. We rewrite the env file so APP_IMAGE points at the
+// old tag, then recreate in place — same zero-downtime path as a normal deploy.
+func (e *Executor) rollbackApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
+	var payload domain.AppRollbackPayload
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return err
+	}
+
+	workDir := e.getAppWorkDir(payload.AppKey)
+	action := domain.ActionAppDeploy
+	step := domain.StepDockerStart
+
+	if payload.ImageTag == "" {
+		err := fmt.Errorf("rollback image tag is empty")
+		e.logFatalHandler(err.Error(), emit, action, step)
+		return err
+	}
+
+	// Point the stack at the previous image and reuse the app's current env.
+	envVars := make(map[string]string)
+	if payload.EnvVars != nil {
+		for k, v := range payload.EnvVars {
+			envVars[k] = v
+		}
+	}
+	envVars["APP_IMAGE"] = payload.ImageTag
+	envVars["APP_CONTAINER_NAME"] = payload.AppKey
+
+	if err := e.docker.WriteEnvFile(workDir, envVars); err != nil {
+		e.logFatalHandler(
+			fmt.Sprintf("failed to write rollback env, %s", err.Error()),
+			emit,
+			action,
+			step,
+		)
+		return err
+	}
+
+	// Recreate with the previous image. Health-gated like a deploy (P1-9):
+	// the rollback only succeeds once the stack is actually running again.
+	if _, err := e.docker.Cmd(ctx, workDir, []string{"compose", "up", "-d", "--force-recreate"}, e.logStreamHandler(
+		emit,
+		action,
+		step,
+	)); err != nil {
+		e.logFatalHandler(
+			fmt.Sprintf("failed to run docker compose up for rollback, %s", err.Error()),
+			emit,
+			action,
+			step,
+		)
+		return err
+	}
+
+	if err := e.waitForAppRunning(ctx, workDir, payload.AppKey, emit, action, domain.StepDockerHealthCheck, healthGateTimeout); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (e *Executor) destroyApp(ctx context.Context, job *domain.Job, emit EmitHandler) error {
 	var payload domain.AppDestroyPayload
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
@@ -512,7 +703,7 @@ func (e *Executor) destroyApp(ctx context.Context, job *domain.Job, emit EmitHan
 			domain.ActionAppDestroy,
 			domain.StepDockerCommit,
 		)
-		return nil
+		return err
 	}
 
 	// Remove container
@@ -527,7 +718,7 @@ func (e *Executor) destroyApp(ctx context.Context, job *domain.Job, emit EmitHan
 			domain.ActionAppDestroy,
 			domain.StepDockerRemove,
 		)
-		return nil
+		return err
 	}
 
 	return nil

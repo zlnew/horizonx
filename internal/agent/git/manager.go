@@ -33,13 +33,23 @@ func (m *Manager) Clone(ctx context.Context, workDir string, remoteURL, branch s
 }
 
 func (m *Manager) Pull(ctx context.Context, workDir string, branch string, handlers ...command.StreamHandler) (string, error) {
-	checkout := command.NewCommand(workDir, "git", "checkout", branch)
+	// P1-8: clean pull — force-checkout the branch and hard-reset to the
+	// remote tip. A dirty tree or a divergent local branch must never block a
+	// deploy or leave local junk in the build dir. Deployments are fully
+	// reproducible from origin; any local changes are workspace noise.
+	checkout := command.NewCommand(workDir, "git", "checkout", "-f", branch)
 	if output, err := checkout.Run(ctx, handlers...); err != nil {
 		return output, err
 	}
 
-	pull := command.NewCommand(workDir, "git", "pull", "origin", branch)
-	return pull.Run(ctx, handlers...)
+	// Ensure the remote-tracking ref is fresh before resetting onto it.
+	fetch := command.NewCommand(workDir, "git", "fetch", "origin", branch, "--depth", "1")
+	if output, err := fetch.Run(ctx, handlers...); err != nil {
+		return output, err
+	}
+
+	reset := command.NewCommand(workDir, "git", "reset", "--hard", "origin/"+branch)
+	return reset.Run(ctx, handlers...)
 }
 
 func (m *Manager) GetCurrentCommit(ctx context.Context, workDir string, handlers ...command.StreamHandler) (string, error) {

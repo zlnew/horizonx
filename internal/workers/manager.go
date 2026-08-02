@@ -57,4 +57,9 @@ func (m *Manager) Start(ctx context.Context) {
 		job: m.services.Job,
 		log: m.log,
 	})
+
+	m.scheduler.RunByDuration(ctx, 1*time.Minute, NewJobReaperWorker(
+		m.services.Job,
+		m.log,
+	))
 }

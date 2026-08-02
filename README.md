@@ -128,13 +128,60 @@ Note that if application's git repo url use ssh, please make sure root have ssh 
 
 ## 🏭 Production Installation
 
-HorizonX provides automated scripts in the `scripts/` directory to install the Control Plane (Server) and Agents securely.
-These scripts ensure all services run under a dedicated `horizonx` user with access to Docker and Git, while keeping root privileges minimal.
-They also handle log rotation, environment setup, and hardware monitoring permissions.
+HorizonX ships as a single `horizonx` binary (subcommands: `server`, `agent`, `setup`, `upgrade`) with a one-line installer — the same pattern as modern SaaS tools.
 
-### 1. Installing the Server
+### 1. Install (one-liner)
 
-Run this on the machine that will host the Control Plane.
+```bash
+curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
+```
+
+What it does:
+- Detects your OS/arch (linux + darwin, amd64 + arm64)
+- Fetches the latest release tarball + `SHA256SUMS` from GitHub Releases
+- **Verifies the checksum** before touching anything
+- Installs `horizonx` to `/usr/local/bin` (override with `HORIZONX_PREFIX`)
+
+### 2. Bootstrap the control plane
+
+```bash
+horizonx setup --host 203.0.113.10
+```
+
+Generates into `./horizonx-setup/`:
+- `.env` — strong random `JWT_SECRET`, `HORIZONX_SERVER_ID` + `HORIZONX_SERVER_API_TOKEN` (agent credentials), DB/Redis wiring
+- `docker-compose.yml` — postgres + redis + server + dashboard (one command to stand up the whole stack)
+- `systemd/` — unit templates for bare-metal hosts
+
+Then:
+
+```bash
+cd horizonx-setup
+docker compose up -d          # control plane
+open http://<host>:8080       # dashboard
+```
+
+### 3. Install agents on app hosts
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
+# then, with the credentials from `horizonx setup`:
+HORIZONX_SERVER_ID=<id> HORIZONX_SERVER_API_TOKEN=<token> \
+HORIZONX_API_URL=http://<host>:3000 HORIZONX_WS_URL=ws://<host>:3000/ws/agent \
+horizonx agent
+```
+
+### 4. Upgrading
+
+```bash
+horizonx upgrade      # self-update to the latest release
+```
+
+### Alternatives
+
+The legacy split-binary flow (`make build` + `scripts/install-server.sh` / `scripts/install-agent.sh`, systemd units for `horizonx-server` / `horizonx-agent`) still works and is documented below.
+
+### Legacy: build from source + systemd
 
 1.  **Build Binaries**:
     ```bash

@@ -263,6 +263,85 @@ func (s *Service) Deploy(ctx context.Context, appID int64, deployedBy int64) (*d
 	return deployment, nil
 }
 
+// Rollback re-deploys the last successfully built image for an app (P0-4).
+// The previous image tag is derived from the most recent successful
+// deployment's commit hash (image tags are `<appKey>:<commitHash>`), so no
+// extra schema is needed — the tag already exists in the docker daemon.
+func (s *Service) Rollback(ctx context.Context, appID int64, deployedBy int64) (*domain.Deployment, error) {
+	app, err := s.repo.GetByID(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find the last successful deployment to learn the image tag to roll back to.
+	success := "success"
+	result, err := s.deploymentSvc.List(ctx, domain.DeploymentListOptions{
+		ListOptions:   domain.ListOptions{Limit: 1},
+		ApplicationID: &appID,
+		Statuses:      []string{success},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch previous deployments: %w", err)
+	}
+	var prev []*domain.Deployment
+	if result != nil {
+		prev = result.Data
+	}
+	if len(prev) == 0 || prev[0].CommitHash == nil || *prev[0].CommitHash == "" {
+		return nil, fmt.Errorf("no successful deployment to roll back to")
+	}
+
+	imageTag := fmt.Sprintf("%s:%s", domain.GetAppKey(app), *prev[0].CommitHash)
+
+	envVars, err := s.repo.ListEnvVars(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch env vars: %w", err)
+	}
+
+	envMap := make(map[string]string)
+	for _, env := range envVars {
+		envMap[env.Key] = env.Value
+	}
+
+	deployment, err := s.deploymentSvc.Create(ctx, domain.DeploymentCreateRequest{
+		ApplicationID: appID,
+		Branch:        app.Branch,
+		DeployedBy:    &deployedBy,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create deployment record: %w", err)
+	}
+
+	payload := domain.AppRollbackPayload{
+		ApplicationID: appID,
+		DeploymentID:  deployment.ID,
+		AppKey:        domain.GetAppKey(app),
+		ImageTag:      imageTag,
+		EnvVars:       envMap,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	job := &domain.Job{
+		TraceID:       uuid.New(),
+		ServerID:      app.ServerID,
+		ApplicationID: &appID,
+		DeploymentID:  &deployment.ID,
+		Type:          domain.JobTypeAppRollback,
+		Payload:       payloadBytes,
+	}
+
+	if _, err := s.jobSvc.Create(ctx, job); err != nil {
+		s.repo.UpdateStatus(ctx, appID, domain.AppStatusFailed)
+		return nil, fmt.Errorf("failed to create rollback job: %w", err)
+	}
+
+	return deployment, nil
+}
+
 func (s *Service) Start(ctx context.Context, appID int64) error {
 	app, err := s.repo.GetByID(ctx, appID)
 	if err != nil {

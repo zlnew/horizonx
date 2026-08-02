@@ -16,6 +16,7 @@ services:
       REDIS_ADDR: ${HORIZONX_REDIS_ADDR:-personal-redis:6379}
       JWT_SECRET: ${HORIZONX_JWT_SECRET:-changeme-dev-secret}
       JWT_EXPIRY: ${HORIZONX_JWT_EXPIRY:-24h}
+      WEBHOOK_URL: ${HORIZONX_WEBHOOK_URL:-}
     volumes:
       - .:/app
       - go-mod-cache:/go/pkg/mod

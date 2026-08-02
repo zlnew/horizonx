@@ -20,6 +20,11 @@ type JobWorker struct {
 
 	httpClient *HttpClient
 	executor   *executor.Executor
+
+	// appLocks serializes jobs that touch the same application workdir
+	// (P1-7). Two deploys — or a deploy and a stop — for the same app must
+	// never run concurrently: they share a directory and docker project.
+	appLocks *keyedMutex
 }
 
 func NewJobWorker(cfg *config.Config, log logger.Logger, httpClient HttpClient, executor executor.Executor) *JobWorker {
@@ -29,6 +34,7 @@ func NewJobWorker(cfg *config.Config, log logger.Logger, httpClient HttpClient, 
 
 		httpClient: &httpClient,
 		executor:   &executor,
+		appLocks:   newKeyedMutex(),
 	}
 }
 
@@ -99,6 +105,13 @@ func (w *JobWorker) pollAndExecuteJobs(ctx context.Context) error {
 func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 	w.log.Debug("processing job", "job_id", job.ID)
 
+	// Serialize jobs that share an application workdir (P1-7). App-scoped
+	// jobs carry ApplicationID; global jobs (metrics) don't and run freely.
+	if job.ApplicationID != nil {
+		unlock := w.appLocks.Lock(fmt.Sprintf("app-%d", *job.ApplicationID))
+		defer unlock()
+	}
+
 	if err := w.httpClient.StartJob(ctx, job.ID); err != nil {
 		w.log.Error("failed to mark job as running", "job_id", job.ID, "error", err)
 		return err
@@ -123,13 +136,16 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 }
 
 var jobTimeouts = map[domain.JobType]time.Duration{
-	domain.JobTypeAppDeploy:      30 * time.Second,
-	domain.JobTypeAppStart:       45 * time.Second,
+	// P0-2: deploy must be LONG — a real build (composer/npm/Go multi-stage)
+	// takes minutes, not seconds. The old 30s budget killed real builds.
+	domain.JobTypeAppDeploy:      15 * time.Minute,
+	domain.JobTypeAppRollback:    10 * time.Minute,
+	domain.JobTypeAppStart:       2 * time.Minute,
 	domain.JobTypeAppStop:        2 * time.Minute,
-	domain.JobTypeAppRestart:     10 * time.Minute,
-	domain.JobTypeAppHealthCheck: 30 * time.Second,
+	domain.JobTypeAppRestart:     2 * time.Minute,
+	domain.JobTypeAppHealthCheck: 1 * time.Minute,
 	domain.JobTypeAppDestroy:     5 * time.Minute,
-	domain.JobTypeMetricsCollect: 30 * time.Second,
+	domain.JobTypeMetricsCollect: 1 * time.Minute,
 }
 
 const defaultJobTimeout = 5 * time.Minute

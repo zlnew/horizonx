@@ -24,6 +24,17 @@ type AppRestartPayload = AppInfo
 
 type AppDestroyPayload = AppInfo
 
+// AppRollbackPayload tells the agent to bring the stack back to a previously
+// deployed image tag (P0-4). The image must already exist locally (built by an
+// earlier successful deploy of the same commit).
+type AppRollbackPayload struct {
+	ApplicationID int64  `json:"application_id"`
+	DeploymentID  int64  `json:"deployment_id"`
+	AppKey        string `json:"app_dir"`
+	ImageTag      string `json:"image_tag"`
+	EnvVars       map[string]string `json:"env_vars,omitempty"`
+}
+
 type AppHealthCheckPayload struct {
 	ServerID     uuid.UUID `json:"server_id"`
 	Applications []AppInfo `json:"applications"`

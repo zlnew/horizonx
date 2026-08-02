@@ -192,3 +192,19 @@ func (h *JobHandler) Finish(w http.ResponseWriter, r *http.Request) {
 		Data: job,
 	})
 }
+
+// Summary returns job queue counts by status.
+// P2-17: queue visibility — GET /jobs/summary.
+func (h *JobHandler) Summary(w http.ResponseWriter, r *http.Request) {
+	counts, err := h.svc.Summary(r.Context())
+	if err != nil {
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to get job summary",
+		})
+		return
+	}
+
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: counts,
+	})
+}

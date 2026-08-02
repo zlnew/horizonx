@@ -53,6 +53,9 @@ func (l *Listener) handleJobStarted(event any) {
 
 	case domain.JobTypeAppRestart:
 		_ = l.updateStatus(ctx, *evt.ApplicationID, domain.AppStatusRestarting)
+
+	case domain.JobTypeAppRollback:
+		_ = l.updateStatus(ctx, *evt.ApplicationID, domain.AppStatusDeploying)
 	}
 }
 
@@ -93,6 +96,14 @@ func (l *Listener) handleJobFinished(event any) {
 
 	case domain.JobTypeAppRestart:
 		_ = l.updateStatus(ctx, *evt.ApplicationID, domain.AppStatusRunning)
+
+	case domain.JobTypeAppRollback:
+		_ = l.updateStatus(ctx, *evt.ApplicationID, domain.AppStatusRunning)
+		err := l.svc.UpdateLastDeployment(ctx, *evt.ApplicationID)
+		if err != nil {
+			l.log.Error("failed to update application last deployment", "app_id", evt.ApplicationID)
+			return
+		}
 	}
 }
 

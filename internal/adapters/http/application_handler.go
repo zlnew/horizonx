@@ -253,6 +253,44 @@ func (h *ApplicationHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Rollback re-deploys the last successfully built image for an app (P0-4).
+func (h *ApplicationHandler) Rollback(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := domain.GetUserContext(r.Context())
+	if !ok {
+		h.writer.Write(w, http.StatusUnauthorized, &response.Response{
+			Message: "unauthorized",
+		})
+		return
+	}
+
+	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid application id",
+		})
+		return
+	}
+
+	deployment, err := h.svc.Rollback(r.Context(), appID, userCtx.ID)
+	if err != nil {
+		if errors.Is(err, domain.ErrApplicationNotFound) {
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "application not found",
+			})
+			return
+		}
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: err.Error(),
+		})
+		return
+	}
+
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Message: "rollback started",
+		Data:    deployment,
+	})
+}
+
 func (h *ApplicationHandler) Start(w http.ResponseWriter, r *http.Request) {
 	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
