@@ -63,6 +63,8 @@ func (m *Manager) GetDockerComposeFile(workDir string) (string, error) {
 
 func (m *Manager) GetDockerfile(workDir string) (string, error) {
 	files := []string{
+		"docker/Dockerfile.prod",
+		"Dockerfile.prod",
 		"docker/Dockerfile",
 		"Dockerfile",
 	}

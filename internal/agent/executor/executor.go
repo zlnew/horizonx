@@ -124,7 +124,7 @@ func (e *Executor) composeCmd(ctx context.Context, workDir string, args []string
 	if err != nil {
 		return "", err
 	}
-	fullArgs := append([]string{"-f", composeFile, "compose"}, args...)
+	fullArgs := append([]string{"compose", "-f", composeFile}, args...)
 	return e.docker.Cmd(ctx, workDir, fullArgs, handlers...)
 }
 
@@ -444,18 +444,6 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 		return err
 	}
 
-	// Get Dockerfile
-	dockerfilePath, err := e.docker.GetDockerfile(workDir)
-	if err != nil {
-		e.logFatalHandler(
-			fmt.Sprintf("failed to get Dockerfile, %s", err.Error()),
-			emit,
-			action,
-			domain.StepBuildPrepare,
-		)
-		return err
-	}
-
 	// Write user env
 	userEnvVars := payload.EnvVars
 	if len(userEnvVars) > 0 {
@@ -474,27 +462,9 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 	appImage := fmt.Sprintf("%s:%s", payload.AppKey, commitHash)
 	appContainerName := payload.AppKey
 
-	// Docker build image
-	if _, err := e.docker.Cmd(ctx, workDir, []string{"build", "-t", appImage, "-f", dockerfilePath, "."}, e.logStreamHandler(
-		emit,
-		action,
-		domain.StepDockerBuild,
-	)); err != nil {
-		e.logFatalHandler(
-			fmt.Sprintf("failed to build image, %s", err.Error()),
-			emit,
-			action,
-			domain.StepDockerBuild,
-		)
-		// CRITICAL (P0-1): a failed build must abort the deploy. Falling
-		// through used to run `compose down` on the RUNNING app and then
-		// `compose up` a broken/absent image — a bad build took the old,
-		// working app down. Return the error so the job is marked failed
-		// and the running stack is left untouched.
-		return err
-	}
-
-	// Write user and build env
+	// Write user and build env (APP_IMAGE + APP_CONTAINER_NAME must exist BEFORE
+	// `compose build` so the compose file's image: ${APP_IMAGE} interpolates to
+	// the rollback tag — rollback replays that exact tag).
 	envVars := make(map[string]string)
 
 	maps.Copy(envVars, userEnvVars)
@@ -509,6 +479,25 @@ func (e *Executor) deployApp(ctx context.Context, job *domain.Job, emit EmitHand
 			action,
 			domain.StepDockerBuild,
 		)
+		return err
+	}
+
+	// Build via compose (P2: multi-stage support). Building through compose
+	// (rather than a raw `docker build -f <Dockerfile>`) lets each service in
+	// the compose file pick its own build.target — a multi-stage Dockerfile
+	// whose last stage is e.g. nginx no longer produces the wrong runtime
+	// image. Compose tags each service per its image: field, so the primary
+	// app image lands on APP_IMAGE (the rollback tag).
+	if _, err := e.composeCmd(ctx, workDir, []string{"build"}, e.logStreamHandler(
+		emit,
+		action,
+		domain.StepDockerBuild,
+	)); err != nil {
+		// CRITICAL (P0-1): a failed build must abort the deploy. Falling
+		// through used to run `compose down` on the RUNNING app and then
+		// `compose up` a broken/absent image — a bad build took the old,
+		// working app down. Return the error so the job is marked failed
+		// and the running stack is left untouched.
 		return err
 	}
 

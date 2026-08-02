@@ -124,7 +124,7 @@ func emitNoop(any) {}
 
 func TestDeployBuildFailureAborts(t *testing.T) {
 	docker := &fakeDocker{cmdErrs: map[string]error{
-		"build -t demo-app-1:0123456789abcdef0123456789abcdef01234567 -f Dockerfile .": errors.New("build exploded"),
+		"compose -f compose.yml build": errors.New("build exploded"),
 	}}
 	git := &fakeGit{commit: "0123456789abcdef0123456789abcdef01234567", msg: "test"}
 
@@ -136,8 +136,8 @@ func TestDeployBuildFailureAborts(t *testing.T) {
 	}
 
 	for _, call := range docker.cmdCalls {
-		if strings.Contains(call, "compose") {
-			t.Fatalf("compose command executed after build failure: %q", call)
+		if strings.Contains(call, "compose up") || strings.Contains(call, "compose down") {
+			t.Fatalf("compose up/down executed after build failure: %q", call)
 		}
 	}
 }
@@ -158,13 +158,13 @@ func TestDeployUsesInPlaceRecreateWithoutDown(t *testing.T) {
 
 	var hasUp, hasDown, hasGate bool
 	for _, call := range docker.cmdCalls {
-		if strings.Contains(call, "compose up -d --force-recreate") {
+		if strings.Contains(call, "up -d --force-recreate") {
 			hasUp = true
 		}
 		if strings.Contains(call, "compose down") {
 			hasDown = true
 		}
-		if strings.Contains(call, "compose ps --format json") {
+		if strings.Contains(call, "ps --format json") {
 			hasGate = true
 		}
 	}
@@ -298,7 +298,7 @@ func TestRollbackUsesPreviousImageTag(t *testing.T) {
 
 	found := false
 	for _, call := range docker.cmdCalls {
-		if strings.Contains(call, "compose up -d --force-recreate") {
+		if strings.Contains(call, "up -d --force-recreate") {
 			found = true
 		}
 	}
