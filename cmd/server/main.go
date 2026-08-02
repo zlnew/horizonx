@@ -15,6 +15,7 @@ import (
 	"horizonx/internal/adapters/postgres"
 	"horizonx/internal/security"
 	"horizonx/internal/adapters/redis"
+	"horizonx/internal/adapters/webhook"
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
 	"horizonx/internal/adapters/ws/userws/subscribers"
@@ -111,6 +112,12 @@ func main() {
 
 	// P2-14: Prometheus registry (request counters + job queue gauges).
 	metricsRegistry := httpmetrics.NewRegistry(jobRepo, serverRepo, log)
+
+	// P2-15: deploy-event webhook (no-op when WEBHOOK_URL unset).
+	if cfg.WebhookURL != "" {
+		notifier := webhook.New(cfg.WebhookURL, applicationService, log)
+		bus.Subscribe("deployment_status_changed", notifier.Handle)
+	}
 
 	// HTTP Handlers
 	jsonDecoder := request.NewJSONDecoder()

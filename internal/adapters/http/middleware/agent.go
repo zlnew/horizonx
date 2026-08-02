@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"horizonx/internal/domain"
+	"horizonx/internal/logger"
+	"horizonx/internal/version"
 
 	"github.com/google/uuid"
 )
@@ -14,7 +16,7 @@ type serverIDKeyType int
 
 const ServerIDKey serverIDKeyType = 0
 
-func Agent(svc domain.ServerService) Middleware {
+func Agent(svc domain.ServerService, log logger.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
@@ -39,6 +41,18 @@ func Agent(svc domain.ServerService) Middleware {
 			if err != nil {
 				http.Error(w, "invalid credentials", http.StatusUnauthorized)
 				return
+			}
+
+			// P2-18: agent version pinning — warn once per mismatch so a
+			// stale agent can't silently drift from the server's behavior.
+			if agentVersion := r.Header.Get(version.AgentVersionHeader); agentVersion != "" && agentVersion != version.Version {
+				if log != nil {
+					log.Warn("agent version mismatch",
+						"server_id", server.ID,
+						"agent_version", agentVersion,
+						"server_version", version.Version,
+					)
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), ServerIDKey, server.ID)

@@ -53,7 +53,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	userStack.Use(middleware.CSRF(cfg))
 
 	agentStack := middleware.New()
-	agentStack.Use(middleware.Agent(deps.ServerService))
+	agentStack.Use(middleware.Agent(deps.ServerService, deps.Logger))
 
 	metricsReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermMetricsRead))
 

@@ -30,6 +30,10 @@ type Config struct {
 	AgentServerID       uuid.UUID
 	AgentJobWorkerCount int
 
+	// P2-15: optional webhook notified on deployment events.
+	// Discord-style: POSTed a JSON payload with a text content field.
+	WebhookURL string
+
 	RedisAddress  string
 	RedisUsername string
 	RedisPassword string
@@ -98,6 +102,9 @@ func Load() *Config {
 		}
 	}
 
+	// P2-15: optional webhook (e.g. Discord) notified on deploy events.
+	webhookURL := getEnv("WEBHOOK_URL", "")
+
 	// REDIS
 	redisAddress := getEnv("REDIS_ADDR", "localhost:6379")
 	redisUsername := getEnv("REDIS_USERNAME", "")
@@ -127,6 +134,8 @@ func Load() *Config {
 		AgentServerAPIToken: agentServerAPIToken,
 		AgentServerID:       agentServerID,
 		AgentJobWorkerCount: agentJobWorkerCount,
+
+		WebhookURL: webhookURL,
 
 		RedisAddress:  redisAddress,
 		RedisUsername: redisUsername,
