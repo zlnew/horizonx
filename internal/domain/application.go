@@ -116,6 +116,7 @@ type ApplicationService interface {
 	Delete(ctx context.Context, appID int64) error
 
 	Deploy(ctx context.Context, appID int64, deployedBy int64) (*Deployment, error)
+	Rollback(ctx context.Context, appID int64, deployedBy int64) (*Deployment, error)
 	Start(ctx context.Context, appID int64) error
 	Stop(ctx context.Context, appID int64) error
 	Restart(ctx context.Context, appID int64) error

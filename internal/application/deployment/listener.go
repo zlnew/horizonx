@@ -35,7 +35,10 @@ func (l *Listener) handleJobCreated(event any) {
 		return
 	}
 
-	if evt.DeploymentID == nil || evt.ApplicationID == nil || evt.Type != domain.JobTypeAppDeploy {
+	if evt.DeploymentID == nil || evt.ApplicationID == nil {
+		return
+	}
+	if evt.Type != domain.JobTypeAppDeploy && evt.Type != domain.JobTypeAppRollback {
 		return
 	}
 
@@ -54,7 +57,10 @@ func (l *Listener) handleJobStarted(event any) {
 		return
 	}
 
-	if evt.DeploymentID == nil || evt.ApplicationID == nil || evt.Type != domain.JobTypeAppDeploy {
+	if evt.DeploymentID == nil || evt.ApplicationID == nil {
+		return
+	}
+	if evt.Type != domain.JobTypeAppDeploy && evt.Type != domain.JobTypeAppRollback {
 		return
 	}
 
@@ -78,7 +84,10 @@ func (l *Listener) handleJobFinished(event any) {
 		return
 	}
 
-	if evt.DeploymentID == nil || evt.ApplicationID == nil || evt.Type != domain.JobTypeAppDeploy {
+	if evt.DeploymentID == nil || evt.ApplicationID == nil {
+		return
+	}
+	if evt.Type != domain.JobTypeAppDeploy && evt.Type != domain.JobTypeAppRollback {
 		return
 	}
 

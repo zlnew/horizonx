@@ -123,13 +123,16 @@ func (w *JobWorker) processJob(ctx context.Context, job domain.Job) error {
 }
 
 var jobTimeouts = map[domain.JobType]time.Duration{
-	domain.JobTypeAppDeploy:      30 * time.Second,
-	domain.JobTypeAppStart:       45 * time.Second,
+	// P0-2: deploy must be LONG — a real build (composer/npm/Go multi-stage)
+	// takes minutes, not seconds. The old 30s budget killed real builds.
+	domain.JobTypeAppDeploy:      15 * time.Minute,
+	domain.JobTypeAppRollback:    10 * time.Minute,
+	domain.JobTypeAppStart:       2 * time.Minute,
 	domain.JobTypeAppStop:        2 * time.Minute,
-	domain.JobTypeAppRestart:     10 * time.Minute,
-	domain.JobTypeAppHealthCheck: 30 * time.Second,
+	domain.JobTypeAppRestart:     2 * time.Minute,
+	domain.JobTypeAppHealthCheck: 1 * time.Minute,
 	domain.JobTypeAppDestroy:     5 * time.Minute,
-	domain.JobTypeMetricsCollect: 30 * time.Second,
+	domain.JobTypeMetricsCollect: 1 * time.Minute,
 }
 
 const defaultJobTimeout = 5 * time.Minute
