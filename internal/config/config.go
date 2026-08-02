@@ -34,6 +34,10 @@ type Config struct {
 	// Discord-style: POSTed a JSON payload with a text content field.
 	WebhookURL string
 
+	// AutoMigrate runs pending DB migrations at server boot (Laravel-style).
+	// Controlled by AUTO_MIGRATE, default true.
+	AutoMigrate bool
+
 	RedisAddress  string
 	RedisUsername string
 	RedisPassword string
@@ -105,6 +109,12 @@ func Load() *Config {
 	// P2-15: optional webhook (e.g. Discord) notified on deploy events.
 	webhookURL := getEnv("WEBHOOK_URL", "")
 
+	// Auto-migrate at boot unless explicitly disabled.
+	autoMigrate := true
+	if raw := strings.ToLower(os.Getenv("AUTO_MIGRATE")); raw != "" {
+		autoMigrate = raw == "1" || raw == "true" || raw == "yes"
+	}
+
 	// REDIS
 	redisAddress := getEnv("REDIS_ADDR", "localhost:6379")
 	redisUsername := getEnv("REDIS_USERNAME", "")
@@ -136,6 +146,8 @@ func Load() *Config {
 		AgentJobWorkerCount: agentJobWorkerCount,
 
 		WebhookURL: webhookURL,
+
+		AutoMigrate: autoMigrate,
 
 		RedisAddress:  redisAddress,
 		RedisUsername: redisUsername,

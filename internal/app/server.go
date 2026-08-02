@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	netHttp "net/http"
 	"os/signal"
 	"syscall"
@@ -58,6 +59,23 @@ func RunServer() error {
 	}
 	if cfg.JWTSecret == "" || (cfg.AppEnv == "production" && devDefaults[cfg.JWTSecret]) {
 		return errors.New("JWT_SECRET must be set to a strong random value (production refuses dev defaults)")
+	}
+
+	// Auto-migrate before serving (Laravel-style). Never serve on a stale
+	// schema; golang-migrate's advisory lock keeps concurrent boots safe.
+	if cfg.AutoMigrate {
+		log.Info("migrating database schema…")
+		ver, dirty, err := AutoMigrate(cfg.DatabaseURL)
+		if err != nil {
+			return fmt.Errorf("auto-migrate: %w", err)
+		}
+		if dirty {
+			log.Warn("schema is dirty at version %d — check migrations", ver)
+		} else {
+			log.Info("schema up to date", "version", ver)
+		}
+	} else {
+		log.Info("auto-migrate disabled (AUTO_MIGRATE=false)")
 	}
 
 	dbPool, err := postgres.Init(cfg.DatabaseURL)

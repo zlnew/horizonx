@@ -11,30 +11,73 @@ import (
 	"github.com/google/uuid"
 )
 
-// RunSetup bootstraps a HorizonX control plane: it generates secrets,
-// writes .env, emits a self-contained docker-compose.yml (postgres + redis +
-// server + dashboard) and prints systemd unit templates.
-//
-// Non-interactive by default — flags/env override everything, so it works in
-// scripts and CI as well as on a fresh box.
+// RunSetup bootstraps HorizonX. With flags it generates a setup dir
+// (non-interactive, script-friendly). With no flags it runs the interactive
+// wizard which walks through mode, preflight, install method, environment,
+// secrets, and provisioning.
 //
 // Usage:
 //
-//	horizonx setup                 # defaults into ./horizonx-setup
-//	horizonx setup --dir /opt/horizonx --host 203.0.113.10
+//	horizonx setup                        # interactive wizard
+//	horizonx setup --dir /opt/horizonx    # generate files only
+//	horizonx setup --mode agent --host x  # non-interactive wizard
 func RunSetup() error {
 	fs := flag.NewFlagSet("setup", flag.ExitOnError)
-	dir := fs.String("dir", "horizonx-setup", "output directory for generated files")
-	host := fs.String("host", "127.0.0.1", "public IP/FQDN agents and the dashboard will use to reach the server")
+	dir := fs.String("dir", "", "output directory for generated files (default: ./horizonx-setup)")
+	host := fs.String("host", "", "public IP/FQDN agents and the dashboard will use to reach the server")
 	httpAddr := fs.String("http-addr", ":3000", "server listen address")
 	serverTag := fs.String("server-tag", "latest", "horizonx server image tag")
 	dashboardTag := fs.String("dashboard-tag", "latest", "horizonx dashboard image tag")
-	agentVersion := fs.String("agent-version", "latest", "horizonx-agent binary version to install on app hosts")
+	mode := fs.String("mode", "", "install mode: full | server | agent | dashboard")
+	method := fs.String("method", "", "install method: docker | systemd (default: probe)")
+	admin := fs.String("admin", "", "admin email for the first dashboard user")
+	nonInteractive := fs.Bool("yes", false, "non-interactive (use defaults for anything not provided)")
+	generateOnly := fs.Bool("generate-only", false, "write files + print instructions, skip privileged install steps")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
 
-	outDir, err := filepath.Abs(*dir)
+	// Flag-mode (dir or host given) → legacy generation, no prompts.
+	if *dir != "" || *host != "" {
+		if *dir == "" {
+			*dir = "horizonx-setup"
+		}
+		if *host == "" {
+			*host = "127.0.0.1"
+		}
+		return generateSetup(*dir, *host, *httpAddr, *serverTag, *dashboardTag)
+	}
+
+	// No generation flags → wizard (interactive or --yes non-interactive).
+	opts := wizardOptions{
+		mode:         WizardMode(*mode),
+		method:       *method,
+		host:         *host,
+		admin:        *admin,
+		dir:          *dir,
+		httpAddr:     *httpAddr,
+		noTTY:        *nonInteractive || !stdinIsTTY(),
+		generateOnly: *generateOnly,
+	}
+	if *dir == "" {
+		opts.dir = "horizonx-setup"
+	}
+	return RunSetupWizard(opts)
+}
+
+// stdinIsTTY reports whether stdin is a terminal (interactive session).
+func stdinIsTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// generateSetup writes .env + docker-compose.yml + systemd units into dir.
+// Used by the flag-mode of setup and by the wizard's server/full paths.
+func generateSetup(dir, host, httpAddr, serverTag, dashboardTag string) error {
+	outDir, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
@@ -68,7 +111,7 @@ JWT_SECRET=%s
 JWT_EXPIRY=24h
 
 # Postgres (compose service below).
-DATABASE_URL=postgres://postgres:change-me@postgres:5432/horizonx?sslmode=disable
+DATABASE_URL=postgres://postgres:***@postgres:5432/horizonx?sslmode=disable
 
 # Redis (compose service below).
 REDIS_ADDR=redis:6379
@@ -87,7 +130,7 @@ AGENT_JOB_WORKER_COUNT=10
 
 # Optional: Discord-style webhook notified on deploy success/failure.
 # WEBHOOK_URL=https://discord.com/api/webhooks/...
-`, *httpAddr, jwtSecret, serverID.String(), agentSecret, *host, *host, serverID.String(), agentSecret, *host, *host)
+`, httpAddr, jwtSecret, serverID.String(), agentSecret, host, host, serverID.String(), agentSecret, host, host)
 
 	if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
 		return fmt.Errorf("write .env: %w", err)
@@ -151,7 +194,7 @@ volumes:
 networks:
   horizonx:
     driver: bridge
-`, *serverTag, *httpAddr, *dashboardTag)
+`, serverTag, httpAddr, dashboardTag)
 	if err := os.WriteFile(composePath, []byte(compose), 0o644); err != nil {
 		return fmt.Errorf("write compose: %w", err)
 	}
@@ -184,7 +227,7 @@ networks:
 	fmt.Println("  4. Install the agent on app hosts:")
 	fmt.Println("       curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash")
 	fmt.Printf("       HORIZONX_SERVER_ID=%s HORIZONX_SERVER_API_TOKEN=%s HORIZONX_API_URL=http://%s:3000 HORIZONX_WS_URL=ws://%s:3000/ws/agent horizonx agent\n",
-		serverID.String(), agentSecret, *host, *host)
+		serverID.String(), agentSecret, host, host)
 	fmt.Println()
 	fmt.Println("  Systemd units (bare-metal hosts instead of compose):")
 	fmt.Printf("    sudo cp %s/systemd/*.service /etc/systemd/system/\n", outDir)
@@ -192,14 +235,14 @@ networks:
 	fmt.Println()
 	fmt.Println("Run `horizonx setup --help` to see overrides.")
 
-	_ = agentVersion // reserved: will pin the agent install command per release
 	return nil
 }
 
+// randomHex returns n random bytes hex-encoded (2n chars).
 func randomHex(bytes int) (string, error) {
-	buf := make([]byte, bytes)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("crypto/rand: %w", err)
+	b := make([]byte, bytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(buf), nil
+	return hex.EncodeToString(b), nil
 }

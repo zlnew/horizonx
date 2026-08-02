@@ -63,51 +63,62 @@ Because the alternatives are either overkill or a pile of shell scripts.
 curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
 ```
 
-This fetches the latest release tarball, **verifies the SHA256 checksum**, and installs `horizonx` to `/usr/local/bin`.
+That's it — no `sudo` needed. The installer:
 
-### 2. Bootstrap the control plane
+- Fetches the latest release tarball + `SHA256SUMS`, **verifies the checksum**
+- Installs `horizonx` to `/usr/local/bin` — and **auto-elevates via sudo itself** if your user can't write there (re-running under `sudo` transparently)
+- For a rootless install instead: `HORIZONX_PREFIX=$HOME/.local curl -fsSL … | bash`
 
-```bash
-horizonx setup --host 203.0.113.10
-```
-
-Generates `./horizonx-setup/` with:
-
-- `.env` — strong random `JWT_SECRET`, server ID + agent token, DB/Redis wiring
-- `docker-compose.yml` — postgres + redis + server + dashboard in one command
-- `systemd/` — unit templates for bare-metal hosts
+### 2. Bootstrap the control plane (interactive wizard)
 
 ```bash
-cd horizonx-setup
-docker compose up -d          # control plane
-open http://<host>:8080       # dashboard
+horizonx setup
 ```
+
+The wizard walks you through everything — no manual config:
+
+1. **Mode** — full (server + dashboard + agent) · server only · agent only · dashboard only
+2. **Preflight** — checks git, docker, compose, postgres/redis reachability; tells you exactly what's missing and how to install it
+3. **Install method** — probes the box and recommends `docker compose` or bare-metal systemd (overridable)
+4. **Environment** — public host/IP, admin email
+5. **Secrets** — generates JWT secret, server ID, agent token
+6. **Apply** — writes `.env` + `docker-compose.yml` + systemd units, then starts the stack (or prints the exact commands, with `--generate-only`)
+
+Non-interactive for scripts/CI: `horizonx setup --mode full --yes` or the classic
+`horizonx setup --host 203.0.113.10` (generates `./horizonx-setup/` only).
 
 ### 3. Connect an agent to an app host
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
+horizonx setup --mode agent --yes
 ```
 
-Then, with the credentials from `horizonx setup`:
-
-```bash
-HORIZONX_SERVER_ID=<id> HORIZONX_SERVER_API_TOKEN=<token> \
-HORIZONX_API_URL=http://<host>:3000 HORIZONX_WS_URL=ws://<host>:3000/ws/agent \
-horizonx agent
-```
-
-For long-running installs, `horizonx setup` also prints systemd units:
-`sudo cp horizonx-setup/systemd/*.service /etc/systemd/system/` then
-`sudo systemctl daemon-reload && sudo systemctl enable --now horizonx-server`.
+Agent mode creates the `horizonx` system user, adds it to the docker group,
+generates a git SSH key (prints the public key to add to GitHub), writes the
+env file, and installs + starts the systemd unit. It reuses the control
+plane's credentials from the server `.env`, so no token juggling.
 
 ### 4. Deploy your first app
 
 In the dashboard: **Applications → New** → point at a git repo + branch, set env vars → **Deploy**. The agent clones, builds, and health-gates the rollout. Deployments, rollbacks, and job logs are all in the UI.
 
-### 5. Migrations
+### 5. Upgrading (self-contained)
 
-The compose file ships with a migrate gate — `horizonx migrate -op=up` runs before the server starts, so a fresh control plane always boots on a migrated schema.
+```bash
+horizonx upgrade
+```
+
+Downloads + checksum-verifies the new release, swaps the binary, and
+**restarts the running service itself** (systemd unit or compose stack) — you
+don't touch anything afterwards.
+
+### 6. Migrations
+
+Migrations run **automatically at server boot** — versioned, idempotent
+(no-op when up to date), and concurrency-safe (Postgres advisory lock, so two
+racing boots never conflict). Disable with `AUTO_MIGRATE=false`. Manual
+control stays available: `horizonx migrate -op=up|down|version|force`.
 
 ---
 
