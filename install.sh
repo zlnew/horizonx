@@ -73,7 +73,11 @@ ok "checksum verified"
 # this user, re-exec the script under sudo (saving it to a temp file first,
 # since a pipe can't be re-read).
 BIN_DIR="$PREFIX/bin"
-if [ "$(id -u)" -ne 0 ] && [ ! -w "$BIN_DIR" ]; then
+# Probe writability by CREATING the dir. A bare `[ ! -w "$BIN_DIR" ]` on a
+# non-existent path is always false, so it wrongly demands root even when
+# the prefix is user-writable (e.g. HORIZONX_PREFIX=~/.local on a fresh
+# box where ~/.local/bin does not exist yet).
+if [ "$(id -u)" -ne 0 ] && ! mkdir -p "$BIN_DIR" 2>/dev/null; then
   if command -v sudo >/dev/null 2>&1; then
     log "target ${BIN_DIR} needs root — re-running with sudo…"
     SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
