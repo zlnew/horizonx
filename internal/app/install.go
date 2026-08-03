@@ -18,17 +18,17 @@ import (
 // AgentProvision holds everything needed to install the agent.
 type AgentProvision struct {
 	// Env values for the agent.
-	APIURL     string // HORIZONX_API_URL
-	WSURL      string // HORIZONX_WS_URL
-	ServerID   string
+	APIURL      string // HORIZONX_API_URL
+	WSURL       string // HORIZONX_WS_URL
+	ServerID    string
 	ServerToken string
-	RedisAddr  string
+	RedisAddr   string
 
 	// User + paths (defaults: horizonx / /var/lib/horizonx / /etc/horizonx).
-	UserName string
+	UserName  string
 	GroupName string
-	DataDir  string
-	EnvDir   string
+	DataDir   string
+	EnvDir    string
 }
 
 // defaultAgentProvision fills user/path defaults.
@@ -41,22 +41,31 @@ func defaultAgentProvision() *AgentProvision {
 	}
 }
 
-// ProvisionAgent creates the user, docker group membership, SSH key, env
-// file, and systemd unit. Runs the privileged steps via sudo.
-func ProvisionAgent(p *AgentProvision) error {
-	steps := []struct {
-		name string
-		fn   func() error
-	}{
+// provisionStep is one named step of agent provisioning.
+type provisionStep struct {
+	name string
+	fn   func() error
+}
+
+// provisionSteps lists the agent provisioning steps in execution order.
+func (p *AgentProvision) provisionSteps() []provisionStep {
+	return []provisionStep{
 		{"create system user", p.createUser},
 		{"add docker group", p.addDockerGroup},
 		{"create directories", p.createDirs},
+		{"udev rules", p.writeUdevRules},
 		{"generate SSH key", p.genSSHKey},
 		{"write SSH config", p.writeSSHConfig},
 		{"write env file", p.writeEnvFile},
 		{"install systemd unit", p.installSystemdUnit},
 		{"enable service", p.enableService},
 	}
+}
+
+// ProvisionAgent creates the user, docker group membership, udev rules, SSH
+// key, env file, and systemd unit. Runs the privileged steps via sudo.
+func ProvisionAgent(p *AgentProvision) error {
+	steps := p.provisionSteps()
 	for _, s := range steps {
 		fmt.Printf("  • %s…\n", s.name)
 		if err := s.fn(); err != nil {
@@ -94,6 +103,53 @@ func (p *AgentProvision) createDirs() error {
 	}
 	_ = sudo("chown", "-R", p.UserName+":"+p.GroupName, p.DataDir)
 	_ = sudo("chmod", "700", filepath.Join(p.DataDir, ".ssh"))
+	return nil
+}
+
+// udevRuleFile is where the hardware-monitoring udev rules are installed.
+const udevRuleFile = "/etc/udev/rules.d/99-horizonx-hwmon.rules"
+
+// udevRulesContent returns the udev rules granting the unprivileged agent
+// read access to hardware metrics: Intel RAPL powercap, hwmon sensors,
+// thermal zones, and block device stats. Ported verbatim from
+// scripts/install-agent.sh.
+func udevRulesContent() string {
+	return `# Intel RAPL power metrics
+SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", ACTION=="add", RUN+="/bin/chmod 444 /sys/class/powercap/%k/energy_uj"
+SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", ACTION=="add", RUN+="/bin/chmod 444 /sys/class/powercap/%k/max_energy_range_uj"
+
+# Hardware monitoring sensors (temp, fan, voltage, power)
+SUBSYSTEM=="hwmon", ACTION=="add", RUN+="/bin/chmod -R a+r /sys/class/hwmon/%k"
+
+# Thermal zones
+SUBSYSTEM=="thermal", ACTION=="add", RUN+="/bin/chmod 444 /sys/class/thermal/%k/temp"
+
+# Block devices
+SUBSYSTEM=="block", ACTION=="add", RUN+="/bin/chmod 444 /sys/block/%k/stat"
+`
+}
+
+// writeUdevRules installs the hardware-monitoring udev rules, then reloads
+// and re-triggers udev so already-present devices get the new permissions
+// without a reboot. The udevadm calls are best-effort (the script runs them
+// with `|| true`); only the rules install is fatal. Also applies the
+// script's immediate cpufreq chmod (scaling_*_freq is read by the CPU
+// collector but has no matching udev subsystem rule).
+func (p *AgentProvision) writeUdevRules() error {
+	tmp := filepath.Join(os.TempDir(), "99-horizonx-hwmon.rules")
+	if err := os.WriteFile(tmp, []byte(udevRulesContent()), 0o644); err != nil {
+		return err
+	}
+	if err := sudo("cp", tmp, udevRuleFile); err != nil {
+		return err
+	}
+	_ = os.Remove(tmp)
+	_, _ = runCmd("udevadm", "control", "--reload-rules")
+	_, _ = runCmd("udevadm", "trigger", "--subsystem-match=powercap")
+	_, _ = runCmd("udevadm", "trigger", "--subsystem-match=hwmon")
+	_, _ = runCmd("udevadm", "trigger", "--subsystem-match=thermal")
+	_, _ = runCmd("udevadm", "trigger", "--subsystem-match=block")
+	_, _ = runCmd("chmod", "444", "/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq")
 	return nil
 }
 

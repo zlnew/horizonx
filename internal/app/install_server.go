@@ -1,0 +1,390 @@
+package app
+
+// `horizonx install server` — install OR upgrade the HorizonX docker bubble.
+//
+// Flow (locked with Maul, 2026-08-03):
+//   1. preflight   — probe docker socket access, compose >= 2.20, ports free
+//   2. generate    — write the full bubble tree at /opt/horizonx
+//   3. validate    — docker compose config --quiet (fail fast, readable error)
+//   4. apply       — docker compose up -d (stream output; re-run command on error)
+//   5. verify      — poll GET /health until the control plane answers
+//
+// --generate-only stops after step 2 (no privileged steps, no docker calls).
+// Dashboard is BUNDLED (MVP): the dashboard sub-project is part of the same
+// bubble, so there is no separate `install dashboard` command.
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// bubbleDir is where the docker bubble lives (root compose + sub-projects).
+const bubbleDir = "/opt/horizonx"
+
+// execCompose is the indirection point for docker compose invocations in the
+// install-server apply path, so tests can fake the daemon. Defaults to real
+// exec; tests override it. The variadic includes the compose subcommand
+// (e.g. "config", "up", "-d").
+var execCompose = func(args ...string) (string, error) {
+	return runCommand(context.Background(), "docker", append([]string{"compose"}, args...)...)
+}
+
+// InstallServerOptions carries the flags for `horizonx install server`.
+type InstallServerOptions struct {
+	Dir          string // bubble dir (default /opt/horizonx)
+	Host         string // public host agents/dashboard use
+	Admin        string // admin email (accepted, printed; provisioning of the first user is post-boot)
+	GenerateOnly bool
+	Yes          bool // non-interactive
+}
+
+// RunInstallServer installs or upgrades the HorizonX docker bubble.
+func RunInstallServer(opts InstallServerOptions) error {
+	dir := opts.Dir
+	if dir == "" {
+		dir = bubbleDir
+	}
+	host := opts.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
+	fmt.Println("horizonx install server — HorizonX docker bubble")
+	fmt.Println()
+
+	// 1. Preflight — probe capabilities, not binaries.
+	r := preflightFn()
+	if !r.DockerAccess {
+		if r.DockerGroupHint != "" {
+			return fmt.Errorf("docker is installed but the socket is not accessible.\n  Fix: %s\n  Re-run `horizonx install server` afterwards.", r.DockerGroupHint)
+		}
+		return fmt.Errorf("docker not found in PATH.\n  Install docker first: https://docs.docker.com/engine/install/\n  Then re-run `horizonx install server`.")
+	}
+	if !r.ComposeOK {
+		return fmt.Errorf("docker compose is too old (%s).\n  HorizonX needs Compose v2.20+ (the `include:` feature).\n  Update docker compose, then re-run.", r.ComposeVersion)
+	}
+	if !r.PortsFree {
+		return fmt.Errorf("signature ports are already in use (server %s / dashboard %s).\n  Free them or set HORIZONX_PORT / DASHBOARD_PORT in the .env.", ServerPort, DashboardPort)
+	}
+	fmt.Printf("  preflight: docker OK · compose %s OK · ports %s/%s free\n", r.ComposeVersion, ServerPort, DashboardPort)
+
+	// 2. Generate the bubble tree.
+	l, err := GenerateBubble(dir, host)
+	if err != nil {
+		return fmt.Errorf("generate bubble: %w", err)
+	}
+	fmt.Printf("  generated: %s (root compose + server/ + dashboard/)\n", l.Root)
+
+	if opts.GenerateOnly {
+		fmt.Println()
+		fmt.Println("✔ generate-only — nothing applied. Next steps:")
+		fmt.Printf("  1. cd %s\n", l.Root)
+		fmt.Println("  2. docker compose up -d          # postgres + redis + server + dashboard")
+		fmt.Printf("  3. open http://<host>:%s        # dashboard\n", DashboardPort)
+		return nil
+	}
+
+	// 3. Validate the compose before applying.
+	fmt.Println("  validating compose…")
+	if out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "config", "--quiet"); err != nil {
+		return fmt.Errorf("compose config invalid:\n%s\n  Re-run: cd %s && docker compose config", strings.TrimSpace(out), l.Root)
+	}
+
+	// 4. Apply. The CORE bubble (postgres + redis + server) comes up first;
+	//    the dashboard is best-effort because its image is loaded locally from
+	//    a release tarball and may not be present yet. Starting the core
+	//    separately means a missing dashboard image can never take down the
+	//    control plane.
+	fmt.Println("  starting core bubble (postgres + redis + server)…")
+	out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "postgres", "redis", "server")
+	if err != nil {
+		return fmt.Errorf("docker compose up failed: %s\n  Re-run: cd %s && docker compose up -d\n  (raw error above)", strings.TrimSpace(out), l.Root)
+	}
+
+	// 4b. Dashboard — fetch the latest dashboard release automatically, load
+	//     the image, then start it. Best-effort: any dashboard failure (network
+	//     down, release API unreachable, checksum mismatch) warns and skips —
+	//     a missing dashboard can never take down the control plane.
+	if tarball, err := fetchDashboardTarball(l.DashboardDir); err != nil {
+		fmt.Printf("  ⚠ dashboard image not available: %v\n", err)
+		fmt.Println("    The control plane is up; add the dashboard later:")
+		fmt.Println("      docker compose -f " + filepath.Join(l.Root, "docker-compose.yml") + " up -d dashboard")
+	} else {
+		fmt.Printf("  loading dashboard image (%s)…\n", filepath.Base(tarball))
+		if err := loadDockerImage(tarball); err != nil {
+			fmt.Printf("  ⚠ dashboard image load failed: %v (dashboard will be skipped)\n", err)
+		} else if upOut, upErr := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "dashboard"); upErr != nil {
+			fmt.Printf("  ⚠ dashboard start failed: %s (run later: docker compose -f %s up -d dashboard)\n", strings.TrimSpace(upOut), filepath.Join(l.Root, "docker-compose.yml"))
+		} else {
+			fmt.Println("  dashboard started")
+		}
+	}
+
+	// 5. Verify — poll the control plane health endpoint.
+	fmt.Printf("  waiting for control plane on http://127.0.0.1:%s/health…\n", ServerPort)
+	ok := pollHealthFn("http://127.0.0.1:" + ServerPort + "/health")
+	if !ok {
+		return fmt.Errorf("control plane did not become healthy within 30s.\n  Check: docker compose -f %s logs server\n  Re-run: cd %s && docker compose up -d", filepath.Join(l.Root, "docker-compose.yml"), l.Root)
+	}
+
+	fmt.Println()
+	fmt.Println("✔ HorizonX bubble is live.")
+	fmt.Printf("  Control plane : http://%s:%s\n", host, ServerPort)
+	fmt.Printf("  Dashboard     : http://%s:%s\n", host, DashboardPort)
+	if opts.Admin != "" {
+		fmt.Printf("  First login   : %s (password set during first boot)\n", opts.Admin)
+	} else {
+		fmt.Printf("  First login   : admin@horizonx.local (password set during first boot)\n")
+	}
+	fmt.Println()
+	fmt.Println("Install the agent on app hosts:")
+	fmt.Printf("  curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | HORIZONX_SERVER_ID=… HORIZONX_SERVER_API_TOKEN=… HORIZONX_API_URL=http://%s:%s HORIZONX_WS_URL=ws://%s:%s/ws/agent bash\n", host, ServerPort, host, ServerPort)
+	fmt.Println("  (or run `horizonx install agent` on the same box — it reads credentials from the server .env)")
+	return nil
+}
+
+// preflightFn is the indirection point for the capability probe, so tests can
+// fake a box without docker. Defaults to the real probe.
+var preflightFn = RunPreflight
+
+// pollHealthFn is the indirection point for the post-apply health check, so
+// tests can fake a healthy control plane without binding the signature port.
+var pollHealthFn = func(url string) bool {
+	return pollHealth(url, 30*time.Second)
+}
+
+// pollHealth polls url until it returns 200 or the timeout elapses.
+func pollHealth(url string, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	client := &http.Client{Timeout: 2 * time.Second}
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+		resp, err := client.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// InstallServerFlags parses `horizonx install server` flags.
+func InstallServerFlags(args []string) (InstallServerOptions, error) {
+	fs := flag.NewFlagSet("install server", flag.ExitOnError)
+	var opts InstallServerOptions
+	fs.StringVar(&opts.Dir, "dir", "", "bubble directory (default /opt/horizonx)")
+	fs.StringVar(&opts.Host, "host", "", "public host/IP agents + dashboard use (default 127.0.0.1)")
+	fs.StringVar(&opts.Admin, "admin", "", "admin email for the first dashboard user")
+	fs.BoolVar(&opts.GenerateOnly, "generate-only", false, "write files only, skip apply")
+	fs.BoolVar(&opts.Yes, "yes", false, "non-interactive")
+	if err := fs.Parse(args); err != nil {
+		return opts, err
+	}
+	return opts, nil
+}
+
+// findDashboardTarball looks for an existing dashboard image tarball in dir.
+// Naming convention: horizonx-dashboard-*.tar.gz / *.tgz (the `docker save`
+// artifact shipped with the dashboard release). Used as a fallback when the
+// release API is unreachable.
+func findDashboardTarball(dir string) string {
+	for _, pattern := range []string{"horizonx-dashboard-*.tar.gz", "horizonx-dashboard-*.tgz"} {
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err == nil && len(matches) > 0 {
+			return matches[0]
+		}
+	}
+	return ""
+}
+
+// dashboardReleaseRepo is where the dashboard image tarball + SHA256SUMS live.
+const dashboardReleaseRepo = "zlnew/horizonx-dashboard"
+
+// dashboardRelease describes a published dashboard image tarball.
+type dashboardRelease struct {
+	Tag        string // e.g. v0.3.0
+	TarballURL string // browser_download_url for the image tarball
+	SHAURL     string // browser_download_url for SHA256SUMS
+}
+
+// latestDashboardRelease resolves the latest dashboard release via the GitHub
+// API (unauthenticated; the install command only needs one call). It finds the
+// image tarball asset and its SHA256SUMS companion. Package var so tests can
+// fake the network (same pattern as execCompose / preflightFn).
+var latestDashboardRelease = func() (dashboardRelease, error) {
+	var rel dashboardRelease
+	apiURL := "https://api.github.com/repos/" + dashboardReleaseRepo + "/releases/latest"
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	if err != nil {
+		return rel, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return rel, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return rel, fmt.Errorf("release API returned %s", resp.Status)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return rel, err
+	}
+	var payload struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return rel, err
+	}
+	rel.Tag = payload.TagName
+	for _, a := range payload.Assets {
+		switch {
+		case strings.HasPrefix(a.Name, "horizonx-dashboard-") && strings.HasSuffix(a.Name, "-image.tar.gz"):
+			rel.TarballURL = a.BrowserDownloadURL
+		case a.Name == "SHA256SUMS":
+			rel.SHAURL = a.BrowserDownloadURL
+		}
+	}
+	if rel.TarballURL == "" {
+		return rel, fmt.Errorf("latest dashboard release %q has no image tarball asset", rel.Tag)
+	}
+	return rel, nil
+}
+
+// downloadFile fetches url into path (overwrites). Returns the bytes written.
+func downloadFile(url, path string) (int64, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("download %s returned %s", url, resp.Status)
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return 0, err
+	}
+	defer out.Close()
+	return io.Copy(out, resp.Body)
+}
+
+// verifySHA256SUMS checks tarballPath against a SHA256SUMS text (the
+// "hash  filename" lines format produced by sha256sum). It verifies the exact
+// basename of the tarball so a mismatched file can never pass.
+func verifySHA256SUMS(tarballPath, sumsText string) error {
+	base := filepath.Base(tarballPath)
+	var want string
+	for _, line := range strings.Split(sumsText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == base {
+			want = fields[0]
+			break
+		}
+	}
+	if want == "" {
+		return fmt.Errorf("SHA256SUMS has no entry for %s", base)
+	}
+	f, err := os.Open(tarballPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, want) {
+		return fmt.Errorf("checksum mismatch for %s: got %s want %s", base, got, want)
+	}
+	return nil
+}
+
+// fetchDashboardTarball returns a verified dashboard image tarball in dir,
+// downloading it from the latest dashboard release when needed. Resolution:
+//  1. If dir already has a tarball AND it matches the release SHA256SUMS,
+//     reuse it (idempotent re-run — no re-download).
+//  2. Otherwise download the latest release tarball + SHA256SUMS into dir,
+//     verify, and return it.
+//  3. If the release API is unreachable, fall back to any local tarball
+//     (unverified — caller treats dashboard as best-effort).
+func fetchDashboardTarball(dir string) (string, error) {
+	rel, err := latestDashboardRelease()
+	if err != nil {
+		if local := findDashboardTarball(dir); local != "" {
+			return local, nil
+		}
+		return "", fmt.Errorf("cannot resolve latest dashboard release: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	// Asset names: horizonx-dashboard-<tag>-image.tar.gz (tag INCLUDES the v,
+	// e.g. horizonx-dashboard-v0.3.0-image.tar.gz).
+	name := "horizonx-dashboard-" + rel.Tag + "-image.tar.gz"
+	tarballPath := filepath.Join(dir, name)
+	sumsPath := filepath.Join(dir, "SHA256SUMS")
+
+	// Reuse an existing tarball only when it passes the release checksum.
+	if _, err := os.Stat(tarballPath); err == nil && rel.SHAURL != "" {
+		if _, err := downloadFile(rel.SHAURL, sumsPath); err == nil {
+			if sums, rerr := os.ReadFile(sumsPath); rerr == nil && verifySHA256SUMS(tarballPath, string(sums)) == nil {
+				return tarballPath, nil
+			}
+		}
+	}
+
+	// Download the tarball fresh.
+	if _, err := downloadFile(rel.TarballURL, tarballPath); err != nil {
+		return "", fmt.Errorf("download dashboard tarball: %v", err)
+	}
+	if rel.SHAURL != "" {
+		if _, err := downloadFile(rel.SHAURL, sumsPath); err != nil {
+			return "", fmt.Errorf("download dashboard SHA256SUMS: %v", err)
+		}
+		sums, err := os.ReadFile(sumsPath)
+		if err != nil {
+			return "", err
+		}
+		if err := verifySHA256SUMS(tarballPath, string(sums)); err != nil {
+			return "", err
+		}
+	}
+	return tarballPath, nil
+}
+
+// loadDockerImage runs `docker load -i tarball` (best-effort check via the
+// compose executor path would double-wrap; use docker directly).
+func loadDockerImage(tarball string) error {
+	_, err := runCommand(context.Background(), "docker", "load", "-i", tarball)
+	return err
+}

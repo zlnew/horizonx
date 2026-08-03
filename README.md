@@ -69,35 +69,69 @@ That's it — no `sudo` needed. The installer:
 - Installs `horizonx` to `/usr/local/bin` — and **auto-elevates via sudo itself** if your user can't write there (re-running under `sudo` transparently)
 - For a rootless install instead: `HORIZONX_PREFIX=$HOME/.local curl -fsSL … | bash`
 
-### 2. Bootstrap the control plane (interactive wizard)
+### 2. Install the control plane (docker bubble)
 
 ```bash
-horizonx setup
+horizonx install server
 ```
 
-The wizard walks you through everything — no manual config:
+One command, one bubble. It installs (or upgrades) everything at `/opt/horizonx`:
 
-1. **Mode** — full (server + dashboard + agent) · server only · agent only · dashboard only
-2. **Preflight** — checks git, docker, compose, postgres/redis reachability; tells you exactly what's missing and how to install it
-3. **Install method** — probes the box and recommends `docker compose` or bare-metal systemd (overridable)
-4. **Environment** — public host/IP, admin email
-5. **Secrets** — generates JWT secret, server ID, agent token
-6. **Apply** — writes `.env` + `docker-compose.yml` + systemd units, then starts the stack (or prints the exact commands, with `--generate-only`)
+- **Server** — the control plane API, exposed on **port 4858**
+- **Dashboard** — the Vue UI, bundled and served on **port 4859**
+- **Postgres + Redis** — private to the bubble (no host ports)
 
-Non-interactive for scripts/CI: `horizonx setup --mode full --yes` or the classic
-`horizonx setup --host 203.0.113.10` (generates `./horizonx-setup/` only).
+The dashboard is fetched automatically: `install server` resolves the latest
+[horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard/releases)
+release, downloads the image tarball + SHA256SUMS, verifies the checksum, loads
+the image, and starts the dashboard. Nothing to download by hand — it's cached
+in `/opt/horizonx/dashboard/` and reused on upgrade (re-verified against the
+release checksum each time).
+
+If the dashboard can't be fetched (no network, release API unreachable), the
+install still succeeds with a warning — the control plane always comes up; add
+the dashboard later with `docker compose -f /opt/horizonx/docker-compose.yml up -d dashboard`.
+
+The flow is *preflight → generate → validate → apply → verify*:
+
+1. **Preflight** probes real capabilities — docker socket access, Compose ≥ 2.20,
+   free ports. If docker is installed but your user can't reach the socket, it
+   tells you exactly what to fix (`sudo usermod -aG docker $USER && re-login`).
+2. **Generate** writes the full bubble tree (root compose + `server/` + `dashboard/`).
+   Everything builds from the release tarball — **no registry pulls, ever**.
+3. **Validate** runs `docker compose config --quiet` before touching anything.
+4. **Apply** brings up postgres + redis + server, then fetches + loads + starts
+   the dashboard from its latest release (checksum-verified; best-effort).
+5. **Verify** polls `GET /health` on 4858 until the control plane answers, then
+   prints the URLs + first-login info.
+
+Preview without applying: `horizonx install server --generate-only`.
+
+The ports are signature ports, not common ones: **4858 = 0x4858 = ASCII "HX"**.
+Override with `HORIZONX_PORT` / `DASHBOARD_PORT` in `/opt/horizonx/.env`.
+
+Requirements: **Linux**, **Docker + Compose v2.20+** (the bubble uses the
+`include:` feature). Bare-metal/no-docker path: run `horizonx server` in the
+foreground with your own postgres/redis.
 
 ### 3. Connect an agent to an app host
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
-horizonx setup --mode agent --yes
+horizonx install agent
 ```
 
-Agent mode creates the `horizonx` system user, adds it to the docker group,
-generates a git SSH key (prints the public key to add to GitHub), writes the
-env file, and installs + starts the systemd unit. It reuses the control
-plane's credentials from the server `.env`, so no token juggling.
+On the same box as the server, `install agent` reads the credentials from the
+bubble's `.env` — no token juggling. On a different host, pass them:
+
+```bash
+horizonx install agent --server http://host:4858 --token <token>
+```
+
+The agent runs as the `horizonx` system user via **systemd** (never docker): it
+creates the user, adds it to the docker group, generates a git SSH key (prints
+the public key for GitHub), installs hardware-monitoring **udev rules**
+(powercap/hwmon/thermal/block), and starts the service.
 
 ### 4. Deploy your first app
 
@@ -125,7 +159,8 @@ control stays available: `horizonx migrate -op=up|down|version|force`.
 ## Requirements
 
 - **Linux** for the agent and server.
-- **PostgreSQL 13+** and **Redis** — or just use the bundled compose (postgres + redis included).
+- **Docker + Compose v2.20+** for the control plane (the `/opt/horizonx` bubble
+  bundles postgres + redis — no manual database setup).
 - **Docker + Compose** on each app host (the agent deploys with `docker compose`).
 - **Git** on each app host (the agent clones repos).
 
@@ -134,7 +169,7 @@ control stays available: `horizonx migrate -op=up|down|version|force`.
 ## Development
 
 ```bash
-# Unified binary (server/agent/setup/upgrade/migrate in one)
+# Unified binary (server/agent/install/upgrade/migrate in one)
 go build -o bin/horizonx ./cmd/horizonx
 bin/horizonx server         # run the control plane
 
