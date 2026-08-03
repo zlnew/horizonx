@@ -29,8 +29,12 @@ func newBubbleEnv(host string) (*bubbleEnv, error) {
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	// Internal convention: the server listens on :3000 INSIDE the bubble
+	// (matches the dashboard's nginx upstream `server:3000` and the compose
+	// port mapping 4858->3000). The signature port 4858 is what's exposed on
+	// the host interface via HORIZONX_PORT.
 	return &bubbleEnv{
-		HTTPAddr:         ":" + ServerPort,
+		HTTPAddr:         ":3000",
 		DashboardPort:    DashboardPort,
 		JWTSecret:        jwtSecret,
 		ServerID:         uuid.New().String(),
@@ -62,6 +66,7 @@ DATABASE_URL=postgres://postgres:%s@postgres:5432/horizonx?sslmode=disable
 
 # Redis (compose service in the root compose).
 REDIS_PASSWORD=%s
+REDIS_PASS=%s
 REDIS_ADDR=redis:6379
 
 # Agent credentials — one token per app host. Install the agent there with:
@@ -81,7 +86,7 @@ DASHBOARD_PORT=%s
 `,
 		e.HTTPAddr, e.JWTSecret,
 		e.PostgresPassword, e.PostgresPassword,
-		e.RedisPassword,
+		e.RedisPassword, e.RedisPassword,
 		e.ServerID, e.AgentSecret, ServerAPIURL(e.Host), ServerWSURL(e.Host),
 		e.ServerID, e.AgentSecret, ServerAPIURL(e.Host), ServerWSURL(e.Host),
 		ServerPort, e.DashboardPort,

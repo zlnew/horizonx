@@ -78,8 +78,17 @@ func GenerateBubble(dir, host string) (*BubbleLayout, error) {
 		DashboardCompose: filepath.Join(root, "dashboard", "docker-compose.yml"),
 	}
 
+	// Idempotency: keep an EXISTING .env on re-run (install = install-or-
+	// upgrade). Regenerating secrets would break the postgres/redis volumes
+	// already initialized with the old passwords — the server could never
+	// authenticate against them.
+	envContent := renderBubbleEnv(env)
+	if existing, err := os.ReadFile(l.EnvPath); err == nil && len(existing) > 0 {
+		envContent = string(existing)
+	}
+
 	files := map[string]string{
-		l.EnvPath:          renderBubbleEnv(env),
+		l.EnvPath:          envContent,
 		l.ComposeRoot:      bubbleComposeRoot,
 		l.ServerCompose:    bubbleComposeServer,
 		l.ServerDockerfile: bubbleServerDockerfile,
@@ -176,15 +185,23 @@ services:
 
 const bubbleServerDockerfile = `# HorizonX server image — built by the bubble's install.
 # Downloads the release tarball + SHA256SUMS from GitHub and verifies the
-# checksum BEFORE unpacking. No registry images involved (GHCR is blocked).
+# checksum BEFORE unpacking. No registry images involved (the registry is
+# billing-blocked).
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl
-ARG TARGETARCH
-RUN curl -fsSL https://github.com/zlnew/horizonx/releases/latest/download/horizonx-linux-${TARGETARCH}.tar.gz -o /tmp/hx.tgz \
+# Detect the build arch from uname (release tarballs use x86_64/arm64 —
+# BuildKit's automatic TARGETARCH arg is unreliable across builders).
+RUN ARCH=$(uname -m); \
+    case "$ARCH" in \
+      x86_64|amd64) ARCH=x86_64 ;; \
+      aarch64|arm64) ARCH=arm64 ;; \
+      *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL https://github.com/zlnew/horizonx/releases/latest/download/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
  && curl -fsSL https://github.com/zlnew/horizonx/releases/latest/download/SHA256SUMS -o /tmp/SHA256SUMS \
- && cd /tmp && grep "horizonx-linux-${TARGETARCH}.tar.gz" SHA256SUMS | sha256sum -c - \
- && tar -xzf /tmp/hx.tgz -C /usr/local/bin horizonx \
- && rm /tmp/hx.tgz /tmp/SHA256SUMS
+ && cd /tmp && grep "horizonx-linux-$ARCH.tar.gz" SHA256SUMS | sha256sum -c - \
+ && tar -xzf /tmp/horizonx-linux-$ARCH.tar.gz -C /usr/local/bin horizonx \
+ && rm /tmp/horizonx-linux-$ARCH.tar.gz /tmp/SHA256SUMS
 WORKDIR /etc/horizonx
 ENTRYPOINT ["horizonx"]
 CMD ["server"]

@@ -71,8 +71,11 @@ func TestGenerateBubbleEnvPorts(t *testing.T) {
 		t.Fatalf("read .env: %v", err)
 	}
 	s := string(env)
-	if !strings.Contains(s, "HTTP_ADDR=:4858") {
-		t.Errorf(".env missing HTTP_ADDR=:4858\n%s", s)
+	if !strings.Contains(s, "HTTP_ADDR=:3000") {
+		t.Errorf(".env missing HTTP_ADDR=:3000 (internal convention; host port is HORIZONX_PORT)\n%s", s)
+	}
+	if !strings.Contains(s, "HORIZONX_PORT=4858") {
+		t.Errorf(".env missing HORIZONX_PORT=4858 (signature host port)")
 	}
 	if !strings.Contains(s, "DASHBOARD_PORT=4859") {
 		t.Errorf(".env missing DASHBOARD_PORT=4859")
@@ -153,6 +156,29 @@ func TestGenerateBubbleDockerfileChecksum(t *testing.T) {
 	}
 }
 
+func TestGenerateBubblePreservesExistingEnv(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := GenerateBubble(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateBubble: %v", err)
+	}
+	// Simulate an existing .env (e.g. first install created it) and re-run:
+	// re-install must NOT regenerate secrets — volumes depend on them.
+	custom := "APP_ENV=production\nJWT_SECRET=keep-me\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(custom), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateBubble(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateBubble re-run: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != custom {
+		t.Errorf("re-run must preserve existing .env — got:\n%s", string(got))
+	}
+}
+
 func TestNewBubbleEnvUnique(t *testing.T) {
 	a, err := newBubbleEnv("h")
 	if err != nil {
@@ -166,7 +192,7 @@ func TestNewBubbleEnvUnique(t *testing.T) {
 		a.AgentSecret == b.AgentSecret || a.ServerID == b.ServerID {
 		t.Errorf("secrets must be unique per generation")
 	}
-	if a.HTTPAddr != ":4858" || a.DashboardPort != "4859" {
+	if a.HTTPAddr != ":3000" || a.DashboardPort != "4859" {
 		t.Errorf("bubbleEnv ports wrong: %s %s", a.HTTPAddr, a.DashboardPort)
 	}
 }
