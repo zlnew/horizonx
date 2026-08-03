@@ -1,7 +1,9 @@
 package app
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,6 +62,13 @@ func TestInstallServerApplyHealthCheck(t *testing.T) {
 	pollHealthFn = func(url string) bool { return true }
 	defer func() { pollHealthFn = oldPoll }()
 
+	// Dashboard step must not hit the real GitHub API in tests.
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{}, errors.New("network disabled in test")
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
 	dir := t.TempDir()
 	err := RunInstallServer(InstallServerOptions{Dir: dir, Host: "203.0.113.10"})
 	if err != nil {
@@ -110,6 +119,130 @@ func TestFindDashboardTarball(t *testing.T) {
 	}
 	if got := findDashboardTarball(dir); got != path {
 		t.Fatalf("expected %q, got %q", path, got)
+	}
+}
+
+func TestVerifySHA256SUMS(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "horizonx-dashboard-v0.3.0-image.tar.gz")
+	content := []byte("fake image tarball bytes")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	sums := sum + "  " + filepath.Base(path) + "\n"
+
+	if err := verifySHA256SUMS(path, sums); err != nil {
+		t.Errorf("expected match, got: %v", err)
+	}
+	// Wrong hash must fail.
+	if err := verifySHA256SUMS(path, strings.Repeat("0", 64)+"  "+filepath.Base(path)+"\n"); err == nil {
+		t.Error("expected checksum mismatch error")
+	}
+	// Missing entry must fail.
+	if err := verifySHA256SUMS(path, "deadbeef  some-other-file.tar.gz\n"); err == nil {
+		t.Error("expected missing-entry error")
+	}
+}
+
+func TestFetchDashboardTarballDownloadsAndVerifies(t *testing.T) {
+	// A fake "release server": serves the tarball + SHA256SUMS.
+	content := []byte("fake dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	tarballName := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + tarballName:
+			_, _ = w.Write(content)
+		case "/SHA256SUMS":
+			fmt.Fprintf(w, "%s  %s\n", sum, tarballName)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{
+			Tag:        "v0.3.0",
+			TarballURL: srv.URL + "/" + tarballName,
+			SHAURL:     srv.URL + "/SHA256SUMS",
+		}, nil
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	dir := t.TempDir()
+	got, err := fetchDashboardTarball(dir)
+	if err != nil {
+		t.Fatalf("fetchDashboardTarball: %v", err)
+	}
+	if filepath.Base(got) != tarballName {
+		t.Errorf("expected %s, got %s", tarballName, filepath.Base(got))
+	}
+	b, err := os.ReadFile(got)
+	if err != nil || string(b) != string(content) {
+		t.Errorf("downloaded content mismatch (err=%v)", err)
+	}
+	// SHA256SUMS companion should also be cached in the dir.
+	if _, err := os.Stat(filepath.Join(dir, "SHA256SUMS")); err != nil {
+		t.Errorf("SHA256SUMS not cached: %v", err)
+	}
+}
+
+func TestFetchDashboardTarballReusesVerifiedLocal(t *testing.T) {
+	// Pre-place a tarball that matches the release checksum → no re-download.
+	dir := t.TempDir()
+	content := []byte("existing dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	tarballName := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	if err := os.WriteFile(filepath.Join(dir, tarballName), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/SHA256SUMS" {
+			fmt.Fprintf(w, "%s  %s\n", sum, tarballName)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{Tag: "v0.3.0", TarballURL: srv.URL + "/nope", SHAURL: srv.URL + "/SHA256SUMS"}, nil
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	got, err := fetchDashboardTarball(dir)
+	if err != nil {
+		t.Fatalf("fetchDashboardTarball: %v", err)
+	}
+	if got != filepath.Join(dir, tarballName) {
+		t.Errorf("expected reuse of %s, got %s", tarballName, got)
+	}
+}
+
+func TestFetchDashboardTarballFallsBackToLocalWhenAPIUnreachable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "horizonx-dashboard-old.tar.gz")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{}, errors.New("api down")
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	got, err := fetchDashboardTarball(dir)
+	if err != nil {
+		t.Fatalf("expected local fallback, got error: %v", err)
+	}
+	if got != path {
+		t.Errorf("expected %s, got %s", path, got)
 	}
 }
 

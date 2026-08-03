@@ -15,9 +15,14 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -106,9 +111,16 @@ func RunInstallServer(opts InstallServerOptions) error {
 		return fmt.Errorf("docker compose up failed: %s\n  Re-run: cd %s && docker compose up -d\n  (raw error above)", strings.TrimSpace(out), l.Root)
 	}
 
-	// 4b. Dashboard — load the image if a tarball is available, then start it.
-	if tarball := findDashboardTarball(l.DashboardDir); tarball != "" {
-		fmt.Printf("  loading dashboard image (%s)…\n", tarball)
+	// 4b. Dashboard — fetch the latest dashboard release automatically, load
+	//     the image, then start it. Best-effort: any dashboard failure (network
+	//     down, release API unreachable, checksum mismatch) warns and skips —
+	//     a missing dashboard can never take down the control plane.
+	if tarball, err := fetchDashboardTarball(l.DashboardDir); err != nil {
+		fmt.Printf("  ⚠ dashboard image not available: %v\n", err)
+		fmt.Println("    The control plane is up; add the dashboard later:")
+		fmt.Println("      docker compose -f " + filepath.Join(l.Root, "docker-compose.yml") + " up -d dashboard")
+	} else {
+		fmt.Printf("  loading dashboard image (%s)…\n", filepath.Base(tarball))
 		if err := loadDockerImage(tarball); err != nil {
 			fmt.Printf("  ⚠ dashboard image load failed: %v (dashboard will be skipped)\n", err)
 		} else if upOut, upErr := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "dashboard"); upErr != nil {
@@ -116,10 +128,6 @@ func RunInstallServer(opts InstallServerOptions) error {
 		} else {
 			fmt.Println("  dashboard started")
 		}
-	} else {
-		fmt.Printf("  ⚠ no dashboard image tarball found in %s — dashboard not started.\n", l.DashboardDir)
-		fmt.Println("    Load the dashboard release tarball into the dir and re-run: docker compose -f " +
-			filepath.Join(l.Root, "docker-compose.yml") + " up -d dashboard")
 	}
 
 	// 5. Verify — poll the control plane health endpoint.
@@ -192,9 +200,10 @@ func InstallServerFlags(args []string) (InstallServerOptions, error) {
 	return opts, nil
 }
 
-// findDashboardTarball looks for a dashboard image tarball in dir. Naming
-// convention: horizonx-dashboard-*.tar.gz / *.tgz (the `docker save` artifact
-// shipped with the dashboard release).
+// findDashboardTarball looks for an existing dashboard image tarball in dir.
+// Naming convention: horizonx-dashboard-*.tar.gz / *.tgz (the `docker save`
+// artifact shipped with the dashboard release). Used as a fallback when the
+// release API is unreachable.
 func findDashboardTarball(dir string) string {
 	for _, pattern := range []string{"horizonx-dashboard-*.tar.gz", "horizonx-dashboard-*.tgz"} {
 		matches, err := filepath.Glob(filepath.Join(dir, pattern))
@@ -203,6 +212,174 @@ func findDashboardTarball(dir string) string {
 		}
 	}
 	return ""
+}
+
+// dashboardReleaseRepo is where the dashboard image tarball + SHA256SUMS live.
+const dashboardReleaseRepo = "zlnew/horizonx-dashboard"
+
+// dashboardRelease describes a published dashboard image tarball.
+type dashboardRelease struct {
+	Tag        string // e.g. v0.3.0
+	TarballURL string // browser_download_url for the image tarball
+	SHAURL     string // browser_download_url for SHA256SUMS
+}
+
+// latestDashboardRelease resolves the latest dashboard release via the GitHub
+// API (unauthenticated; the install command only needs one call). It finds the
+// image tarball asset and its SHA256SUMS companion. Package var so tests can
+// fake the network (same pattern as execCompose / preflightFn).
+var latestDashboardRelease = func() (dashboardRelease, error) {
+	var rel dashboardRelease
+	apiURL := "https://api.github.com/repos/" + dashboardReleaseRepo + "/releases/latest"
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	if err != nil {
+		return rel, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return rel, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return rel, fmt.Errorf("release API returned %s", resp.Status)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return rel, err
+	}
+	var payload struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return rel, err
+	}
+	rel.Tag = payload.TagName
+	for _, a := range payload.Assets {
+		switch {
+		case strings.HasPrefix(a.Name, "horizonx-dashboard-") && strings.HasSuffix(a.Name, "-image.tar.gz"):
+			rel.TarballURL = a.BrowserDownloadURL
+		case a.Name == "SHA256SUMS":
+			rel.SHAURL = a.BrowserDownloadURL
+		}
+	}
+	if rel.TarballURL == "" {
+		return rel, fmt.Errorf("latest dashboard release %q has no image tarball asset", rel.Tag)
+	}
+	return rel, nil
+}
+
+// downloadFile fetches url into path (overwrites). Returns the bytes written.
+func downloadFile(url, path string) (int64, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("download %s returned %s", url, resp.Status)
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return 0, err
+	}
+	defer out.Close()
+	return io.Copy(out, resp.Body)
+}
+
+// verifySHA256SUMS checks tarballPath against a SHA256SUMS text (the
+// "hash  filename" lines format produced by sha256sum). It verifies the exact
+// basename of the tarball so a mismatched file can never pass.
+func verifySHA256SUMS(tarballPath, sumsText string) error {
+	base := filepath.Base(tarballPath)
+	var want string
+	for _, line := range strings.Split(sumsText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == base {
+			want = fields[0]
+			break
+		}
+	}
+	if want == "" {
+		return fmt.Errorf("SHA256SUMS has no entry for %s", base)
+	}
+	f, err := os.Open(tarballPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, want) {
+		return fmt.Errorf("checksum mismatch for %s: got %s want %s", base, got, want)
+	}
+	return nil
+}
+
+// fetchDashboardTarball returns a verified dashboard image tarball in dir,
+// downloading it from the latest dashboard release when needed. Resolution:
+//  1. If dir already has a tarball AND it matches the release SHA256SUMS,
+//     reuse it (idempotent re-run — no re-download).
+//  2. Otherwise download the latest release tarball + SHA256SUMS into dir,
+//     verify, and return it.
+//  3. If the release API is unreachable, fall back to any local tarball
+//     (unverified — caller treats dashboard as best-effort).
+func fetchDashboardTarball(dir string) (string, error) {
+	rel, err := latestDashboardRelease()
+	if err != nil {
+		if local := findDashboardTarball(dir); local != "" {
+			return local, nil
+		}
+		return "", fmt.Errorf("cannot resolve latest dashboard release: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	// Asset names: horizonx-dashboard-<tag>-image.tar.gz (tag INCLUDES the v,
+	// e.g. horizonx-dashboard-v0.3.0-image.tar.gz).
+	name := "horizonx-dashboard-" + rel.Tag + "-image.tar.gz"
+	tarballPath := filepath.Join(dir, name)
+	sumsPath := filepath.Join(dir, "SHA256SUMS")
+
+	// Reuse an existing tarball only when it passes the release checksum.
+	if _, err := os.Stat(tarballPath); err == nil && rel.SHAURL != "" {
+		if _, err := downloadFile(rel.SHAURL, sumsPath); err == nil {
+			if sums, rerr := os.ReadFile(sumsPath); rerr == nil && verifySHA256SUMS(tarballPath, string(sums)) == nil {
+				return tarballPath, nil
+			}
+		}
+	}
+
+	// Download the tarball fresh.
+	if _, err := downloadFile(rel.TarballURL, tarballPath); err != nil {
+		return "", fmt.Errorf("download dashboard tarball: %v", err)
+	}
+	if rel.SHAURL != "" {
+		if _, err := downloadFile(rel.SHAURL, sumsPath); err != nil {
+			return "", fmt.Errorf("download dashboard SHA256SUMS: %v", err)
+		}
+		sums, err := os.ReadFile(sumsPath)
+		if err != nil {
+			return "", err
+		}
+		if err := verifySHA256SUMS(tarballPath, string(sums)); err != nil {
+			return "", err
+		}
+	}
+	return tarballPath, nil
 }
 
 // loadDockerImage runs `docker load -i tarball` (best-effort check via the

@@ -81,24 +81,16 @@ One command, one bubble. It installs (or upgrades) everything at `/opt/horizonx`
 - **Dashboard** — the Vue UI, bundled and served on **port 4859**
 - **Postgres + Redis** — private to the bubble (no host ports)
 
-**Dashboard tarball (one-time download):** the dashboard image ships as a
-release tarball (GHCR is not used). Drop it in before installing so the
-installer can load it:
+The dashboard is fetched automatically: `install server` resolves the latest
+[horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard/releases)
+release, downloads the image tarball + SHA256SUMS, verifies the checksum, loads
+the image, and starts the dashboard. Nothing to download by hand — it's cached
+in `/opt/horizonx/dashboard/` and reused on upgrade (re-verified against the
+release checksum each time).
 
-```bash
-sudo mkdir -p /opt/horizonx/dashboard
-sudo cp horizonx-dashboard-v0.3.0-image.tar.gz /opt/horizonx/dashboard/
-horizonx install server
-```
-
-Grab the tarball from the [horizonx-dashboard releases](https://github.com/zlnew/horizonx-dashboard/releases).
-If it's missing, the install still succeeds — it warns and skips the dashboard
-(core bubble first, always). Load + start it later:
-
-```bash
-docker load < /opt/horizonx/dashboard/horizonx-dashboard-v0.3.0-image.tar.gz
-docker compose -f /opt/horizonx/docker-compose.yml up -d dashboard
-```
+If the dashboard can't be fetched (no network, release API unreachable), the
+install still succeeds with a warning — the control plane always comes up; add
+the dashboard later with `docker compose -f /opt/horizonx/docker-compose.yml up -d dashboard`.
 
 The flow is *preflight → generate → validate → apply → verify*:
 
@@ -108,8 +100,8 @@ The flow is *preflight → generate → validate → apply → verify*:
 2. **Generate** writes the full bubble tree (root compose + `server/` + `dashboard/`).
    Everything builds from the release tarball — **no registry pulls, ever**.
 3. **Validate** runs `docker compose config --quiet` before touching anything.
-4. **Apply** brings up postgres + redis + server (the dashboard image is loaded
-   from its release tarball when present).
+4. **Apply** brings up postgres + redis + server, then fetches + loads + starts
+   the dashboard from its latest release (checksum-verified; best-effort).
 5. **Verify** polls `GET /health` on 4858 until the control plane answers, then
    prints the URLs + first-login info.
 
