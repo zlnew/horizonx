@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -86,5 +88,11 @@ DASHBOARD_PORT=%s
 	)
 }
 
-// randomHex is defined in setup.go (shared until setup.go is removed in the
-// CLI reshape); newBubbleEnv and renderBubbleEnv live here.
+// randomHex returns n random bytes hex-encoded (2n chars).
+func randomHex(bytes int) (string, error) {
+	b := make([]byte, bytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}

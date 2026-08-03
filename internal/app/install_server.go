@@ -157,8 +157,8 @@ func pollHealth(url string, timeout time.Duration) bool {
 	}
 }
 
-// installServerFlags parses `horizonx install server` flags.
-func installServerFlags(args []string) (InstallServerOptions, error) {
+// InstallServerFlags parses `horizonx install server` flags.
+func InstallServerFlags(args []string) (InstallServerOptions, error) {
 	fs := flag.NewFlagSet("install server", flag.ExitOnError)
 	var opts InstallServerOptions
 	fs.StringVar(&opts.Dir, "dir", "", "bubble directory (default /opt/horizonx)")
