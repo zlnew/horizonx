@@ -2,14 +2,38 @@ package app
 
 import (
 	"os"
+	"os/exec"
 	"testing"
 )
 
 func TestRuntimeActiveUnitNone(t *testing.T) {
-	// In the test container there is no horizonx unit; ActiveUnit must be "".
+	// On a bare box there is no horizonx unit; ActiveUnit must be "".
+	// On a real install (e.g. this dogfood box) the agent unit IS active —
+	// then the answer must still be one of our units, never a crash.
 	rt := DetectRuntime()
-	if got := rt.ActiveUnit(); got != "" {
-		t.Errorf("ActiveUnit = %q, want empty (test container has no units)", got)
+	got := rt.ActiveUnit()
+	if got == "" {
+		return // bare box — original assertion holds
+	}
+	if got != serverUnit && got != agentUnit {
+		t.Errorf("ActiveUnit = %q, want one of %q/%q", got, serverUnit, agentUnit)
+	}
+}
+
+func TestRuntimeDockerComposeDetection(t *testing.T) {
+	// If docker + compose are present, DockerCLI must be true. Regression
+	// test: the old check matched the version string for "v2", but modern
+	// compose reports "Docker Compose version 5.3.1" (no "v2") — so a
+	// working install was reported as DockerCLI=false.
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not on PATH")
+	}
+	if _, err := exec.Command("docker", "compose", "version").CombinedOutput(); err != nil {
+		t.Skip("docker compose plugin not available")
+	}
+	rt := DetectRuntime()
+	if !rt.DockerCLI {
+		t.Errorf("DockerCLI = false, want true (docker + compose are installed and working)")
 	}
 }
 

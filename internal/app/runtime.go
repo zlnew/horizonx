@@ -54,8 +54,14 @@ func DetectRuntime() *Runtime {
 	}
 
 	// Docker CLI + compose plugin?
+	// NOTE: do NOT match on the version string (e.g. Contains(out, "v2")) —
+	// modern compose reports "Docker Compose version 5.3.1", so a major-version
+	// literal false-negatives on working installs. `docker compose version`
+	// succeeding already proves the v2+ plugin is present (v1 standalone
+	// `docker-compose` has no `compose` subcommand and errors here).
 	if _, err := exec.LookPath("docker"); err == nil {
-		if out, err := exec.Command("docker", "compose", "version").CombinedOutput(); err == nil && strings.Contains(string(out), "v2") {
+		if out, err := exec.Command("docker", "compose", "version").CombinedOutput(); err == nil &&
+			strings.Contains(strings.ToLower(string(out)), "compose version") {
 			rt.DockerCLI = true
 		}
 	}
