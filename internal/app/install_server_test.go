@@ -99,6 +99,20 @@ func TestInstallServerApplyFailsOnBadCompose(t *testing.T) {
 	}
 }
 
+func TestFindDashboardTarball(t *testing.T) {
+	dir := t.TempDir()
+	if got := findDashboardTarball(dir); got != "" {
+		t.Fatalf("expected no tarball in empty dir, got %q", got)
+	}
+	path := filepath.Join(dir, "horizonx-dashboard-0.2.0.tar.gz")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := findDashboardTarball(dir); got != path {
+		t.Fatalf("expected %q, got %q", path, got)
+	}
+}
+
 func TestPollHealth(t *testing.T) {
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -95,11 +95,31 @@ func RunInstallServer(opts InstallServerOptions) error {
 		return fmt.Errorf("compose config invalid:\n%s\n  Re-run: cd %s && docker compose config", strings.TrimSpace(out), l.Root)
 	}
 
-	// 4. Apply.
-	fmt.Println("  starting bubble (docker compose up -d)…")
-	out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d")
+	// 4. Apply. The CORE bubble (postgres + redis + server) comes up first;
+	//    the dashboard is best-effort because its image is loaded locally from
+	//    a release tarball and may not be present yet. Starting the core
+	//    separately means a missing dashboard image can never take down the
+	//    control plane.
+	fmt.Println("  starting core bubble (postgres + redis + server)…")
+	out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "postgres", "redis", "server")
 	if err != nil {
 		return fmt.Errorf("docker compose up failed: %s\n  Re-run: cd %s && docker compose up -d\n  (raw error above)", strings.TrimSpace(out), l.Root)
+	}
+
+	// 4b. Dashboard — load the image if a tarball is available, then start it.
+	if tarball := findDashboardTarball(l.DashboardDir); tarball != "" {
+		fmt.Printf("  loading dashboard image (%s)…\n", tarball)
+		if err := loadDockerImage(tarball); err != nil {
+			fmt.Printf("  ⚠ dashboard image load failed: %v (dashboard will be skipped)\n", err)
+		} else if upOut, upErr := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "dashboard"); upErr != nil {
+			fmt.Printf("  ⚠ dashboard start failed: %s (run later: docker compose -f %s up -d dashboard)\n", strings.TrimSpace(upOut), filepath.Join(l.Root, "docker-compose.yml"))
+		} else {
+			fmt.Println("  dashboard started")
+		}
+	} else {
+		fmt.Printf("  ⚠ no dashboard image tarball found in %s — dashboard not started.\n", l.DashboardDir)
+		fmt.Println("    Load the dashboard release tarball into the dir and re-run: docker compose -f " +
+			filepath.Join(l.Root, "docker-compose.yml") + " up -d dashboard")
 	}
 
 	// 5. Verify — poll the control plane health endpoint.
@@ -170,4 +190,24 @@ func InstallServerFlags(args []string) (InstallServerOptions, error) {
 		return opts, err
 	}
 	return opts, nil
+}
+
+// findDashboardTarball looks for a dashboard image tarball in dir. Naming
+// convention: horizonx-dashboard-*.tar.gz / *.tgz (the `docker save` artifact
+// shipped with the dashboard release).
+func findDashboardTarball(dir string) string {
+	for _, pattern := range []string{"horizonx-dashboard-*.tar.gz", "horizonx-dashboard-*.tgz"} {
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err == nil && len(matches) > 0 {
+			return matches[0]
+		}
+	}
+	return ""
+}
+
+// loadDockerImage runs `docker load -i tarball` (best-effort check via the
+// compose executor path would double-wrap; use docker directly).
+func loadDockerImage(tarball string) error {
+	_, err := runCommand(context.Background(), "docker", "load", "-i", tarball)
+	return err
 }
