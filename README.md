@@ -81,6 +81,25 @@ One command, one bubble. It installs (or upgrades) everything at `/opt/horizonx`
 - **Dashboard** — the Vue UI, bundled and served on **port 4859**
 - **Postgres + Redis** — private to the bubble (no host ports)
 
+**Dashboard tarball (one-time download):** the dashboard image ships as a
+release tarball (GHCR is not used). Drop it in before installing so the
+installer can load it:
+
+```bash
+sudo mkdir -p /opt/horizonx/dashboard
+sudo cp horizonx-dashboard-v0.3.0-image.tar.gz /opt/horizonx/dashboard/
+horizonx install server
+```
+
+Grab the tarball from the [horizonx-dashboard releases](https://github.com/zlnew/horizonx-dashboard/releases).
+If it's missing, the install still succeeds — it warns and skips the dashboard
+(core bubble first, always). Load + start it later:
+
+```bash
+docker load < /opt/horizonx/dashboard/horizonx-dashboard-v0.3.0-image.tar.gz
+docker compose -f /opt/horizonx/docker-compose.yml up -d dashboard
+```
+
 The flow is *preflight → generate → validate → apply → verify*:
 
 1. **Preflight** probes real capabilities — docker socket access, Compose ≥ 2.20,
