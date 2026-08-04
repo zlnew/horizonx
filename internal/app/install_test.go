@@ -51,6 +51,45 @@ func TestProvisionStepsIncludeUdevRules(t *testing.T) {
 	}
 }
 
+// TestProvisionStepsIncludeKnownHosts pins the known_hosts population step in
+// the agent provisioning sequence, directly after "write SSH config". Without
+// it the agent's StrictHostKeyChecking yes config would have an empty
+// known_hosts and git deploys would fail host verification (Maul, 2026-08-04).
+func TestProvisionStepsIncludeKnownHosts(t *testing.T) {
+	p := &AgentProvision{}
+	var names []string
+	for _, s := range p.provisionSteps() {
+		names = append(names, s.name)
+	}
+	found := -1
+	for i, n := range names {
+		if n == "populate known_hosts" {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		t.Fatalf("provision steps %v missing \"populate known_hosts\"", names)
+	}
+	if names[found-1] != "write SSH config" {
+		t.Errorf("known_hosts step at index %d, want it directly after \"write SSH config\": %v", found, names)
+	}
+}
+
+// TestGitProvidersPinned pins the set of git hosts seeded into known_hosts,
+// ported from scripts/install-agent.sh.
+func TestGitProvidersPinned(t *testing.T) {
+	want := []string{"github.com", "gitlab.com", "bitbucket.org", "ssh.dev.azure.com", "vs-ssh.visualstudio.com"}
+	if len(gitProviders) != len(want) {
+		t.Fatalf("gitProviders = %v, want %v", gitProviders, want)
+	}
+	for i, w := range want {
+		if gitProviders[i] != w {
+			t.Errorf("gitProviders[%d] = %q, want %q", i, gitProviders[i], w)
+		}
+	}
+}
+
 // TestWriteSSHConfigTempPath pins the self-destruct fix: the temp file must
 // NOT be the destination path (writing the destination then `sudo cp X X`
 // errors "same file" and the cleanup remove deletes the config — the exact

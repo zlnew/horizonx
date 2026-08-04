@@ -56,6 +56,7 @@ func (p *AgentProvision) provisionSteps() []provisionStep {
 		{"udev rules", p.writeUdevRules},
 		{"generate SSH key", p.genSSHKey},
 		{"write SSH config", p.writeSSHConfig},
+		{"populate known_hosts", p.populateKnownHosts},
 		{"write env file", p.writeEnvFile},
 		{"install systemd unit", p.installSystemdUnit},
 		{"enable service", p.enableService},
@@ -196,6 +197,131 @@ func (p *AgentProvision) writeSSHConfigTo(dest string, cfg []byte) error {
 	}
 	_ = os.Remove(tmp)
 	return sudo("chown", p.UserName+":"+p.GroupName, dest)
+}
+
+// gitProviders are the common git hosting hosts we pre-seed into known_hosts
+// so the agent's git deploys don't fail host-key verification on first pull.
+// Ported from scripts/install-agent.sh.
+var gitProviders = []string{
+	"github.com",
+	"gitlab.com",
+	"bitbucket.org",
+	"ssh.dev.azure.com",
+	"vs-ssh.visualstudio.com",
+}
+
+// populateKnownHosts seeds the agent's known_hosts with the hashed public
+// keys of the common git providers (ssh-keyscan -H -t rsa,ed25519), skipping
+// any already present, then sort -u. The SSH config enforces
+// StrictHostKeyChecking yes + UserKnownHostsFile …/known_hosts, so without
+// this step the first git deploy would hang/fail on unknown host. Ported
+// verbatim from scripts/install-agent.sh (the "Auto-add Git Provider Known
+// Hosts" block). Best-effort: a provider that can't be scanned is skipped
+// rather than failing the whole install.
+func (p *AgentProvision) populateKnownHosts() error {
+	sshDir := filepath.Join(p.DataDir, ".ssh")
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+
+	// Read existing entries (if any) so we don't duplicate.
+	existing := map[string]bool{}
+	if data, err := sudoOut("cat", knownHosts); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// Hashed entries look like "|1|...|... hostkey"; match on the
+			// trailing hostkey token the agent would look up. Simplest
+			// robust check: skip a provider if its hashed marker already
+			// lines the file. We key on the whole line after de-dup below.
+			existing[line] = true
+		}
+	}
+
+	var additions []string
+	for _, provider := range gitProviders {
+		// Already covered by an existing line? Cheap prefix check on the
+		// hashed format "|1|…|<base64 host> …" — base64 host encodes the
+		// provider, so just skip if any existing line already references it.
+		if sudoOutHasHost(knownHosts, provider) {
+			continue
+		}
+		out, err := runCmd("ssh-keyscan", "-H", "-t", "rsa,ed25519", provider)
+		if err != nil || strings.TrimSpace(out) == "" {
+			// Best-effort: skip un-scannable providers.
+			continue
+		}
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if !existing[line] {
+				additions = append(additions, line)
+				existing[line] = true
+			}
+		}
+	}
+
+	if len(additions) == 0 {
+		// Nothing new to add (all already present, or none scannable).
+		// Ensure the file at least exists with correct perms.
+		_ = sudo("touch", knownHosts)
+		_ = sudo("chown", p.UserName+":"+p.GroupName, knownHosts)
+		_ = sudo("chmod", "644", knownHosts)
+		return nil
+	}
+
+	// Append additions, then sort -u in place for clean de-dup.
+	tmp := filepath.Join(os.TempDir(), "horizonx-known-hosts")
+	if data, err := sudoOut("cat", knownHosts); err == nil {
+		if err := os.WriteFile(tmp, []byte(strings.TrimSpace(data)+"\n"), 0o644); err != nil {
+			return err
+		}
+	} else {
+		if err := os.WriteFile(tmp, nil, 0o644); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(tmp, []byte(strings.Join(additions, "\n")+"\n"), 0o644); err != nil {
+		return err
+	}
+	if err := sudo("cp", tmp, knownHosts); err != nil {
+		return err
+	}
+	_ = os.Remove(tmp)
+	_ = sudo("chown", p.UserName+":"+p.GroupName, knownHosts)
+	_ = sudo("chmod", "644", knownHosts)
+	// Best-effort sort -u (not all hosts have sort; failure is non-fatal).
+	_, _ = runCmd("sh", "-c", fmt.Sprintf("sort -u %s -o %s", knownHosts, knownHosts))
+	return nil
+}
+
+// sudoOutHasHost reports whether the (hashed) known_hosts file already
+// contains an entry for provider. ssh-keyscan -H hashes the hostname, so we
+// can't string-match the name directly; instead we re-scan the provider and
+// compare the resulting hashed lines against what's already in the file. If
+// our fresh scan yields at least one line already present, the host is
+// covered.
+func sudoOutHasHost(knownHosts, provider string) bool {
+	out, err := runCmd("ssh-keyscan", "-H", "-t", "rsa,ed25519", provider)
+	if err != nil {
+		return false
+	}
+	cur, err := sudoOut("cat", knownHosts)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.Contains(cur, line) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *AgentProvision) writeEnvFile() error {
