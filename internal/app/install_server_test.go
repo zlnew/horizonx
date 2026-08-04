@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -80,6 +81,59 @@ func TestInstallServerApplyHealthCheck(t *testing.T) {
 	}
 }
 
+func TestInstallServerUpgradeAllowsBusyPorts(t *testing.T) {
+	// Regression: `install server` on an existing bubble (upgrade path) must
+	// not fail when the signature ports are busy — the bubble owns them.
+	// (v0.3.3→v0.3.4 fix; Maul hit this re-running install over a live bubble.)
+	restore := setExecCompose(func(args ...string) (string, error) { return "", nil })
+	defer restore()
+
+	oldPre := preflightFn
+	preflightFn = func() PreflightResult {
+		return PreflightResult{DockerAccess: true, ComposeOK: true, ComposeVersion: "5.3.1", PortsFree: false}
+	}
+	defer func() { preflightFn = oldPre }()
+
+	oldPoll := pollHealthFn
+	pollHealthFn = func(url string) bool { return true }
+	defer func() { pollHealthFn = oldPoll }()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{}, errors.New("network disabled in test")
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	dir := t.TempDir()
+	// Simulate an existing bubble: .env present (upgrade, not first install).
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("DATABASE_URL=postgres://x\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	err := RunInstallServer(InstallServerOptions{Dir: dir, Host: "203.0.113.10"})
+	if err != nil {
+		t.Fatalf("upgrade with busy ports must succeed, got: %v", err)
+	}
+}
+
+func TestInstallServerFirstInstallFailsOnBusyPorts(t *testing.T) {
+	// First install (no .env) + busy ports → still an error.
+	oldPre := preflightFn
+	preflightFn = func() PreflightResult {
+		return PreflightResult{DockerAccess: true, ComposeOK: true, ComposeVersion: "5.3.1", PortsFree: false}
+	}
+	defer func() { preflightFn = oldPre }()
+
+	dir := t.TempDir()
+	err := RunInstallServer(InstallServerOptions{Dir: dir, Host: "203.0.113.10"})
+	if err == nil {
+		t.Fatal("first install with busy ports must fail")
+	}
+	if !strings.Contains(err.Error(), "signature ports") {
+		t.Errorf("expected signature-ports error, got: %v", err)
+	}
+}
+
 func TestInstallServerApplyFailsOnBadCompose(t *testing.T) {
 	restore := setExecCompose(func(args ...string) (string, error) {
 		// Production calls: execCompose("-f", path, "config", "--quiet").
@@ -105,6 +159,49 @@ func TestInstallServerApplyFailsOnBadCompose(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "compose config invalid") {
 		t.Errorf("expected actionable compose error, got: %v", err)
+	}
+}
+
+// TestInstallServerAuthFailureDiagnosis pins the stale-volume remediation:
+// when the health poll fails AND the server log shows the postgres auth
+// signature, the error must tell the user to reset volumes (not just dump a
+// generic "did not become healthy").
+func TestInstallServerAuthFailureDiagnosis(t *testing.T) {
+	restore := setExecCompose(func(args ...string) (string, error) {
+		// config --quiet OK, up OK, but `compose logs server` shows the auth
+		// crash-loop signature.
+		for _, a := range args {
+			if a == "logs" {
+				return "server-1  | FATAL: auto-migrate: password authentication failed for user \"postgres\" (SQLSTATE 28P01)\n", nil
+			}
+		}
+		return "", nil
+	})
+	defer restore()
+
+	oldPre := preflightFn
+	preflightFn = func() PreflightResult {
+		return PreflightResult{DockerAccess: true, ComposeOK: true, ComposeVersion: "5.3.1", PortsFree: true}
+	}
+	defer func() { preflightFn = oldPre }()
+
+	oldPoll := pollHealthFn
+	pollHealthFn = func(url string) bool { return false }
+	defer func() { pollHealthFn = oldPoll }()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{}, errors.New("network disabled in test")
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	dir := t.TempDir()
+	err := RunInstallServer(InstallServerOptions{Dir: dir, Host: "203.0.113.10"})
+	if err == nil {
+		t.Fatal("expected error when health never becomes OK")
+	}
+	if !strings.Contains(err.Error(), "password") || !strings.Contains(err.Error(), "down -v") {
+		t.Errorf("expected stale-volume remediation, got: %v", err)
 	}
 }
 
@@ -268,5 +365,59 @@ func TestPollHealth(t *testing.T) {
 	gone.Close()
 	if pollHealth(url, 500*time.Millisecond) {
 		t.Error("pollHealth should fail when endpoint is unreachable")
+	}
+}
+
+func TestHasBubbleVolumes(t *testing.T) {
+	origRun := runCommand
+	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
+		// Real docker compose prefixes with the project name: for a bubble at
+		// /opt/horizonx the project is `horizonx`, so the volume is
+		// `horizonx_horizonx_pgdata`.
+		return "horizonx_horizonx_pgdata\nother-volume\n", nil
+	}
+	defer func() { runCommand = origRun }()
+
+	if !hasBubbleVolumes("/opt/horizonx") {
+		t.Error("hasBubbleVolumes should detect horizonx_pgdata")
+	}
+}
+
+func TestHasBubbleVolumesBareName(t *testing.T) {
+	origRun := runCommand
+	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
+		// A bare `horizonx_pgdata` (hand-created or old layout) still counts.
+		return "horizonx_pgdata\n", nil
+	}
+	defer func() { runCommand = origRun }()
+
+	if !hasBubbleVolumes("/opt/horizonx") {
+		t.Error("hasBubbleVolumes should detect bare horizonx_pgdata")
+	}
+}
+
+func TestHasBubbleVolumesNoVolumes(t *testing.T) {
+	origRun := runCommand
+	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
+		return "unrelated-volume\n", nil
+	}
+	defer func() { runCommand = origRun }()
+
+	if hasBubbleVolumes("/opt/horizonx") {
+		t.Error("hasBubbleVolumes should be false when only unrelated volumes exist")
+	}
+}
+
+func TestHasBubbleVolumesProjectPrefixed(t *testing.T) {
+	origRun := runCommand
+	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
+		// Real docker prefixes with the compose project name
+		// (e.g. bubble dir /tmp/test → project `test` → `test_horizonx_pgdata`).
+		return "test_horizonx_pgdata\n", nil
+	}
+	defer func() { runCommand = origRun }()
+
+	if !hasBubbleVolumes("/tmp/test") {
+		t.Error("hasBubbleVolumes should detect project-prefixed horizonx volumes")
 	}
 }
