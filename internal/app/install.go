@@ -176,13 +176,26 @@ func (p *AgentProvision) writeSSHConfig() error {
   StrictHostKeyChecking yes
   IdentitiesOnly yes
 `, key, sshDir)
-	tmp := filepath.Join(sshDir, "config")
-	if err := os.WriteFile(tmp, []byte(cfg), 0o644); err != nil {
+	dest := filepath.Join(sshDir, "config")
+	return p.writeSSHConfigTo(dest, []byte(cfg))
+}
+
+// writeSSHConfigTo writes the ssh config to dest via a real temp file. The
+// temp file must NOT be the destination: writing the destination directly
+// then `sudo cp X X` errors "same file", and the cleanup remove deletes the
+// config we just wrote (the exact failure on creatokuserver: chown: cannot
+// access '/var/lib/horizonx/.ssh/config'). Separated so tests can fake the
+// privileged copy without needing real sudo.
+func (p *AgentProvision) writeSSHConfigTo(dest string, cfg []byte) error {
+	tmp := filepath.Join(os.TempDir(), "horizonx-ssh-config")
+	if err := os.WriteFile(tmp, cfg, 0o644); err != nil {
 		return err
 	}
-	_ = sudo("cp", tmp, filepath.Join(sshDir, "config"))
+	if err := sudo("cp", tmp, dest); err != nil {
+		return err
+	}
 	_ = os.Remove(tmp)
-	return sudo("chown", p.UserName+":"+p.GroupName, filepath.Join(sshDir, "config"))
+	return sudo("chown", p.UserName+":"+p.GroupName, dest)
 }
 
 func (p *AgentProvision) writeEnvFile() error {
@@ -245,7 +258,9 @@ func runCmd(name string, args ...string) (string, error) {
 	return string(bytes.TrimSpace(out)), err
 }
 
-func sudo(args ...string) error {
+// sudo runs a privileged command. Package var so tests can fake it without
+// requiring real passwordless sudo (same pattern as runCommand/execCompose).
+var sudo = func(args ...string) error {
 	cmd := exec.Command("sudo", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

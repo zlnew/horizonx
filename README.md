@@ -60,14 +60,15 @@ Because the alternatives are either overkill or a pile of shell scripts.
 ### 1. Install the binary (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | sudo bash
 ```
 
-That's it — no `sudo` needed. The installer:
+(`sudo` is for the root-owned `/usr/local/bin`; plain `| bash` auto-elevates
+via sudo if needed, and `HORIZONX_PREFIX=$HOME/.local` gives a rootless
+install.) The installer:
 
 - Fetches the latest release tarball + `SHA256SUMS`, **verifies the checksum**
-- Installs `horizonx` to `/usr/local/bin` — and **auto-elevates via sudo itself** if your user can't write there (re-running under `sudo` transparently)
-- For a rootless install instead: `HORIZONX_PREFIX=$HOME/.local curl -fsSL … | bash`
+- Installs `horizonx` to `/usr/local/bin`
 
 ### 2. Install the control plane (docker bubble)
 
@@ -117,15 +118,15 @@ foreground with your own postgres/redis.
 ### 3. Connect an agent to an app host
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
-horizonx install agent
+curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | sudo bash
+sudo horizonx install agent
 ```
 
 On the same box as the server, `install agent` reads the credentials from the
 bubble's `.env` — no token juggling. On a different host, pass them:
 
 ```bash
-horizonx install agent --server http://host:4858 --token <token>
+sudo horizonx install agent --server http://host:4858 --token <token>
 ```
 
 The agent runs as the `horizonx` system user via **systemd** (never docker): it

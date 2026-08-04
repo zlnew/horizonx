@@ -45,6 +45,8 @@ type bubbleEnv struct {
 	PostgresPassword string
 	RedisPassword    string
 	Host             string // public host agents/dashboard use (defaults to 127.0.0.1)
+	AdminEmail       string // first admin user (auto-seeded at boot)
+	AdminPass        string // first admin password (auto-seeded at boot)
 }
 
 // GenerateBubble writes the full bubble tree into dir (created if missing).
@@ -52,6 +54,16 @@ type bubbleEnv struct {
 // used by `--generate-only` and by tests. Returns the layout so callers can
 // run `docker compose -f <root> config --quiet` afterwards.
 func GenerateBubble(dir, host string) (*BubbleLayout, error) {
+	return generateBubble(dir, host, "", "")
+}
+
+// GenerateBubbleWithAdmin is GenerateBubble plus the first admin credentials
+// (written into the bubble .env; the server auto-seeds the user at boot).
+func GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass string) (*BubbleLayout, error) {
+	return generateBubble(dir, host, adminEmail, adminPass)
+}
+
+func generateBubble(dir, host, adminEmail, adminPass string) (*BubbleLayout, error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -62,7 +74,7 @@ func GenerateBubble(dir, host string) (*BubbleLayout, error) {
 		}
 	}
 
-	env, err := newBubbleEnv(host)
+	env, err := newBubbleEnv(host, adminEmail, adminPass)
 	if err != nil {
 		return nil, err
 	}

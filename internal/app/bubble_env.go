@@ -8,8 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// newBubbleEnv generates a fresh secret set for a bubble.
-func newBubbleEnv(host string) (*bubbleEnv, error) {
+// newBubbleEnv generates a fresh secret set for a bubble. adminEmail and
+// adminPass become the first admin user (auto-seeded at server boot); empty
+// adminPass generates a random one.
+func newBubbleEnv(host, adminEmail, adminPass string) (*bubbleEnv, error) {
 	jwtSecret, err := randomHex(32)
 	if err != nil {
 		return nil, err
@@ -29,6 +31,15 @@ func newBubbleEnv(host string) (*bubbleEnv, error) {
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	if adminEmail == "" {
+		adminEmail = "admin@horizonx.local"
+	}
+	if adminPass == "" {
+		adminPass, err = randomPassword()
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Internal convention: the server listens on :3000 INSIDE the bubble
 	// (matches the dashboard's nginx upstream `server:3000` and the compose
 	// port mapping 4858->3000). The signature port 4858 is what's exposed on
@@ -42,7 +53,23 @@ func newBubbleEnv(host string) (*bubbleEnv, error) {
 		PostgresPassword: pgPass,
 		RedisPassword:    redisPass,
 		Host:             host,
+		AdminEmail:       adminEmail,
+		AdminPass:        adminPass,
 	}, nil
+}
+
+// randomPassword generates a strong-ish 20-char password from crypto/rand
+// (upper + lower + digits + a few symbols — no ambiguous chars).
+func randomPassword() (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+"
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b), nil
 }
 
 // renderBubbleEnv renders the bubble's .env. This is the single source of
@@ -83,6 +110,12 @@ AGENT_JOB_WORKER_COUNT=10
 # Host-exposed ports (signature ports; override to change).
 HORIZONX_PORT=%s
 DASHBOARD_PORT=%s
+
+# First admin user — auto-seeded by the server on first boot (AUTO_SEED).
+# Shown once at the end of: horizonx install server
+ADMIN_EMAIL=%s
+ADMIN_PASSWORD=%s
+AUTO_SEED=true
 `,
 		e.HTTPAddr, e.JWTSecret,
 		e.PostgresPassword, e.PostgresPassword,
@@ -90,6 +123,7 @@ DASHBOARD_PORT=%s
 		e.ServerID, e.AgentSecret, ServerAPIURL(e.Host), ServerWSURL(e.Host),
 		e.ServerID, e.AgentSecret, ServerAPIURL(e.Host), ServerWSURL(e.Host),
 		ServerPort, e.DashboardPort,
+		e.AdminEmail, e.AdminPass,
 	)
 }
 

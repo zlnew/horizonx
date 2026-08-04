@@ -24,8 +24,8 @@ import (
 	"horizonx/internal/adapters/ws/userws/subscribers"
 	"horizonx/internal/application/account"
 	"horizonx/internal/application/application"
-	"horizonx/internal/application/auth"
 	"horizonx/internal/application/auditlog"
+	"horizonx/internal/application/auth"
 	"horizonx/internal/application/deployment"
 	"horizonx/internal/application/job"
 	logSvc "horizonx/internal/application/log"
@@ -34,6 +34,7 @@ import (
 	"horizonx/internal/application/server"
 	"horizonx/internal/application/user"
 	"horizonx/internal/config"
+	"horizonx/internal/domain"
 	"horizonx/internal/event"
 	"horizonx/internal/logger"
 	"horizonx/internal/security"
@@ -53,9 +54,9 @@ func RunServer() error {
 	// Refuse to boot in production with an empty or known-dev default secret —
 	// a predictable secret means forged tokens and decryptable env vars.
 	devDefaults := map[string]bool{
-		"":                   true,
+		"":                    true,
 		"changeme-dev-secret": true,
-		"secret":             true,
+		"secret":              true,
 	}
 	if cfg.JWTSecret == "" || (cfg.AppEnv == "production" && devDefaults[cfg.JWTSecret]) {
 		return errors.New("JWT_SECRET must be set to a strong random value (production refuses dev defaults)")
@@ -127,6 +128,37 @@ func RunServer() error {
 	deploymentService := deployment.NewService(deploymentRepo, logService, bus)
 	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus)
 	auditLogService := auditlog.NewService(auditLogRepo)
+
+	// Auto-seed the admin user on first boot (Laravel-style seeding, like
+	// auto-migrate). If the admin from ADMIN_EMAIL does not exist yet, sync
+	// roles/permissions and create it with ADMIN_PASSWORD. Opt out with
+	// AUTO_SEED=false. `install server` writes both vars into the bubble .env
+	// (prompted email + generated password) and prints them after apply.
+	if cfg.AutoSeed {
+		if _, err := userRepo.GetByEmail(ctx, cfg.AdminEmail); errors.Is(err, domain.ErrUserNotFound) {
+			log.Info("auto-seeding roles + admin user", "email", cfg.AdminEmail)
+			if err := roleService.SyncPermissions(ctx); err != nil {
+				return fmt.Errorf("auto-seed: sync permissions: %w", err)
+			}
+			if cfg.AdminPass == "" {
+				return errors.New("auto-seed: ADMIN_PASSWORD is empty (set it in the bubble .env, or run `horizonx install server`)")
+			}
+			req := domain.UserSaveRequest{
+				Name:     "Admin",
+				Email:    cfg.AdminEmail,
+				Password: cfg.AdminPass,
+				RoleID:   1,
+			}
+			if err := userService.Create(ctx, req); err != nil {
+				return fmt.Errorf("auto-seed: create admin: %w", err)
+			}
+			log.Info("admin user seeded", "email", cfg.AdminEmail)
+		} else if err != nil {
+			return fmt.Errorf("auto-seed: check admin: %w", err)
+		}
+	} else {
+		log.Info("auto-seed disabled (AUTO_SEED=false)")
+	}
 
 	// Event Listeners
 	applicationListener := application.NewListener(applicationService, log)
