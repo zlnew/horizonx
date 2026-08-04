@@ -156,23 +156,24 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	//    separately means a missing dashboard image can never take down the
 	//    control plane.
 	fmt.Println("  starting core bubble (postgres + redis + server)…")
-	out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "postgres", "redis", "server")
+	out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "postgres", "redis")
 	if err != nil {
 		return fmt.Errorf("docker compose up failed: %s\n  Re-run: cd %s && docker compose up -d\n  (raw error above)", strings.TrimSpace(out), l.Root)
 	}
-	// On the upgrade path the server container may already exist and be
-	// running — a plain `up -d` does NOT recreate it, so the process never
-	// restarts and the boot-time admin auto-seed (AUTO_SEED) never re-runs
-	// (the exact "admin missing after DELETE + re-run install" bug Maul hit).
-	// env_file is read at container create, so a changed .env also never
-	// reaches a running container without a recreate. Force-recreate ONLY the
-	// stateless server container — postgres/redis keep their volumes and data.
-	if !firstInstall {
-		fmt.Println("  refreshing server container (--force-recreate)…")
-		if out2, err2 := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "--force-recreate", "--no-deps", "server"); err2 != nil {
-			return fmt.Errorf("docker compose up --force-recreate server failed: %s\n  (raw error above)", strings.TrimSpace(out2))
-		}
+	// Server image: ALWAYS build. The bubble Dockerfile fetches
+	// releases/latest at build time, so an existing horizonx:latest image
+	// would pin the bubble to whatever release it was first built from — the
+	// exact "fresh install but admin never auto-seeded" bug Maul hit on
+	// creatokuserver (stale v0.3.2-era binary kept running; `up -d` never
+	// rebuilds an image that already exists, and rm -rf of the bubble dir
+	// does not remove local docker images). --build + --force-recreate
+	// guarantees a fresh container from the CURRENT release, and a fresh
+	// boot re-runs the admin auto-seed (AUTO_SEED) after any DELETE.
+	// postgres/redis keep their volumes; only the stateless server restarts.
+	if out2, err2 := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "--build", "--force-recreate", "--no-deps", "server"); err2 != nil {
+		return fmt.Errorf("docker compose up --build --force-recreate server failed: %s\n  (raw error above)", strings.TrimSpace(out2))
 	}
+	fmt.Println("  server image built from the latest release + container recreated")
 
 	// 4b. Dashboard — fetch the latest dashboard release automatically, load
 	//     the image, then start it. Best-effort: any dashboard failure (network

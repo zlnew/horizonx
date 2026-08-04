@@ -119,22 +119,30 @@ func TestInstallServerUpgradeAllowsBusyPorts(t *testing.T) {
 		t.Fatalf("upgrade with busy ports must succeed, got: %v", err)
 	}
 
-	// The upgrade path must force-recreate ONLY the server container so the
-	// boot-time admin auto-seed re-runs (2026-08-04: admin missing after
-	// DELETE + re-run install — plain `up -d` never restarts a running
-	// container, so the seed never re-ran).
+	// The upgrade path must rebuild + force-recreate the server container so
+	// a stale horizonx:latest image (pinned to whatever release it was first
+	// built from) never keeps running, and so the boot-time admin auto-seed
+	// re-runs after a DELETE (2026-08-04: "fresh install but admin never
+	// auto-seeded" — `up -d` never rebuilds an existing image).
 	forceRecreated := false
+	built := false
 	for _, c := range calls {
 		for _, a := range c {
 			if a == "--force-recreate" {
 				forceRecreated = true
 			}
+			if a == "--build" {
+				built = true
+			}
 		}
 	}
 	if !forceRecreated {
-		t.Errorf("upgrade path must --force-recreate the server container; calls: %v", calls)
+		t.Errorf("install must --force-recreate the server container; calls: %v", calls)
 	}
-	// First-install style plain up (postgres/redis/server) still happens.
+	if !built {
+		t.Errorf("install must --build the server image (stale-image bug); calls: %v", calls)
+	}
+	// Infra (postgres/redis) still comes up via plain up -d.
 	plainUp := false
 	for _, c := range calls {
 		if len(c) >= 4 && c[2] == "up" && c[3] == "-d" && !contains(c, "--force-recreate") {
