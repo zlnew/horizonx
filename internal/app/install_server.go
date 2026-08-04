@@ -232,7 +232,10 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 		fmt.Println()
 		fmt.Println("  Admin account: existing user kept (password not reset by re-runs).")
 		fmt.Println("    If you forgot the password, reset it in the dashboard account page")
-		fmt.Printf("    or delete the user row and re-run: docker compose -f %s exec postgres psql -U postgres -d horizonx -c \"DELETE FROM users WHERE email=(SELECT email FROM users LIMIT 1);\"\n", filepath.Join(l.Root, "docker-compose.yml"))
+		fmt.Println("    or re-seed it from .env (wipes just the admin row, keeps all data):")
+		fmt.Printf("      docker compose -f %s exec postgres psql -U postgres -d horizonx -c \"DELETE FROM users WHERE email='admin@horizonx.local';\"\n", filepath.Join(l.Root, "docker-compose.yml"))
+		fmt.Println("      # set a new ADMIN_PASSWORD in .env first, then:")
+		fmt.Printf("      docker compose -f %s up -d --force-recreate server\n", filepath.Join(l.Root, "docker-compose.yml"))
 	}
 	fmt.Println()
 	fmt.Println("Install the agent on app hosts:")

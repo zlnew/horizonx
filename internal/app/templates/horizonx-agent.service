@@ -3,9 +3,10 @@
 #   sudo systemctl daemon-reload && sudo systemctl enable --now horizonx-agent
 #
 # The agent needs a working docker CLI + compose (it runs `docker compose` in
-# /var/lib/horizonx/apps/<app>). Put the agent env (HORIZONX_SERVER_ID,
+# /var/lib/horizonx/apps/<app>). The agent env (HORIZONX_SERVER_ID,
 # HORIZONX_SERVER_API_TOKEN, HORIZONX_API_URL, HORIZONX_WS_URL, REDIS_ADDR)
-# in /etc/horizonx/.env on the app host.
+# lives in /etc/horizonx/agent.env on the app host — `install agent` writes it
+# there (NOT /etc/horizonx/.env, which is the server bubble's env file).
 
 [Unit]
 Description=HorizonX app-host agent
@@ -18,7 +19,7 @@ Type=simple
 User=horizonx
 Group=horizonx
 WorkingDirectory=/var/lib/horizonx/apps
-EnvironmentFile=/etc/horizonx/.env
+EnvironmentFile=/etc/horizonx/agent.env
 ExecStart=/usr/local/bin/horizonx agent
 Restart=always
 RestartSec=5
