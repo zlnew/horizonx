@@ -133,6 +133,14 @@ func TestGenerateBubbleServerCompose(t *testing.T) {
 	if !strings.Contains(s, "context: .") || !strings.Contains(s, "dockerfile: Dockerfile") {
 		t.Errorf("server compose must build from local Dockerfile:\n%s", s)
 	}
+	// Stale-image bug (2026-08-04): the Dockerfile must accept a pinned
+	// HX_VERSION build arg and the compose must pass it through, so each
+	// release changes the curl command string and busts the docker layer
+	// cache (a fixed "releases/latest" URL was a permanent cache hit and the
+	// image kept the first build's binary forever).
+	if !strings.Contains(s, "HX_VERSION") {
+		t.Errorf("server compose must pass HX_VERSION build arg (stale-image fix):\n%s", s)
+	}
 	if strings.Contains(s, "ghcr.io") {
 		t.Errorf("server compose references ghcr.io")
 	}
@@ -150,6 +158,15 @@ func TestGenerateBubbleDockerfileChecksum(t *testing.T) {
 	s := string(df)
 	if !strings.Contains(s, "sha256sum -c") {
 		t.Errorf("server Dockerfile must verify SHA256SUMS:\n%s", s)
+	}
+	// The Dockerfile must consume HX_VERSION and build a pinned release URL
+	// (stale-image fix) — not a hardcoded releases/latest that never busts
+	// the docker layer cache.
+	if !strings.Contains(s, "HX_VERSION") {
+		t.Errorf("server Dockerfile must use HX_VERSION build arg (stale-image fix):\n%s", s)
+	}
+	if strings.Contains(s, "releases/latest/download") {
+		t.Errorf("server Dockerfile must NOT hardcode releases/latest (stale-image fix):\n%s", s)
 	}
 	if strings.Contains(s, "ghcr.io") {
 		t.Errorf("server Dockerfile references ghcr.io")
