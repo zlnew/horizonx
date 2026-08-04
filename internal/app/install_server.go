@@ -44,13 +44,14 @@ var execCompose = func(args ...string) (string, error) {
 
 // InstallServerOptions carries the flags for `horizonx install server`.
 type InstallServerOptions struct {
-	Dir          string // bubble dir (default /opt/horizonx)
-	Host         string // public host agents/dashboard use
-	Admin        string // admin email (prompted if empty; default admin@horizonx.local)
-	AdminPass    string // admin password (prompted if empty; random if blank)
-	GenerateOnly bool
-	Yes          bool // non-interactive (no prompts; default email + random password)
-	ResetVolumes bool // wipe existing bubble volumes first (data loss!)
+	Dir            string // bubble dir (default /opt/horizonx)
+	Host           string // public host agents/dashboard use
+	Admin          string // admin email (prompted if empty; default admin@horizonx.local)
+	AdminPass      string // admin password (prompted if empty; random if blank)
+	AllowedOrigins string // comma-separated browser origins allowed to open the user WebSocket (default: same-box dashboard URL)
+	GenerateOnly   bool
+	Yes            bool // non-interactive (no prompts; default email + random password)
+	ResetVolumes   bool // wipe existing bubble volumes first (data loss!)
 }
 
 // RunInstallServer installs or upgrades the HorizonX docker bubble.
@@ -105,7 +106,15 @@ func RunInstallServer(opts InstallServerOptions) error {
 	}
 
 	// 2. Generate the bubble tree.
-	l, err := GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass)
+	var allowed []string
+	if opts.AllowedOrigins != "" {
+		for _, o := range strings.Split(opts.AllowedOrigins, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				allowed = append(allowed, trimmed)
+			}
+		}
+	}
+	l, err := GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass, allowed)
 	if err != nil {
 		return fmt.Errorf("generate bubble: %w", err)
 	}
@@ -380,6 +389,7 @@ func InstallServerFlags(args []string) (InstallServerOptions, error) {
 	fs.StringVar(&opts.Host, "host", "", "public host/IP agents + dashboard use (default 127.0.0.1)")
 	fs.StringVar(&opts.Admin, "admin", "", "admin email for the first dashboard user (default admin@horizonx.local)")
 	fs.StringVar(&opts.AdminPass, "admin-password", "", "admin password (default: random, shown after install)")
+	fs.StringVar(&opts.AllowedOrigins, "origin", "", "comma-separated browser origins allowed to open the user WebSocket (default: http://<host>:4859; add your public/tunnel domain here)")
 	fs.BoolVar(&opts.GenerateOnly, "generate-only", false, "write files only, skip apply")
 	fs.BoolVar(&opts.Yes, "yes", false, "non-interactive")
 	fs.BoolVar(&opts.ResetVolumes, "reset-volumes", false, "wipe existing bubble postgres/redis volumes first (DATA LOSS)")

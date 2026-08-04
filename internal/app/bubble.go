@@ -44,9 +44,10 @@ type bubbleEnv struct {
 	AgentSecret      string
 	PostgresPassword string
 	RedisPassword    string
-	Host             string // public host agents/dashboard use (defaults to 127.0.0.1)
-	AdminEmail       string // first admin user (auto-seeded at boot)
-	AdminPass        string // first admin password (auto-seeded at boot)
+	Host             string   // public host agents/dashboard use (defaults to 127.0.0.1)
+	AdminEmail       string   // first admin user (auto-seeded at boot)
+	AdminPass        string   // first admin password (auto-seeded at boot)
+	AllowedOrigins   []string // browser origins allowed to open the user WebSocket
 }
 
 // GenerateBubble writes the full bubble tree into dir (created if missing).
@@ -54,16 +55,18 @@ type bubbleEnv struct {
 // used by `--generate-only` and by tests. Returns the layout so callers can
 // run `docker compose -f <root> config --quiet` afterwards.
 func GenerateBubble(dir, host string) (*BubbleLayout, error) {
-	return generateBubble(dir, host, "", "")
+	return generateBubble(dir, host, "", "", nil)
 }
 
 // GenerateBubbleWithAdmin is GenerateBubble plus the first admin credentials
-// (written into the bubble .env; the server auto-seeds the user at boot).
-func GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass string) (*BubbleLayout, error) {
-	return generateBubble(dir, host, adminEmail, adminPass)
+// (written into the bubble .env; the server auto-seeds the user at boot) and
+// an explicit list of browser origins allowed to open the user WebSocket
+// (defaults to the same-box dashboard URL when empty — see TK-0019).
+func GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass string, allowedOrigins []string) (*BubbleLayout, error) {
+	return generateBubble(dir, host, adminEmail, adminPass, allowedOrigins)
 }
 
-func generateBubble(dir, host, adminEmail, adminPass string) (*BubbleLayout, error) {
+func generateBubble(dir, host, adminEmail, adminPass string, allowedOrigins []string) (*BubbleLayout, error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -74,7 +77,7 @@ func generateBubble(dir, host, adminEmail, adminPass string) (*BubbleLayout, err
 		}
 	}
 
-	env, err := newBubbleEnv(host, adminEmail, adminPass)
+	env, err := newBubbleEnv(host, adminEmail, adminPass, allowedOrigins)
 	if err != nil {
 		return nil, err
 	}
