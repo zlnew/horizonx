@@ -93,10 +93,14 @@ func RunInstallServer(opts InstallServerOptions) error {
 	if !r.ComposeOK {
 		return fmt.Errorf("docker compose is too old (%s).\n  HorizonX needs Compose v2.20+ (the `include:` feature).\n  Update docker compose, then re-run.", r.ComposeVersion)
 	}
-	if !r.PortsFree {
+	if !r.PortsFree && firstInstall {
 		return fmt.Errorf("signature ports are already in use (server %s / dashboard %s).\n  Free them or set HORIZONX_PORT / DASHBOARD_PORT in the .env.", ServerPort, DashboardPort)
 	}
-	fmt.Printf("  preflight: docker OK · compose %s OK · ports %s/%s free\n", r.ComposeVersion, ServerPort, DashboardPort)
+	if firstInstall {
+		fmt.Printf("  preflight: docker OK · compose %s OK · ports %s/%s free\n", r.ComposeVersion, ServerPort, DashboardPort)
+	} else {
+		fmt.Printf("  preflight: docker OK · compose %s OK · upgrade path (ports owned by existing bubble)\n", r.ComposeVersion)
+	}
 
 	// 2. Generate the bubble tree.
 	l, err := GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass)
