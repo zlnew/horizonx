@@ -48,6 +48,7 @@ type InstallServerOptions struct {
 	AdminPass    string // admin password (prompted if empty; random if blank)
 	GenerateOnly bool
 	Yes          bool // non-interactive (no prompts; default email + random password)
+	ResetVolumes bool // wipe existing bubble volumes first (data loss!)
 }
 
 // RunInstallServer installs or upgrades the HorizonX docker bubble.
@@ -113,6 +114,32 @@ func RunInstallServer(opts InstallServerOptions) error {
 		return nil
 	}
 
+	// 2b. Stale-volume guard: postgres only sets its password on FIRST volume
+	// init. If the volume already exists (from an earlier install) but the
+	// .env was regenerated, the passwords won't match and the server crash-
+	// loops with `password authentication failed for user "postgres"`. Block
+	// with the exact remediation instead of letting it fail 30s later.
+	if firstInstall && !opts.ResetVolumes {
+		if hasBubbleVolumes(l.Root) {
+			return fmt.Errorf(`stale bubble volumes detected: a postgres/redis volume from a previous
+install exists, but no .env was found — the volume's password differs from the
+freshly generated one, so the server would crash-loop with "password
+authentication failed for user postgres".
+
+Fix (wipes postgres+redis DATA — safe if you don't need the old data):
+  docker compose -f %s down -v
+  sudo horizonx install server
+
+Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker-compose.yml"), l.Root)
+		}
+	}
+	if opts.ResetVolumes {
+		fmt.Println("  resetting bubble volumes (--reset-volumes: data wiped)…")
+		if out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "down", "-v"); err != nil {
+			return fmt.Errorf("reset volumes failed: %s", strings.TrimSpace(out))
+		}
+	}
+
 	// 3. Validate the compose before applying.
 	fmt.Println("  validating compose…")
 	if out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "config", "--quiet"); err != nil {
@@ -153,6 +180,25 @@ func RunInstallServer(opts InstallServerOptions) error {
 	fmt.Printf("  waiting for control plane on http://127.0.0.1:%s/health…\n", ServerPort)
 	ok := pollHealthFn("http://127.0.0.1:" + ServerPort + "/health")
 	if !ok {
+		// Diagnose the two most common crash-loop causes so the user gets the
+		// fix instead of a raw log dump.
+		if logs := bubbleServerLogs(l.Root); logs != "" {
+			if strings.Contains(logs, "password authentication failed") || strings.Contains(logs, "SQLSTATE 28P01") {
+				return fmt.Errorf(`control plane did not become healthy within 30s — the server can't
++authenticate to postgres. The postgres volume was initialized with a password
++from an OLDER .env; the current .env has a different one, so auth fails on
++every boot (postgres only sets its password on first volume init).
+
++Fix (wipes postgres+redis DATA — safe if you don't need the old data):
++  docker compose -f %s down -v
++  sudo horizonx install server
+
++Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker-compose.yml"), l.Root)
+			}
+			if strings.Contains(logs, "redis") && strings.Contains(logs, "NOAUTH") {
+				return fmt.Errorf("control plane did not become healthy within 30s — redis auth mismatch.\n  Check: docker compose -f %s logs server", filepath.Join(l.Root, "docker-compose.yml"))
+			}
+		}
 		return fmt.Errorf("control plane did not become healthy within 30s.\n  Check: docker compose -f %s logs server\n  Re-run: cd %s && docker compose up -d", filepath.Join(l.Root, "docker-compose.yml"), l.Root)
 	}
 
@@ -190,6 +236,36 @@ func envValue(data []byte, key string) string {
 		}
 	}
 	return ""
+}
+
+// hasBubbleVolumes reports whether a postgres/redis volume from a previous
+// bubble install exists in docker (any compose project prefix). Used by the
+// stale-volume guard: postgres only sets its password on FIRST volume init, so
+// a surviving volume + freshly regenerated .env = guaranteed auth failure.
+func hasBubbleVolumes(dir string) bool {
+	out, err := runCommand(context.Background(), "docker", "volume", "ls", "--format", "{{.Name}}")
+	if err != nil {
+		return false
+	}
+	for _, name := range strings.Split(out, "\n") {
+		name = strings.TrimSpace(name)
+		if name == "horizonx_pgdata" || name == "horizonx_redisdata" ||
+			strings.HasSuffix(name, "_horizonx_pgdata") || strings.HasSuffix(name, "_horizonx_redisdata") {
+			return true
+		}
+	}
+	return false
+}
+
+// bubbleServerLogs returns the last ~60 lines of the server container's log
+// (best-effort; empty string when the container isn't running or compose
+// fails). Used to diagnose why a freshly applied bubble isn't healthy.
+func bubbleServerLogs(dir string) string {
+	out, err := execCompose("-f", filepath.Join(dir, "docker-compose.yml"), "logs", "--tail", "60", "server")
+	if err != nil {
+		return strings.TrimSpace(out)
+	}
+	return strings.TrimSpace(out)
 }
 
 // promptString reads a line from stdin, defaulting to def when blank.
@@ -257,6 +333,7 @@ func InstallServerFlags(args []string) (InstallServerOptions, error) {
 	fs.StringVar(&opts.AdminPass, "admin-password", "", "admin password (default: random, shown after install)")
 	fs.BoolVar(&opts.GenerateOnly, "generate-only", false, "write files only, skip apply")
 	fs.BoolVar(&opts.Yes, "yes", false, "non-interactive")
+	fs.BoolVar(&opts.ResetVolumes, "reset-volumes", false, "wipe existing bubble postgres/redis volumes first (DATA LOSS)")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
