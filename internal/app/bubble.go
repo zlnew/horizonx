@@ -169,6 +169,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        HX_VERSION: ${HX_VERSION:-latest}
     image: ${APP_IMAGE:-horizonx:latest}
     env_file: ../.env
     ports:
@@ -199,6 +201,14 @@ const bubbleServerDockerfile = `# HorizonX server image — built by the bubble'
 # Downloads the release tarball + SHA256SUMS from GitHub and verifies the
 # checksum BEFORE unpacking. No registry images involved (the registry is
 # billing-blocked).
+#
+# HX_VERSION pins the release (e.g. v0.3.8). It is passed as a build arg by
+# ` + "`install server`" + ` so the curl command string CHANGES every release —
+# Docker layer cache is keyed on (parent layer + command text), so an
+# unchanged "releases/latest" URL was a permanent cache hit and the image
+# kept the FIRST build's binary forever (the stale-image bug, 2026-08-04).
+# With a pinned version the layer cache misses each release -> fresh download.
+ARG HX_VERSION=latest
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl
 # Detect the build arch from uname (release tarballs use x86_64/arm64 —
@@ -209,8 +219,13 @@ RUN ARCH=$(uname -m); \
       aarch64|arm64) ARCH=arm64 ;; \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL https://github.com/zlnew/horizonx/releases/latest/download/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
- && curl -fsSL https://github.com/zlnew/horizonx/releases/latest/download/SHA256SUMS -o /tmp/SHA256SUMS \
+    if [ "$HX_VERSION" = "latest" ] || [ -z "$HX_VERSION" ]; then \
+      BASE="releases/latest"; \
+    else \
+      BASE="releases/download/$HX_VERSION"; \
+    fi; \
+    curl -fsSL https://github.com/zlnew/horizonx/$BASE/download/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
+ && curl -fsSL https://github.com/zlnew/horizonx/$BASE/download/SHA256SUMS -o /tmp/SHA256SUMS \
  && cd /tmp && grep "horizonx-linux-$ARCH.tar.gz" SHA256SUMS | sha256sum -c - \
  && tar -xzf /tmp/horizonx-linux-$ARCH.tar.gz -C /usr/local/bin horizonx \
  && rm /tmp/horizonx-linux-$ARCH.tar.gz /tmp/SHA256SUMS

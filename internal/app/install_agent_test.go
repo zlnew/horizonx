@@ -20,27 +20,30 @@ func TestParseEnv(t *testing.T) {
 	}
 }
 
-func TestLoadAgentCredsFromBubble(t *testing.T) {
+func TestLoadAgentServerURLFromBubble(t *testing.T) {
+	// Same-box install: --token not given, so the URL comes from the bubble
+	// .env but the token MUST NOT (dashboard registration is the only valid
+	// source; the .env HORIZONX_SERVER_ID/API_TOKEN are placeholders).
 	dir := t.TempDir()
+	// bubbleDir is a package const pointing at /opt/horizonx — can't change.
+	// Instead verify the read logic against a temp .env via the parser +
+	// URL derivation, and that the .env contains the URL keys.
 	if _, err := GenerateBubble(dir, "203.0.113.10"); err != nil {
 		t.Fatalf("GenerateBubble: %v", err)
 	}
-	// Assert the generated .env has exactly the keys install agent reads
-	// (parseEnv handles the reading side, covered by TestParseEnv).
 	data, err := os.ReadFile(filepath.Join(dir, ".env"))
 	if err != nil {
 		t.Fatalf("read .env: %v", err)
 	}
-	s := string(data)
-	for _, k := range []string{"HORIZONX_SERVER_ID", "HORIZONX_SERVER_API_TOKEN", "HORIZONX_API_URL", "HORIZONX_WS_URL"} {
-		if !strings.Contains(s, k+"=") {
-			t.Errorf(".env missing %s", k)
-		}
+	vars := parseEnv(string(data))
+	if vars["HORIZONX_API_URL"] == "" || vars["HORIZONX_WS_URL"] == "" {
+		t.Errorf(".env missing HORIZONX_API_URL / HORIZONX_WS_URL")
 	}
 }
 
 func TestInstallAgentTokenSplit(t *testing.T) {
-	// --token "uuid.secret" must split into ServerID + ServerToken.
+	// --token "uuid.secret" must split into ServerID + ServerToken (the
+	// dashboard-registration token format ValidateAgentCredentials expects).
 	prov := defaultAgentProvision()
 	prov.APIURL = "http://203.0.113.10:4858"
 	prov.WSURL = "ws://203.0.113.10:4858/ws/agent"
@@ -54,5 +57,30 @@ func TestInstallAgentTokenSplit(t *testing.T) {
 	}
 	if prov.ServerToken != "abcdef" {
 		t.Errorf("ServerToken = %q", prov.ServerToken)
+	}
+}
+
+func TestInstallAgentRequiresToken(t *testing.T) {
+	// Regression (2026-08-04): install agent must NOT fall back to the bubble
+	// .env's HORIZONX_SERVER_ID/API_TOKEN — those placeholders never
+	// authenticate (the server checks the dashboard-registered servers table).
+	// Token is now REQUIRED; missing -> clear error.
+	err := RunInstallAgent(InstallAgentOptions{Server: "http://203.0.113.10:4858"})
+	if err == nil {
+		t.Fatal("install agent without --token must fail")
+	}
+	if !strings.Contains(err.Error(), "--token") {
+		t.Errorf("error should mention --token: %v", err)
+	}
+}
+
+func TestInstallAgentRejectsMalformedToken(t *testing.T) {
+	// A token without the "<uuid>.<secret>" shape is rejected up front.
+	err := RunInstallAgent(InstallAgentOptions{Server: "http://203.0.113.10:4858", Token: "no-dot-here"})
+	if err == nil {
+		t.Fatal("install agent with malformed token must fail")
+	}
+	if !strings.Contains(err.Error(), "invalid agent token") {
+		t.Errorf("error should mention invalid token: %v", err)
 	}
 }

@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"horizonx/internal/version"
 )
 
 // bubbleDir is where the docker bubble lives (root compose + sub-projects).
@@ -155,6 +157,18 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	//    a release tarball and may not be present yet. Starting the core
 	//    separately means a missing dashboard image can never take down the
 	//    control plane.
+	//
+	//    HX_VERSION: pin the server build to THIS binary's release version so
+	//    the generated Dockerfile fetches a pinned release (not
+	//    "releases/latest"). Docker layer cache is keyed on (parent layer +
+	//    command text); an unchanged latest URL never re-downloads, so the
+	//    image kept the FIRST build's binary forever (stale-image bug,
+	//    2026-08-04). A pinned version changes the curl command string each
+	//    release -> cache miss -> fresh binary. Dev builds (version "dev")
+	//    leave HX_VERSION unset -> compose default latest.
+	if strings.HasPrefix(version.Version, "v") {
+		_ = os.Setenv("HX_VERSION", version.Version)
+	}
 	fmt.Println("  starting core bubble (postgres + redis + server)…")
 	out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "postgres", "redis")
 	if err != nil {
@@ -253,8 +267,12 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	}
 	fmt.Println()
 	fmt.Println("Install the agent on app hosts:")
-	fmt.Printf("  curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | HORIZONX_SERVER_ID=… HORIZONX_SERVER_API_TOKEN=… HORIZONX_API_URL=http://%s:%s HORIZONX_WS_URL=ws://%s:%s/ws/agent bash\n", host, ServerPort, host, ServerPort)
-	fmt.Println("  (or run `horizonx install agent` on the same box — it reads credentials from the server .env)")
+	fmt.Println("  1. Register the server in the dashboard (Servers → Add Server); the")
+	fmt.Println("     dashboard shows the agent token ONCE — copy it.")
+	fmt.Println("  2. On the app host, run: horizonx install agent --token <token>")
+	fmt.Printf("     (--server defaults to http://%s:%s on this box; use --server on other hosts)\n", host, ServerPort)
+	fmt.Println("  The bubble .env's HORIZONX_SERVER_ID/API_TOKEN are placeholders — the")
+	fmt.Println("  server only accepts tokens from dashboard-registered servers.")
 	return nil
 }
 
