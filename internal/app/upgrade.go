@@ -247,6 +247,10 @@ func extractBinary(tarball, binName string) (string, error) {
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
+	// Track the first regular file as a fallback: a tarball that contains a
+	// single binary under ANY name (e.g. an arch-qualified name from a broken
+	// packaging run) should still upgrade cleanly.
+	var fallback string
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -255,27 +259,61 @@ func extractBinary(tarball, binName string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if hdr.Typeflag != tar.TypeReg || filepath.Base(hdr.Name) != binName {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-
-		tmp, err := os.CreateTemp("", "horizonx-newbin-*")
+		if filepath.Base(hdr.Name) == binName {
+			return writeExtracted(tr)
+		}
+		if fallback == "" {
+			fallback = hdr.Name
+		}
+	}
+	if fallback != "" {
+		// Re-open: the tar reader is exhausted, and the fallback entry was
+		// never consumed. Rewind and extract the sole file.
+		f.Seek(0, io.SeekStart)
+		gz.Close()
+		gz, err = gzip.NewReader(f)
 		if err != nil {
 			return "", err
 		}
-		if _, err := io.Copy(tmp, tr); err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
-			return "", err
+		defer gz.Close()
+		tr = tar.NewReader(gz)
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return "", err
+			}
+			if hdr.Typeflag == tar.TypeReg && hdr.Name == fallback {
+				return writeExtracted(tr)
+			}
 		}
-		tmp.Close()
-		if err := os.Chmod(tmp.Name(), 0o755); err != nil {
-			os.Remove(tmp.Name())
-			return "", err
-		}
-		return tmp.Name(), nil
 	}
 	return "", fmt.Errorf("%s not found in release tarball", binName)
+}
+
+// writeExtracted copies the current tar entry to a temp file and makes it
+// executable. The caller is responsible for removing the returned path.
+func writeExtracted(tr *tar.Reader) (string, error) {
+	tmp, err := os.CreateTemp("", "horizonx-newbin-*")
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(tmp, tr); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	tmp.Close()
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	return tmp.Name(), nil
 }
 
 func replaceBinary(newBin, exe string) error {

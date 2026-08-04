@@ -129,19 +129,21 @@ func RunServer() error {
 	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus)
 	auditLogService := auditlog.NewService(auditLogRepo)
 
-	// Auto-seed the admin user on first boot (Laravel-style seeding, like
-	// auto-migrate). If the admin from ADMIN_EMAIL does not exist yet, sync
-	// roles/permissions and create it with ADMIN_PASSWORD. Opt out with
-	// AUTO_SEED=false. `install server` writes both vars into the bubble .env
-	// (prompted email + generated password) and prints them after apply.
+	// Auto-seed the admin user (Laravel-style seeding, like auto-migrate).
+	// The .env (ADMIN_EMAIL / ADMIN_PASSWORD) seeds the admin on FIRST boot.
+	// If the user already exists we do NOT touch it — the password belongs
+	// to the account, not the .env, and re-running install (or an operator
+	// editing .env) must never reset an existing admin. `install server`
+	// prints the credentials only on first install for this reason.
+	// Opt out entirely with AUTO_SEED=false.
 	if cfg.AutoSeed {
+		if cfg.AdminPass == "" {
+			return errors.New("auto-seed: ADMIN_PASSWORD is empty (set it in the bubble .env, or run `horizonx install server`)")
+		}
 		if _, err := userRepo.GetByEmail(ctx, cfg.AdminEmail); errors.Is(err, domain.ErrUserNotFound) {
 			log.Info("auto-seeding roles + admin user", "email", cfg.AdminEmail)
 			if err := roleService.SyncPermissions(ctx); err != nil {
 				return fmt.Errorf("auto-seed: sync permissions: %w", err)
-			}
-			if cfg.AdminPass == "" {
-				return errors.New("auto-seed: ADMIN_PASSWORD is empty (set it in the bubble .env, or run `horizonx install server`)")
 			}
 			req := domain.UserSaveRequest{
 				Name:     "Admin",

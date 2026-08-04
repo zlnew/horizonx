@@ -1,10 +1,76 @@
 package app
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestExtractBinaryPlainName(t *testing.T) {
+	// Standard tarball shape: member named `horizonx`.
+	path := makeTarball(t, map[string][]byte{"horizonx": []byte("#!/bin/sh\necho ok\n")})
+	defer os.Remove(path)
+
+	bin, err := extractBinary(path, "horizonx")
+	if err != nil {
+		t.Fatalf("extractBinary: %v", err)
+	}
+	defer os.Remove(bin)
+	data, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatalf("read extracted: %v", err)
+	}
+	if !strings.Contains(string(data), "echo ok") {
+		t.Errorf("extracted content mismatch: %s", data)
+	}
+}
+
+func TestExtractBinaryFallbackArchName(t *testing.T) {
+	// Regression (v0.3.4): a tarball whose member is arch-qualified
+	// (horizonx-linux-x86_64) must still extract — upgrade should not fail
+	// with "horizonx not found in release tarball".
+	path := makeTarball(t, map[string][]byte{"horizonx-linux-x86_64": []byte("#!/bin/sh\necho ok\n")})
+	defer os.Remove(path)
+
+	bin, err := extractBinary(path, "horizonx")
+	if err != nil {
+		t.Fatalf("extractBinary fallback: %v", err)
+	}
+	defer os.Remove(bin)
+	if filepath.Base(bin) == "" {
+		t.Error("expected extracted temp file")
+	}
+}
+
+func makeTarball(t *testing.T, files map[string][]byte) string {
+	t.Helper()
+	tmp, err := os.CreateTemp("", "hx-tarball-*.tar.gz")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer tmp.Close()
+	gz := gzip.NewWriter(tmp)
+	tw := tar.NewWriter(gz)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(content))}); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			t.Fatalf("write body: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	return tmp.Name()
+}
 
 func TestRuntimeActiveUnitNone(t *testing.T) {
 	// On a bare box there is no horizonx unit; ActiveUnit must be "".
