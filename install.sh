@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # HorizonX installer — the `curl | bash` entrypoint.
 #
-#   curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | sudo bash
 #
 # What it does:
 #   1. Detect OS + architecture.
@@ -11,8 +11,10 @@
 #   5. Install the `horizonx` binary to /usr/local/bin (override HORIZONX_PREFIX).
 #   6. Print next steps.
 #
-# Safety: never runs as root unless you explicitly want /usr/local/bin;
-# never pipes curl straight into a shell without checksum verification.
+# Safety: installs to /usr/local/bin (root-owned), so plain `curl | bash`
+# auto-re-executes under sudo; running it as `sudo bash` up front is the
+# documented path. Never pipes curl straight into a shell without checksum
+# verification.
 set -euo pipefail
 
 REPO="${HORIZONX_REPO:-zlnew/horizonx}"
@@ -106,12 +108,10 @@ chmod +x "$BIN_DIR/horizonx"
 ok "installed $( "$BIN_DIR/horizonx" version )"
 echo
 echo "  Next steps:"
-echo "    1. Bootstrap a control plane:"
-echo "       $BIN_DIR/horizonx setup"
-echo "    2. Run the server:"
-echo "       $BIN_DIR/horizonx server"
-echo "    3. On app hosts, install the agent:"
-echo "       curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash"
-echo "       # then run: horizonx agent (with HORIZONX_SERVER_ID + HORIZONX_SERVER_API_TOKEN)"
-echo "    4. Upgrade later:"
-echo "       $BIN_DIR/horizonx upgrade"
+echo "    1. Install the control plane (docker bubble, ports 4858/4859):"
+echo "       sudo $BIN_DIR/horizonx install server"
+echo "    2. On each app host, install the agent (host systemd):"
+echo "       curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo bash"
+echo "       sudo $BIN_DIR/horizonx install agent"
+echo "    3. Upgrade later:"
+echo "       sudo $BIN_DIR/horizonx upgrade"

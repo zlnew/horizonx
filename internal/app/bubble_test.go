@@ -179,12 +179,33 @@ func TestGenerateBubblePreservesExistingEnv(t *testing.T) {
 	}
 }
 
+func TestGenerateBubbleEnvContainsAdminCreds(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := GenerateBubbleWithAdmin(dir, "myserver", "ops@example.com", "S3cret!"); err != nil {
+		t.Fatalf("GenerateBubbleWithAdmin: %v", err)
+	}
+	env, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(env)
+	if !strings.Contains(s, "ADMIN_EMAIL=ops@example.com") {
+		t.Errorf(".env missing ADMIN_EMAIL=ops@example.com\n%s", s)
+	}
+	if !strings.Contains(s, "ADMIN_PASSWORD=S3cret!") {
+		t.Errorf(".env missing ADMIN_PASSWORD\n%s", s)
+	}
+	if !strings.Contains(s, "AUTO_SEED=true") {
+		t.Errorf(".env missing AUTO_SEED=true\n%s", s)
+	}
+}
+
 func TestNewBubbleEnvUnique(t *testing.T) {
-	a, err := newBubbleEnv("h")
+	a, err := newBubbleEnv("h", "", "")
 	if err != nil {
 		t.Fatalf("newBubbleEnv: %v", err)
 	}
-	b, err := newBubbleEnv("h")
+	b, err := newBubbleEnv("h", "", "")
 	if err != nil {
 		t.Fatalf("newBubbleEnv: %v", err)
 	}
@@ -194,5 +215,21 @@ func TestNewBubbleEnvUnique(t *testing.T) {
 	}
 	if a.HTTPAddr != ":3000" || a.DashboardPort != "4859" {
 		t.Errorf("bubbleEnv ports wrong: %s %s", a.HTTPAddr, a.DashboardPort)
+	}
+	if a.AdminEmail != "admin@horizonx.local" || a.AdminPass == "" {
+		t.Errorf("bubbleEnv must default admin email + random password")
+	}
+	if a.AdminPass == b.AdminPass {
+		t.Errorf("random admin passwords must differ per generation")
+	}
+}
+
+func TestNewBubbleEnvAdminCreds(t *testing.T) {
+	a, err := newBubbleEnv("h", "ops@example.com", "S3cret!")
+	if err != nil {
+		t.Fatalf("newBubbleEnv: %v", err)
+	}
+	if a.AdminEmail != "ops@example.com" || a.AdminPass != "S3cret!" {
+		t.Errorf("admin creds not honored: %s / %s", a.AdminEmail, a.AdminPass)
 	}
 }
