@@ -85,7 +85,11 @@ func TestInstallServerUpgradeAllowsBusyPorts(t *testing.T) {
 	// Regression: `install server` on an existing bubble (upgrade path) must
 	// not fail when the signature ports are busy — the bubble owns them.
 	// (v0.3.3→v0.3.4 fix; Maul hit this re-running install over a live bubble.)
-	restore := setExecCompose(func(args ...string) (string, error) { return "", nil })
+	var calls [][]string
+	restore := setExecCompose(func(args ...string) (string, error) {
+		calls = append(calls, args)
+		return "", nil
+	})
 	defer restore()
 
 	oldPre := preflightFn
@@ -114,6 +118,42 @@ func TestInstallServerUpgradeAllowsBusyPorts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upgrade with busy ports must succeed, got: %v", err)
 	}
+
+	// The upgrade path must force-recreate ONLY the server container so the
+	// boot-time admin auto-seed re-runs (2026-08-04: admin missing after
+	// DELETE + re-run install — plain `up -d` never restarts a running
+	// container, so the seed never re-ran).
+	forceRecreated := false
+	for _, c := range calls {
+		for _, a := range c {
+			if a == "--force-recreate" {
+				forceRecreated = true
+			}
+		}
+	}
+	if !forceRecreated {
+		t.Errorf("upgrade path must --force-recreate the server container; calls: %v", calls)
+	}
+	// First-install style plain up (postgres/redis/server) still happens.
+	plainUp := false
+	for _, c := range calls {
+		if len(c) >= 4 && c[2] == "up" && c[3] == "-d" && !contains(c, "--force-recreate") {
+			plainUp = true
+		}
+	}
+	if !plainUp {
+		t.Errorf("expected a plain `up -d postgres redis server` call; calls: %v", calls)
+	}
+}
+
+// contains reports whether s is present in args.
+func contains(args []string, s string) bool {
+	for _, a := range args {
+		if a == s {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInstallServerFirstInstallFailsOnBusyPorts(t *testing.T) {
