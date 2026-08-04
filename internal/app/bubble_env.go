@@ -4,14 +4,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 )
 
 // newBubbleEnv generates a fresh secret set for a bubble. adminEmail and
 // adminPass become the first admin user (auto-seeded at server boot); empty
-// adminPass generates a random one.
-func newBubbleEnv(host, adminEmail, adminPass string) (*bubbleEnv, error) {
+// adminPass generates a random one. allowedOrigins is the list of browser
+// origins permitted to open the user WebSocket (gorilla CheckOrigin); when
+// empty it defaults to the same-box dashboard origin so the WS works without
+// extra config (see TK-0019 / the wss://…/api/ws/user connection-refused bug).
+func newBubbleEnv(host, adminEmail, adminPass string, allowedOrigins []string) (*bubbleEnv, error) {
 	jwtSecret, err := randomHex(32)
 	if err != nil {
 		return nil, err
@@ -40,6 +44,14 @@ func newBubbleEnv(host, adminEmail, adminPass string) (*bubbleEnv, error) {
 			return nil, err
 		}
 	}
+	// Default the WS allowed origins to the same-box dashboard URL. The
+	// browser opens the dashboard at http://<host>:<dashboardPort> and the
+	// WS carries that as its Origin; without it in ALLOWED_ORIGINS the
+	// gorilla upgrader rejects the handshake (CONNECTION_REFUSED in the
+	// browser). Tunnel/domain users pass --origin to add their public URL.
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://" + host + ":" + DashboardPort}
+	}
 	// Internal convention: the server listens on :3000 INSIDE the bubble
 	// (matches the dashboard's nginx upstream `server:3000` and the compose
 	// port mapping 4858->3000). The signature port 4858 is what's exposed on
@@ -55,6 +67,7 @@ func newBubbleEnv(host, adminEmail, adminPass string) (*bubbleEnv, error) {
 		Host:             host,
 		AdminEmail:       adminEmail,
 		AdminPass:        adminPass,
+		AllowedOrigins:   allowedOrigins,
 	}, nil
 }
 
@@ -111,6 +124,12 @@ AGENT_JOB_WORKER_COUNT=10
 HORIZONX_PORT=%s
 DASHBOARD_PORT=%s
 
+# Browser origins allowed to open the user WebSocket (gorilla CheckOrigin).
+# Defaults to the same-box dashboard URL so the WS works without extra config;
+# add your public/tunnel domain here if you access the dashboard remotely
+# (comma-separated). See TK-0019.
+ALLOWED_ORIGINS=%s
+
 # First admin user — auto-seeded by the server on first boot (AUTO_SEED).
 # Shown once at the end of: horizonx install server
 ADMIN_EMAIL=%s
@@ -123,6 +142,7 @@ AUTO_SEED=true
 		e.ServerID, e.AgentSecret, ServerAPIURL(e.Host), ServerWSURL(e.Host),
 		e.ServerID, e.AgentSecret, ServerAPIURL(e.Host), ServerWSURL(e.Host),
 		ServerPort, e.DashboardPort,
+		strings.Join(e.AllowedOrigins, ","),
 		e.AdminEmail, e.AdminPass,
 	)
 }

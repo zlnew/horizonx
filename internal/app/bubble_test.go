@@ -198,7 +198,7 @@ func TestGenerateBubblePreservesExistingEnv(t *testing.T) {
 
 func TestGenerateBubbleEnvContainsAdminCreds(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubbleWithAdmin(dir, "myserver", "ops@example.com", "S3cret!"); err != nil {
+	if _, err := GenerateBubbleWithAdmin(dir, "myserver", "ops@example.com", "S3cret!", nil); err != nil {
 		t.Fatalf("GenerateBubbleWithAdmin: %v", err)
 	}
 	env, err := os.ReadFile(filepath.Join(dir, ".env"))
@@ -218,11 +218,11 @@ func TestGenerateBubbleEnvContainsAdminCreds(t *testing.T) {
 }
 
 func TestNewBubbleEnvUnique(t *testing.T) {
-	a, err := newBubbleEnv("h", "", "")
+	a, err := newBubbleEnv("h", "", "", nil)
 	if err != nil {
 		t.Fatalf("newBubbleEnv: %v", err)
 	}
-	b, err := newBubbleEnv("h", "", "")
+	b, err := newBubbleEnv("h", "", "", nil)
 	if err != nil {
 		t.Fatalf("newBubbleEnv: %v", err)
 	}
@@ -242,11 +242,52 @@ func TestNewBubbleEnvUnique(t *testing.T) {
 }
 
 func TestNewBubbleEnvAdminCreds(t *testing.T) {
-	a, err := newBubbleEnv("h", "ops@example.com", "S3cret!")
+	a, err := newBubbleEnv("h", "ops@example.com", "S3cret!", nil)
 	if err != nil {
 		t.Fatalf("newBubbleEnv: %v", err)
 	}
 	if a.AdminEmail != "ops@example.com" || a.AdminPass != "S3cret!" {
 		t.Errorf("admin creds not honored: %s / %s", a.AdminEmail, a.AdminPass)
+	}
+}
+
+// TestNewBubbleEnvAllowedOriginsDefault pins the TK-0019 fix: when no origins
+// are given, ALLOWED_ORIGINS defaults to the same-box dashboard URL so the
+// user WebSocket works without manual config.
+func TestNewBubbleEnvAllowedOriginsDefault(t *testing.T) {
+	a, err := newBubbleEnv("myhost", "", "", nil)
+	if err != nil {
+		t.Fatalf("newBubbleEnv: %v", err)
+	}
+	if len(a.AllowedOrigins) != 1 || a.AllowedOrigins[0] != "http://myhost:4859" {
+		t.Errorf("default AllowedOrigins = %v, want [http://myhost:4859]", a.AllowedOrigins)
+	}
+}
+
+// TestNewBubbleEnvAllowedOriginsExplicit pins that an explicit origin list is
+// honored verbatim (e.g. a tunnel/domain the dashboard is served from).
+func TestNewBubbleEnvAllowedOriginsExplicit(t *testing.T) {
+	a, err := newBubbleEnv("myhost", "", "", []string{"https://horizonx.example.com", "http://myhost:4859"})
+	if err != nil {
+		t.Fatalf("newBubbleEnv: %v", err)
+	}
+	if len(a.AllowedOrigins) != 2 || a.AllowedOrigins[0] != "https://horizonx.example.com" {
+		t.Errorf("explicit AllowedOrigins = %v, want [https://horizonx.example.com http://myhost:4859]", a.AllowedOrigins)
+	}
+}
+
+// TestGenerateBubbleEnvAllowedOrigins renders the ALLOWED_ORIGINS key joined
+// by comma into the bubble .env.
+func TestGenerateBubbleEnvAllowedOrigins(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := GenerateBubbleWithAdmin(dir, "myhost", "", "", []string{"https://horizonx.example.com"}); err != nil {
+		t.Fatalf("GenerateBubbleWithAdmin: %v", err)
+	}
+	env, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(env), "ALLOWED_ORIGINS=https://horizonx.example.com") {
+		t.Errorf(".env missing expected ALLOWED_ORIGINS:\n%s", string(env))
 	}
 }
