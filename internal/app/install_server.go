@@ -160,6 +160,19 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	if err != nil {
 		return fmt.Errorf("docker compose up failed: %s\n  Re-run: cd %s && docker compose up -d\n  (raw error above)", strings.TrimSpace(out), l.Root)
 	}
+	// On the upgrade path the server container may already exist and be
+	// running — a plain `up -d` does NOT recreate it, so the process never
+	// restarts and the boot-time admin auto-seed (AUTO_SEED) never re-runs
+	// (the exact "admin missing after DELETE + re-run install" bug Maul hit).
+	// env_file is read at container create, so a changed .env also never
+	// reaches a running container without a recreate. Force-recreate ONLY the
+	// stateless server container — postgres/redis keep their volumes and data.
+	if !firstInstall {
+		fmt.Println("  refreshing server container (--force-recreate)…")
+		if out2, err2 := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "--force-recreate", "--no-deps", "server"); err2 != nil {
+			return fmt.Errorf("docker compose up --force-recreate server failed: %s\n  (raw error above)", strings.TrimSpace(out2))
+		}
+	}
 
 	// 4b. Dashboard — fetch the latest dashboard release automatically, load
 	//     the image, then start it. Best-effort: any dashboard failure (network
