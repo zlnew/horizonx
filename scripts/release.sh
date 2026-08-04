@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Build + publish a HorizonX CLI release.
+#
+# Usage:
+#   scripts/release.sh v0.3.5            # build, verify, publish
+#   scripts/release.sh v0.3.5 --dry-run  # build + verify only, no publish
+#
+# Requires:
+#   - the horizonx-server dev container (Go toolchain) — name can be
+#     overridden with HX_BUILD_CONTAINER
+#   - gh CLI authenticated for zlnew/horizonx
+#
+# Contracts (do NOT break these — install.sh + upgrade.go depend on them):
+#   1. Tarball names use the installer's arch names: `x86_64`, NOT `amd64`.
+#      install.sh normalizes uname -m and requests horizonx-${OS}-${ARCH}.tar.gz.
+#   2. The INNER tarball member MUST be named exactly `horizonx` (plain name).
+#      install.sh:105 does `tar -xzf ... horizonx`; upgrade.go extractBinary
+#      looks for member "horizonx". Arch-qualified members broke v0.3.4's first
+#      publish (FATAL: horizonx not found in release tarball).
+#   3. Every release ships SHA256SUMS alongside the tarballs.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."   # repo root
+
+VERSION="${1:?usage: scripts/release.sh vX.Y.Z [--dry-run]}"
+DRY_RUN="${2:-}"
+if [ -n "$DRY_RUN" ] && [ "$DRY_RUN" != "--dry-run" ]; then
+  echo "unknown arg: $DRY_RUN (expected --dry-run)" >&2; exit 2
+fi
+[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must look like v0.3.5" >&2; exit 2; }
+
+REPO="zlnew/horizonx"
+CONTAINER="${HX_BUILD_CONTAINER:-horizonx-server}"
+OUT="/tmp/hx-release-${VERSION}"
+TARGETS=("linux x86_64 amd64" "linux arm64 arm64" "darwin x86_64 amd64" "darwin arm64 arm64")
+
+# -- preflight ---------------------------------------------------------------
+echo "== preflight =="
+docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || { echo "dev container $CONTAINER not running (start with docker compose up -d)" >&2; exit 1; }
+command -v gh >/dev/null || { echo "gh CLI required" >&2; exit 1; }
+
+if [ -z "$DRY_RUN" ]; then
+  EXISTS=$(gh release view "$VERSION" --repo "$REPO" --json tagName --jq .tagName 2>/dev/null || true)
+  [ -z "$EXISTS" ] || { echo "release $VERSION already exists — delete it first if you mean to re-publish" >&2; exit 1; }
+fi
+
+# -- build -------------------------------------------------------------------
+echo ""
+echo "== 1. cross-compile ${#TARGETS[@]} targets (in $CONTAINER) =="
+rm -rf "$OUT" && mkdir -p "$OUT"
+docker exec -w /app "$CONTAINER" sh -c '
+  set -e
+  mkdir -p /tmp/hx-rel
+  rm -f /tmp/hx-rel/* 2>/dev/null || true
+  for t in '"$(printf '%q ' "${TARGETS[@]}")"'; do
+    set -- $t
+    os=$1; arch=$2; goarch=$3
+    echo "  -- ${os}/${arch}"
+    CGO_ENABLED=0 GOOS=$os GOARCH=$goarch \
+      go build -trimpath -ldflags "-X horizonx/internal/version.Version='"$VERSION"'" \
+      -o "/tmp/hx-rel/horizonx-${os}-${arch}" ./cmd/horizonx
+  done
+'
+for pair in "${TARGETS[@]}"; do
+  set -- $pair
+  os=$1; arch=$2
+  docker cp "$CONTAINER:/tmp/hx-rel/horizonx-${os}-${arch}" "$OUT/"
+done
+
+# -- package -----------------------------------------------------------------
+echo ""
+echo "== 2. package tarballs (member MUST be plain 'horizonx') =="
+for pair in "${TARGETS[@]}"; do
+  set -- $pair
+  os=$1; arch=$2
+  # stage a dir so the tarball member is the plain binary name
+  STAGE="$OUT/stage-${os}-${arch}"
+  rm -rf "$STAGE" && mkdir -p "$STAGE"
+  cp "$OUT/horizonx-${os}-${arch}" "$STAGE/horizonx"
+  tar -C "$STAGE" -czf "$OUT/horizonx-${os}-${arch}.tar.gz" horizonx
+  rm -rf "$STAGE"
+  echo "  -> horizonx-${os}-${arch}.tar.gz"
+done
+
+# -- verify ------------------------------------------------------------------
+echo ""
+echo "== 3. verify: member names + checksums + version stamp =="
+cd "$OUT"
+sha256sum horizonx-*.tar.gz > SHA256SUMS
+sha256sum -c SHA256SUMS | tail -4
+
+for pair in "${TARGETS[@]}"; do
+  set -- $pair
+  os=$1; arch=$2
+  MEMBERS=$(tar -tzf "horizonx-${os}-${arch}.tar.gz")
+  echo "$MEMBERS" | grep -qx "horizonx" || { echo "FAIL: tarball ${os}-${arch} member is not plain 'horizonx': $MEMBERS" >&2; exit 1; }
+  echo "  OK: ${os}-${arch} member=horizonx"
+done
+
+for pair in "${TARGETS[@]}"; do
+  set -- $pair
+  os=$1; arch=$2
+  EXDIR=$(mktemp -d)
+  tar -xzf "horizonx-${os}-${arch}.tar.gz" -C "$EXDIR" horizonx 2>/dev/null || true
+  if [ "$os" = "linux" ]; then
+    V=$("$EXDIR/horizonx" version 2>/dev/null | head -1 || true)
+    if [ -n "$V" ]; then
+      echo "  version(${os}/${arch}): $V"
+      [ -z "${V##*"$VERSION"*}" ] || echo "  WARNING: version stamp missing/off for ${os}-${arch}"
+    else
+      echo "  version(${os}/${arch}): <not runnable on host (cross-arch), stamp trusted from build>"
+    fi
+  fi
+  rm -rf "$EXDIR"
+done
+
+echo ""
+echo "== artifacts =="
+ls -la "$OUT" | grep -E "tar.gz|SHA256"
+
+# -- publish -----------------------------------------------------------------
+if [ -n "$DRY_RUN" ]; then
+  echo ""
+  echo "DRY-RUN: artifacts built + verified, release NOT published."
+  exit 0
+fi
+
+echo ""
+echo "== 4. create GitHub release =="
+BODY=$(mktemp)
+cat > "$BODY" <<EOF
+## $VERSION
+
+$(git log --oneline "$(git tag --sort=-version:refname | head -1 2>/dev/null || echo HEAD~10)..HEAD" 2>/dev/null | sed 's/^/- /' | head -40 || true)
+
+4 tarballs + SHA256SUMS. Tarball member is plain \`horizonx\` (install.sh / upgrade.go contract).
+EOF
+
+ASSETS=()
+for pair in "${TARGETS[@]}"; do
+  set -- $pair
+  os=$1; arch=$2
+  ASSETS+=("$OUT/horizonx-${os}-${arch}.tar.gz")
+done
+ASSETS+=("$OUT/SHA256SUMS")
+
+gh release create "$VERSION" --repo "$REPO" --title "$VERSION" --notes-file "$BODY" "${ASSETS[@]}"
+rm -f "$BODY"
+echo ""
+echo "✔ published: https://github.com/$REPO/releases/tag/$VERSION"
