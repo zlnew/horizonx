@@ -14,6 +14,7 @@ package app
 // bubble, so there is no separate `install dashboard` command.
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -43,9 +44,10 @@ var execCompose = func(args ...string) (string, error) {
 type InstallServerOptions struct {
 	Dir          string // bubble dir (default /opt/horizonx)
 	Host         string // public host agents/dashboard use
-	Admin        string // admin email (accepted, printed; provisioning of the first user is post-boot)
+	Admin        string // admin email (prompted if empty; default admin@horizonx.local)
+	AdminPass    string // admin password (prompted if empty; random if blank)
 	GenerateOnly bool
-	Yes          bool // non-interactive
+	Yes          bool // non-interactive (no prompts; default email + random password)
 }
 
 // RunInstallServer installs or upgrades the HorizonX docker bubble.
@@ -61,6 +63,23 @@ func RunInstallServer(opts InstallServerOptions) error {
 
 	fmt.Println("horizonx install server — HorizonX docker bubble")
 	fmt.Println()
+
+	// First install = .env absent. Prompt for the admin credentials once so
+	// they can be printed after apply (re-runs keep the existing .env —
+	// install-or-upgrade idempotency — so no prompt).
+	firstInstall := false
+	if _, err := os.Stat(filepath.Join(dir, ".env")); os.IsNotExist(err) {
+		firstInstall = true
+	}
+	adminEmail := opts.Admin
+	adminPass := opts.AdminPass
+	if firstInstall && !opts.Yes {
+		adminEmail = promptString("Admin email", firstNonEmpty(adminEmail, "admin@horizonx.local"))
+		adminPass = promptString("Admin password (blank = random)", adminPass)
+	}
+	if adminEmail == "" {
+		adminEmail = "admin@horizonx.local"
+	}
 
 	// 1. Preflight — probe capabilities, not binaries.
 	r := preflightFn()
@@ -79,7 +98,7 @@ func RunInstallServer(opts InstallServerOptions) error {
 	fmt.Printf("  preflight: docker OK · compose %s OK · ports %s/%s free\n", r.ComposeVersion, ServerPort, DashboardPort)
 
 	// 2. Generate the bubble tree.
-	l, err := GenerateBubble(dir, host)
+	l, err := GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass)
 	if err != nil {
 		return fmt.Errorf("generate bubble: %w", err)
 	}
@@ -141,16 +160,59 @@ func RunInstallServer(opts InstallServerOptions) error {
 	fmt.Println("✔ HorizonX bubble is live.")
 	fmt.Printf("  Control plane : http://%s:%s\n", host, ServerPort)
 	fmt.Printf("  Dashboard     : http://%s:%s\n", host, DashboardPort)
-	if opts.Admin != "" {
-		fmt.Printf("  First login   : %s (password set during first boot)\n", opts.Admin)
-	} else {
-		fmt.Printf("  First login   : admin@horizonx.local (password set during first boot)\n")
+
+	// Print the admin credentials from the .env (single source of truth —
+	// re-runs preserve the existing .env, so this shows the live creds).
+	if envData, err := os.ReadFile(l.EnvPath); err == nil {
+		email := envValue(envData, "ADMIN_EMAIL")
+		pass := envValue(envData, "ADMIN_PASSWORD")
+		if email != "" {
+			fmt.Println()
+			fmt.Println("  Admin credentials (save these — shown once):")
+			fmt.Printf("    Email    : %s\n", email)
+			fmt.Printf("    Password : %s\n", pass)
+			fmt.Println("    Login at  http://" + host + ":" + DashboardPort)
+		}
 	}
 	fmt.Println()
 	fmt.Println("Install the agent on app hosts:")
 	fmt.Printf("  curl -fsSL https://raw.githubusercontent.com/zlnew/horizonx/main/install.sh | HORIZONX_SERVER_ID=… HORIZONX_SERVER_API_TOKEN=… HORIZONX_API_URL=http://%s:%s HORIZONX_WS_URL=ws://%s:%s/ws/agent bash\n", host, ServerPort, host, ServerPort)
 	fmt.Println("  (or run `horizonx install agent` on the same box — it reads credentials from the server .env)")
 	return nil
+}
+
+// envValue extracts `KEY=value` from .env-style bytes (first match, trimmed).
+func envValue(data []byte, key string) string {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, key+"=") {
+			return strings.TrimSpace(strings.TrimPrefix(line, key+"="))
+		}
+	}
+	return ""
+}
+
+// promptString reads a line from stdin, defaulting to def when blank.
+func promptString(label, def string) string {
+	fmt.Printf("  %s [%s]: ", label, def)
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return def
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return def
+	}
+	return line
+}
+
+// firstNonEmpty returns a when non-empty, else b.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // preflightFn is the indirection point for the capability probe, so tests can
@@ -191,7 +253,8 @@ func InstallServerFlags(args []string) (InstallServerOptions, error) {
 	var opts InstallServerOptions
 	fs.StringVar(&opts.Dir, "dir", "", "bubble directory (default /opt/horizonx)")
 	fs.StringVar(&opts.Host, "host", "", "public host/IP agents + dashboard use (default 127.0.0.1)")
-	fs.StringVar(&opts.Admin, "admin", "", "admin email for the first dashboard user")
+	fs.StringVar(&opts.Admin, "admin", "", "admin email for the first dashboard user (default admin@horizonx.local)")
+	fs.StringVar(&opts.AdminPass, "admin-password", "", "admin password (default: random, shown after install)")
 	fs.BoolVar(&opts.GenerateOnly, "generate-only", false, "write files only, skip apply")
 	fs.BoolVar(&opts.Yes, "yes", false, "non-interactive")
 	if err := fs.Parse(args); err != nil {
