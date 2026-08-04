@@ -81,6 +81,59 @@ func TestInstallServerApplyHealthCheck(t *testing.T) {
 	}
 }
 
+func TestInstallServerUpgradeAllowsBusyPorts(t *testing.T) {
+	// Regression: `install server` on an existing bubble (upgrade path) must
+	// not fail when the signature ports are busy — the bubble owns them.
+	// (v0.3.3→v0.3.4 fix; Maul hit this re-running install over a live bubble.)
+	restore := setExecCompose(func(args ...string) (string, error) { return "", nil })
+	defer restore()
+
+	oldPre := preflightFn
+	preflightFn = func() PreflightResult {
+		return PreflightResult{DockerAccess: true, ComposeOK: true, ComposeVersion: "5.3.1", PortsFree: false}
+	}
+	defer func() { preflightFn = oldPre }()
+
+	oldPoll := pollHealthFn
+	pollHealthFn = func(url string) bool { return true }
+	defer func() { pollHealthFn = oldPoll }()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{}, errors.New("network disabled in test")
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	dir := t.TempDir()
+	// Simulate an existing bubble: .env present (upgrade, not first install).
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("DATABASE_URL=postgres://x\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	err := RunInstallServer(InstallServerOptions{Dir: dir, Host: "203.0.113.10"})
+	if err != nil {
+		t.Fatalf("upgrade with busy ports must succeed, got: %v", err)
+	}
+}
+
+func TestInstallServerFirstInstallFailsOnBusyPorts(t *testing.T) {
+	// First install (no .env) + busy ports → still an error.
+	oldPre := preflightFn
+	preflightFn = func() PreflightResult {
+		return PreflightResult{DockerAccess: true, ComposeOK: true, ComposeVersion: "5.3.1", PortsFree: false}
+	}
+	defer func() { preflightFn = oldPre }()
+
+	dir := t.TempDir()
+	err := RunInstallServer(InstallServerOptions{Dir: dir, Host: "203.0.113.10"})
+	if err == nil {
+		t.Fatal("first install with busy ports must fail")
+	}
+	if !strings.Contains(err.Error(), "signature ports") {
+		t.Errorf("expected signature-ports error, got: %v", err)
+	}
+}
+
 func TestInstallServerApplyFailsOnBadCompose(t *testing.T) {
 	restore := setExecCompose(func(args ...string) (string, error) {
 		// Production calls: execCompose("-f", path, "config", "--quiet").
