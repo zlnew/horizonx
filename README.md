@@ -98,6 +98,8 @@ The flow is *preflight → generate → validate → apply → verify*:
 1. **Preflight** probes real capabilities — docker socket access, Compose ≥ 2.20,
    free ports. If docker is installed but your user can't reach the socket, it
    tells you exactly what to fix (`sudo usermod -aG docker $USER && re-login`).
+   On re-runs (upgrade path) the port check is skipped — the bubble owns its
+   own ports, so `install server` over a live bubble just works.
 2. **Generate** writes the full bubble tree (root compose + `server/` + `dashboard/`).
    Everything builds from the release tarball — **no registry pulls, ever**.
 3. **Validate** runs `docker compose config --quiet` before touching anything.
@@ -105,6 +107,20 @@ The flow is *preflight → generate → validate → apply → verify*:
    the dashboard from its latest release (checksum-verified; best-effort).
 5. **Verify** polls `GET /health` on 4858 until the control plane answers, then
    prints the URLs + first-login info.
+
+**First boot auto-seeds the admin user** (`AUTO_SEED=true` in the bubble
+`.env`) — email + password are prompted during install (or passed with
+`--admin` / `--admin-password`, random when blank) and printed at the end.
+On re-runs the printed credentials always work: the server reconciles the
+seeded admin's password against the `.env` on every boot.
+
+**Re-running is safe** — `install server` is install-*or*-upgrade: the `.env`
+is preserved byte-for-byte and docker volumes survive, so postgres/redis data
+is never touched. The only way to wipe data is explicit:
+`horizonx install server --reset-volumes` (prints a warning first). If a
+stale postgres volume is detected on a fresh install, install blocks with the
+exact remediation instead of crash-looping with `password authentication
+failed for user postgres`.
 
 Preview without applying: `horizonx install server --generate-only`.
 

@@ -211,18 +211,28 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	fmt.Printf("  Control plane : http://%s:%s\n", host, ServerPort)
 	fmt.Printf("  Dashboard     : http://%s:%s\n", host, DashboardPort)
 
-	// Print the admin credentials from the .env (single source of truth —
-	// re-runs preserve the existing .env, so this shows the live creds).
-	if envData, err := os.ReadFile(l.EnvPath); err == nil {
-		email := envValue(envData, "ADMIN_EMAIL")
-		pass := envValue(envData, "ADMIN_PASSWORD")
-		if email != "" {
-			fmt.Println()
-			fmt.Println("  Admin credentials (save these — shown once):")
-			fmt.Printf("    Email    : %s\n", email)
-			fmt.Printf("    Password : %s\n", pass)
-			fmt.Println("    Login at  http://" + host + ":" + DashboardPort)
+	// Print the admin credentials ONLY on first install — the .env password
+	// seeds the admin on first boot and is never re-applied, so on re-runs
+	// printing the .env value would show creds that may not match the account
+	// (e.g. if the password was changed in the dashboard). First install is
+	// when they're genuinely fresh, so they're safe to show then.
+	if firstInstall {
+		if envData, err := os.ReadFile(l.EnvPath); err == nil {
+			email := envValue(envData, "ADMIN_EMAIL")
+			pass := envValue(envData, "ADMIN_PASSWORD")
+			if email != "" {
+				fmt.Println()
+				fmt.Println("  Admin credentials (save these — shown once):")
+				fmt.Printf("    Email    : %s\n", email)
+				fmt.Printf("    Password : %s\n", pass)
+				fmt.Println("    Login at  http://" + host + ":" + DashboardPort)
+			}
 		}
+	} else {
+		fmt.Println()
+		fmt.Println("  Admin account: existing user kept (password not reset by re-runs).")
+		fmt.Println("    If you forgot the password, reset it in the dashboard account page")
+		fmt.Printf("    or delete the user row and re-run: docker compose -f %s exec postgres psql -U postgres -d horizonx -c \"DELETE FROM users WHERE email=(SELECT email FROM users LIMIT 1);\"\n", filepath.Join(l.Root, "docker-compose.yml"))
 	}
 	fmt.Println()
 	fmt.Println("Install the agent on app hosts:")
