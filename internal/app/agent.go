@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"golang.org/x/sync/errgroup"
@@ -54,14 +53,16 @@ func RunAgent() error {
 	}
 	defer redisClient.Close()
 
-	appsWorkDir := "/var/lib/horizonx/apps"
-	if cfg.AppEnv != "production" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getcwd: %w", err)
-		}
-		appsWorkDir = filepath.Join(cwd, "apps")
+	// Apps work dir is ALWAYS the agent's current working directory (Maul,
+	// 2026-08-04): no hardcoded /var/lib/horizonx/apps, no AppEnv condition.
+	// In production the systemd unit sets WorkingDirectory=/var/lib/horizonx/apps,
+	// so the executor lands on the same path via cwd — the unit is the single
+	// source of truth for where apps live.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getcwd: %w", err)
 	}
+	appsWorkDir := cwd
 
 	registry := redis.NewRegistry(redisClient)
 	httpClient := agent.NewHttpClient(cfg)
