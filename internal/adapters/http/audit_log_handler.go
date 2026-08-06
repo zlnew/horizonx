@@ -54,6 +54,7 @@ func (h *AuditLogHandler) Index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writer.Write(w, http.StatusOK, &response.Response{
-		Data: logs,
+		Data: logs.Data,
+		Meta: logs.Meta,
 	})
 }
