@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"horizonx/internal/domain"
 
@@ -83,6 +84,26 @@ func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// waitForRequests polls until the capture handler has seen the expected
+// number of requests. Delivery is async (background worker), so tests must
+// wait instead of asserting immediately.
+func waitForRequests(t *testing.T, h *captureHandler, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		h.mu.Lock()
+		got := h.requests
+		h.mu.Unlock()
+		if got >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	t.Fatalf("expected %d requests, got %d", want, h.requests)
+}
+
 func TestNotifierPostsOnFailedDeployment(t *testing.T) {
 	var captured captureHandler
 	srv := httptest.NewServer(&captured)
@@ -95,11 +116,10 @@ func TestNotifierPostsOnFailedDeployment(t *testing.T) {
 		Status:        domain.DeploymentFailed,
 	})
 
+	waitForRequests(t, &captured, 1)
+
 	captured.mu.Lock()
 	defer captured.mu.Unlock()
-	if captured.requests != 1 {
-		t.Fatalf("expected 1 request, got %d", captured.requests)
-	}
 	content, _ := captured.body["content"].(string)
 	if content == "" {
 		t.Fatal("expected content field")
@@ -121,11 +141,10 @@ func TestNotifierPostsOnSuccessDeployment(t *testing.T) {
 		Status:        domain.DeploymentSuccess,
 	})
 
+	waitForRequests(t, &captured, 1)
+
 	captured.mu.Lock()
 	defer captured.mu.Unlock()
-	if captured.requests != 1 {
-		t.Fatalf("expected 1 request, got %d", captured.requests)
-	}
 	content, _ := captured.body["content"].(string)
 	if !strings.Contains(content, "✅") || !strings.Contains(content, "succeeded") {
 		t.Fatalf("unexpected content: %q", content)

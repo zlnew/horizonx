@@ -28,12 +28,12 @@ func (w *MetricsCleanupWorker) Name() string {
 }
 
 func (w *MetricsCleanupWorker) Run(ctx context.Context) error {
-	isOnline := true
-	servers, err := w.server.List(ctx, domain.ServerListOptions{
-		IsOnline: &isOnline,
-	})
+	// Sweep ALL servers, not just online ones: offline servers stop flushing
+	// metrics but their rows still accumulate — previously they were never
+	// cleaned and became the biggest table-growth risk.
+	servers, err := w.server.List(ctx, domain.ServerListOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to list online servers: %w", err)
+		return fmt.Errorf("failed to list servers: %w", err)
 	}
 
 	now := time.Now().UTC()
