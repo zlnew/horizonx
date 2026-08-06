@@ -62,6 +62,9 @@ func (s *Service) GetByID(ctx context.Context, deploymentID int64) (*domain.Depl
 
 	logs, err := s.logSvc.List(ctx, domain.LogListOptions{
 		DeploymentID: &deployment.ID,
+		// Cap the logs attached to a deployment detail: a verbose build can
+		// emit thousands of rows, and the full set made detail responses heavy.
+		ListOptions: domain.ListOptions{Limit: 200},
 	})
 	if err != nil {
 		return nil, err

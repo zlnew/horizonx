@@ -67,6 +67,9 @@ func (s *JobService) GetByID(ctx context.Context, jobID int64) (*domain.Job, err
 
 	logs, err := s.logSvc.List(ctx, domain.LogListOptions{
 		JobID: &job.ID,
+		// Cap the logs attached to a job detail: a long deploy can emit
+		// thousands of rows, and the full set made detail responses heavy.
+		ListOptions: domain.ListOptions{Limit: 200},
 	})
 	if err != nil {
 		return nil, err
