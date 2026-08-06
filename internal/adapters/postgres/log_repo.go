@@ -84,7 +84,7 @@ func (r *LogRepository) List(ctx context.Context, opts domain.LogListOptions) ([
 
 	if len(opts.Sources) > 0 {
 		placeholders := []string{}
-		for _, s := range opts.Levels {
+		for _, s := range opts.Sources {
 			placeholders = append(placeholders, fmt.Sprintf("$%d", argCounter))
 			args = append(args, s)
 			argCounter++
@@ -94,7 +94,7 @@ func (r *LogRepository) List(ctx context.Context, opts domain.LogListOptions) ([
 
 	if len(opts.Actions) > 0 {
 		placeholders := []string{}
-		for _, s := range opts.Levels {
+		for _, s := range opts.Actions {
 			placeholders = append(placeholders, fmt.Sprintf("$%d", argCounter))
 			args = append(args, s)
 			argCounter++
@@ -106,7 +106,16 @@ func (r *LogRepository) List(ctx context.Context, opts domain.LogListOptions) ([
 		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	baseQuery += " ORDER BY timestamp ASC"
+	// When a caller asks for a bounded tail (Limit set, no pagination), we
+	// want the NEWEST rows — query DESC then reverse in Go so the returned
+	// slice stays chronological. Paginated lists keep stable ASC ordering.
+	tailMode := !opts.IsPaginate && opts.Limit > 0
+
+	if tailMode {
+		baseQuery += " ORDER BY timestamp DESC"
+	} else {
+		baseQuery += " ORDER BY timestamp ASC"
+	}
 
 	var total int64
 	if opts.IsPaginate {
@@ -158,6 +167,14 @@ func (r *LogRepository) List(ctx context.Context, opts domain.LogListOptions) ([
 
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
+	}
+
+	// tailMode queried DESC; reverse so the caller still gets chronological
+	// (oldest -> newest) rows, matching the historical contract.
+	if tailMode {
+		for i, j := 0, len(logs)-1; i < j; i, j = i+1, j-1 {
+			logs[i], logs[j] = logs[j], logs[i]
+		}
 	}
 
 	return logs, total, nil

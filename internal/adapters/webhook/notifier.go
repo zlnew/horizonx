@@ -3,6 +3,10 @@
 //
 // Deliberately fire-and-forget: webhook failures never affect the deploy
 // flow. If no webhook URL is configured the notifier is a no-op.
+//
+// The HTTP POST runs on a background worker, not on the event-bus publisher
+// goroutine: a slow webhook must never block the agent request that
+// triggered the event (the bus is fully synchronous).
 package webhook
 
 import (
@@ -17,22 +21,45 @@ import (
 	"horizonx/internal/logger"
 )
 
-const notifyTimeout = 5 * time.Second
+const (
+	notifyTimeout = 5 * time.Second
+
+	// workerBuffer bounds the queue of pending notifications; if it fills we
+	// drop the oldest (terminal deploy events are low-volume, a missed ping
+	// is acceptable — never block the hot path).
+	workerBuffer = 64
+)
 
 // Notifier posts deployment status changes to a webhook URL.
 type Notifier struct {
-	url        string
-	client     *http.Client
-	appSvc     domain.ApplicationService
-	log        logger.Logger
+	url    string
+	client *http.Client
+	appSvc domain.ApplicationService
+	log    logger.Logger
+
+	events chan []byte
 }
 
 func New(url string, appSvc domain.ApplicationService, log logger.Logger) *Notifier {
-	return &Notifier{
+	n := &Notifier{
 		url:    url,
 		client: &http.Client{Timeout: notifyTimeout},
 		appSvc: appSvc,
 		log:    log,
+		events: make(chan []byte, workerBuffer),
+	}
+	go n.run()
+	return n
+}
+
+// run drains the notification queue on a dedicated goroutine so the event
+// bus publisher never blocks on network I/O.
+func (n *Notifier) run() {
+	for payload := range n.events {
+		if err := n.post(payload); err != nil {
+			// Fire-and-forget: log and move on, never break the deploy flow.
+			n.log.Error("webhook: notify failed", "error", err)
+		}
 	}
 }
 
@@ -74,9 +101,21 @@ func (n *Notifier) Handle(event any) {
 		return
 	}
 
-	if err := n.post(payload); err != nil {
-		// Fire-and-forget: log and move on, never break the deploy flow.
-		n.log.Error("webhook: notify failed", "error", err)
+	// Enqueue without blocking; if the queue is full, drop the oldest and
+	// keep the newest so the latest deploy state is what gets delivered.
+	select {
+	case n.events <- payload:
+	default:
+		select {
+		case <-n.events:
+			n.log.Warn("webhook: queue full, dropped oldest notification")
+		default:
+		}
+		select {
+		case n.events <- payload:
+		default:
+			n.log.Warn("webhook: queue full, dropped notification")
+		}
 	}
 }
 

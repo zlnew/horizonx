@@ -79,12 +79,14 @@ func RunServer() error {
 		log.Info("auto-migrate disabled (AUTO_MIGRATE=false)")
 	}
 
+	// Fail fast on DB/Redis init: continuing with a nil pool means every
+	// handler 500s and `defer dbPool.Close()` panics on nil. A control
+	// plane that can't reach its stores is useless — better to exit loudly.
 	dbPool, err := postgres.Init(cfg.DatabaseURL)
 	if err != nil {
-		log.Error("failed to init postgres", "error", err)
-	} else {
-		log.Info("postgres connected")
+		return fmt.Errorf("failed to init postgres: %w", err)
 	}
+	log.Info("postgres connected")
 	defer dbPool.Close()
 
 	redisClient, err := redis.Init(ctx, &redis.ClientOptions{
@@ -94,10 +96,9 @@ func RunServer() error {
 		DB:       cfg.RedisDB,
 	})
 	if err != nil {
-		log.Error("failed to init redis", "error", err)
-	} else {
-		log.Info("redis connected")
+		return fmt.Errorf("failed to init redis: %w", err)
 	}
+	log.Info("redis connected")
 	defer redisClient.Close()
 
 	bus := event.New()
