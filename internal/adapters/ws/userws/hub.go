@@ -21,6 +21,10 @@ type Hub struct {
 	unsubscribe chan *Subscription
 	events      chan *domain.WsServerEvent
 
+	// dropped counts events dropped because a client's send buffer was full
+	// (we never kill a slow-but-healthy connection).
+	dropped uint64
+
 	log logger.Logger
 }
 
@@ -138,8 +142,15 @@ func (h *Hub) handleEvent(ev *domain.WsServerEvent) {
 		select {
 		case client.send <- message:
 		default:
-			h.log.Warn("ws: client channel full, force unregister", "id", client.ID)
-			h.unregister <- client
+			// A slow client is not a broken client. Killing the connection
+			// here is what made the dashboard "just die" when a verbose
+			// deploy flooded the global logs channel — the browser sees a
+			// clean close with no error, and reconnect is fragile. Drop the
+			// event instead; the page re-syncs on next REST fetch.
+			h.dropped++
+			if h.dropped%100 == 1 {
+				h.log.Warn("ws: client send buffer full, dropping event", "id", client.ID, "event", ev.Event, "dropped_total", h.dropped)
+			}
 		}
 	}
 }

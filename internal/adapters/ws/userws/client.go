@@ -93,10 +93,36 @@ func (c *Client) readPump() {
 					client:  c,
 					channel: msg.Channel,
 				}
+			case "ping":
+				// Application-level heartbeat: the browser JS cannot see the
+				// WS protocol pings the server sends, so the dashboard pings
+				// us on its own cadence. Reply so it can prove liveness.
+				c.sendPong()
 			default:
 				c.log.Debug("ws: unknown client message type", "type", msg.Type)
 			}
 		}
+	}
+}
+
+func (c *Client) sendPong() {
+	msg, err := json.Marshal(&domain.WsServerEvent{
+		Channel: "",
+		Event:   "pong",
+		Payload: map[string]any{"ts": time.Now().UnixMilli()},
+	})
+	if err != nil {
+		return
+	}
+
+	// Route through the send channel so writePump stays the sole writer
+	// (gorilla allows one concurrent writer per connection). If the buffer
+	// is full we drop the pong — the client's watchdog will reconnect,
+	// which is the right outcome for a client that can't keep up.
+	select {
+	case c.send <- msg:
+	default:
+		c.log.Debug("ws: pong dropped (send buffer full)")
 	}
 }
 
