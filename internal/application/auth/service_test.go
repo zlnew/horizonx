@@ -29,7 +29,7 @@ func TestAuthService_GetUser_Success(t *testing.T) {
 
 	ctx := domain.SetUserContext(context.Background(), domain.UserContext{ID: 1})
 
-	svc := auth.NewService(mockRepo, "secret", time.Hour)
+	svc := auth.NewService(mockRepo, &fakeSessionStore{}, "secret", time.Hour)
 	realUser, err := svc.GetUser(ctx)
 
 	assert.NoError(t, err)
@@ -39,7 +39,7 @@ func TestAuthService_GetUser_Success(t *testing.T) {
 func TestAuthService_GetUser_Unauthorized(t *testing.T) {
 	mockRepo := mocks.NewMockUserRepository(t)
 
-	svc := auth.NewService(mockRepo, "secret", time.Hour)
+	svc := auth.NewService(mockRepo, &fakeSessionStore{}, "secret", time.Hour)
 	realUser, err := svc.GetUser(context.Background())
 
 	assert.ErrorIs(t, err, domain.ErrUnauthorized)
@@ -69,7 +69,7 @@ func TestAuthService_Login_Success(t *testing.T) {
 		GetByEmail(mock.Anything, "admin@horizonx.local").
 		Return(mockUser, nil)
 
-	svc := auth.NewService(mockRepo, "secret", time.Hour)
+	svc := auth.NewService(mockRepo, &fakeSessionStore{}, "secret", time.Hour)
 	res, err := svc.Login(context.Background(), domain.LoginRequest{
 		Email:    "admin@horizonx.local",
 		Password: "password",
@@ -88,7 +88,7 @@ func TestAuthService_Login_InvalidCredentials(t *testing.T) {
 		GetByEmail(mock.Anything, "ghost@horizonx.local").
 		Return(nil, domain.ErrUserNotFound)
 
-	svc := auth.NewService(mockRepo, "secret", time.Hour)
+	svc := auth.NewService(mockRepo, &fakeSessionStore{}, "secret", time.Hour)
 	res, err := svc.Login(context.Background(), domain.LoginRequest{
 		Email:    "ghost@horizonx.local",
 		Password: "password",
@@ -121,7 +121,7 @@ func TestAuthService_Login_WrongPassword(t *testing.T) {
 		GetByEmail(mock.Anything, "admin@horizonx.local").
 		Return(mockUser, nil)
 
-	svc := auth.NewService(mockRepo, "secret", time.Hour)
+	svc := auth.NewService(mockRepo, &fakeSessionStore{}, "secret", time.Hour)
 	res, err := svc.Login(context.Background(), domain.LoginRequest{
 		Email:    "admin@horizonx.local",
 		Password: "wrong-password",

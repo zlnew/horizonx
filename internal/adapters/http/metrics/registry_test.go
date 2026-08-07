@@ -73,6 +73,9 @@ func (f *fakeServerRepo) UpdateOSInfo(ctx context.Context, serverID uuid.UUID, o
 func (f *fakeServerRepo) UpdateStatus(ctx context.Context, serverID uuid.UUID, isOnline bool) error {
 	return nil
 }
+func (f *fakeServerRepo) UpdateSecret(ctx context.Context, serverID uuid.UUID, secret string) error {
+	return nil
+}
 func (f *fakeServerRepo) Delete(ctx context.Context, serverID uuid.UUID) error {
 	return nil
 }

@@ -29,11 +29,14 @@ type AuthResponse struct {
 type AuthService interface {
 	GetUser(ctx context.Context) (*User, error)
 	Login(ctx context.Context, req LoginRequest) (*AuthResponse, error)
+	Logout(ctx context.Context) error
+	RevokeAllSessions(ctx context.Context, userID int64) error
 }
 
 type AuthClaims struct {
-	UserID int64     `json:"sub"`
-	Role   RoleConst `json:"role"`
+	UserID    int64     `json:"sub"`
+	Role      RoleConst `json:"role"`
+	SessionID string    `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 

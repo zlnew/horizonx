@@ -4,3 +4,4 @@ apps*
 .env.agent.production
 .env.server.production
 dist/
+.hermes/

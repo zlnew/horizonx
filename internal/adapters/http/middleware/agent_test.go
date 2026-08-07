@@ -21,6 +21,9 @@ func (f *fakeServerService) List(ctx context.Context, opts domain.ServerListOpti
 func (f *fakeServerService) GetByID(ctx context.Context, serverID uuid.UUID) (*domain.Server, error) {
 	return nil, nil
 }
+func (f *fakeServerService) RotateSecret(ctx context.Context, serverID uuid.UUID) (string, error) {
+	return "", nil
+}
 func (f *fakeServerService) Register(ctx context.Context, req domain.ServerSaveRequest) (*domain.Server, string, error) {
 	return nil, "", nil
 }

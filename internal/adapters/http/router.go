@@ -29,6 +29,9 @@ type RouterDeps struct {
 	Application *ApplicationHandler
 	Deployment  *DeploymentHandler
 	AuditLog    *AuditLogHandler
+	Settings    *SettingsHandler
+
+	SessionStore domain.SessionStore
 
 	RoleService   domain.RoleService
 	ServerService domain.ServerService
@@ -50,7 +53,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	}
 
 	userStack := middleware.New()
-	userStack.Use(middleware.JWT(cfg))
+	userStack.Use(middleware.JWT(cfg, deps.SessionStore))
 	userStack.Use(middleware.CSRF(cfg))
 
 	agentStack := middleware.New()
@@ -68,9 +71,13 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	appWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppWrite))
 
 	// P1-10: brute-force guard on the public login endpoint — 5 attempts per
-	// IP per minute, then HTTP 429.
+	// IP per minute, then HTTP 429. With TRUST_PROXY the key is the real
+	// client IP from X-Forwarded-For (Cloudflare tunnel); otherwise the
+	// tunnel's address.
 	loginLimiter := ratelimit.New(5, time.Minute)
-	loginStack := middleware.New().Use(loginLimiter.Middleware(ratelimit.ClientIP))
+	loginStack := middleware.New().Use(loginLimiter.Middleware(func(r *http.Request) string {
+		return ratelimit.RealClientIP(r, cfg.TrustProxy)
+	}))
 
 	// HEALTH
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -114,11 +121,15 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// P2-17: queue depth summary (no pagination — tiny fixed-size response).
 	mux.Handle("GET /jobs/summary", userStack.ThenFunc(deps.Job.Summary))
 
+	// v0.3.13 Track C: re-queue a failed/expired job with its original payload.
+	mux.Handle("POST /jobs/{id}/retry", userStack.ThenFunc(deps.Job.Retry))
+
 	// SERVERS
 	mux.Handle("GET /servers", serverReadStack.ThenFunc(deps.Server.Index))
 	mux.Handle("POST /servers", serverWriteStack.ThenFunc(deps.Server.Store))
 	mux.Handle("PUT /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Update))
 	mux.Handle("DELETE /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Destroy))
+	mux.Handle("POST /servers/{id}/rotate-secret", serverWriteStack.ThenFunc(deps.Server.RotateSecret))
 
 	// SERVER METRICS
 	mux.Handle("GET /servers/{id}/metrics/latest", metricsReadStack.ThenFunc(deps.Metrics.Latest))
@@ -134,6 +145,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /users", memberWriteStack.ThenFunc(deps.User.Store))
 	mux.Handle("PUT /users/{id}", memberWriteStack.ThenFunc(deps.User.Update))
 	mux.Handle("DELETE /users/{id}", memberWriteStack.ThenFunc(deps.User.Destroy))
+	mux.Handle("POST /users/{id}/revoke-sessions", memberWriteStack.ThenFunc(deps.User.RevokeSessions))
 
 	// APPLICATIONS
 	mux.Handle("GET /applications", appReadStack.ThenFunc(deps.Application.Index))
@@ -156,6 +168,11 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// AUDIT LOG
 	mux.Handle("GET /audit-logs", userStack.ThenFunc(deps.AuditLog.Index))
+
+	// SETTINGS (runtime-configurable knobs — webhook etc.)
+	mux.Handle("GET /settings/webhook", userStack.ThenFunc(deps.Settings.GetWebhook))
+	mux.Handle("PUT /settings/webhook", userStack.ThenFunc(deps.Settings.UpdateWebhook))
+	mux.Handle("POST /settings/webhook/test", userStack.ThenFunc(deps.Settings.TestWebhook))
 
 	// ENVIRONMENT VARIABLES
 	mux.Handle("POST /applications/{id}/env", appWriteStack.ThenFunc(deps.Application.AddEnvVar))

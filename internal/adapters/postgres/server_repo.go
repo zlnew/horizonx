@@ -282,6 +282,19 @@ func (r *ServerRepository) UpdateStatus(ctx context.Context, serverID uuid.UUID,
 	return err
 }
 
+func (r *ServerRepository) UpdateSecret(ctx context.Context, serverID uuid.UUID, secret string) error {
+	now := time.Now().UTC()
+	query := `UPDATE servers SET api_token = $1, updated_at = $2 WHERE id = $3 AND deleted_at IS NULL`
+	ct, err := r.db.Exec(ctx, query, secret, now, serverID)
+	if err != nil {
+		return fmt.Errorf("failed to update server secret: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("server with ID %s not found or already deleted", serverID.String())
+	}
+	return nil
+}
+
 // CountOnline returns the number of online (non-deleted) agent servers.
 // P2-14: feeds the horizonx_servers_online metric.
 func (r *ServerRepository) CountOnline(ctx context.Context) (int64, error) {

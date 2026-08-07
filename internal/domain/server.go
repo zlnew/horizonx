@@ -48,6 +48,7 @@ type ServerRepository interface {
 	Update(ctx context.Context, s *Server, serverID uuid.UUID) error
 	UpdateOSInfo(ctx context.Context, serverID uuid.UUID, osInfo OSInfo) error
 	UpdateStatus(ctx context.Context, serverID uuid.UUID, isOnline bool) error
+	UpdateSecret(ctx context.Context, serverID uuid.UUID, secret string) error
 	Delete(ctx context.Context, serverID uuid.UUID) error
 	CountOnline(ctx context.Context) (int64, error)
 }
@@ -61,6 +62,10 @@ type ServerService interface {
 	UpdateStatus(ctx context.Context, serverID uuid.UUID, status bool) error
 	Delete(ctx context.Context, serverID uuid.UUID) error
 	AuthorizeAgent(ctx context.Context, serverID uuid.UUID, secret string) (*Server, error)
+	// RotateSecret issues a NEW agent token for a server. The raw token is
+	// returned exactly once — the old token stops working immediately.
+	// Compromised-server rotation is the primary use (multi-server scale).
+	RotateSecret(ctx context.Context, serverID uuid.UUID) (string, error)
 }
 
 func ValidateAgentCredentials(token string) (uuid.UUID, string, error) {
