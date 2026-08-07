@@ -24,83 +24,158 @@ const (
 	upgradeTime = 60 * time.Second
 )
 
-// RunUpgrade self-updates the running horizonx binary to the latest GitHub
-// release. It verifies the SHA256 checksum published next to the tarball.
+// restartServiceFn is the indirection point for the unit restart, so tests
+// can assert the agent/server branch without scheduling a real systemd
+// restart on the box running the tests.
+var restartServiceFn = restartService
+
+// RunUpgrade updates everything HorizonX on this box to the latest release:
+//  1. Self-update the CLI binary (checksum-verified swap).
+//  2. Detect components and update each:
+//     - server instance (/opt/horizonx): regenerate tree (keeps .env), rebuild
+//     the server image from the pinned release, fetch+load the latest
+//     dashboard (best-effort), health-poll.
+//     - agent systemd unit: restart it (restart only — provisioning is
+//     `install agent`'s job and needs the dashboard token).
+//  3. Report per component; a failure in one never aborts the others.
+//
+// latestReleaseFn is the indirection point for the release lookup, so tests
+// can fake the network (same pattern as execCompose / preflightFn).
+var latestReleaseFn = latestRelease
+
 func RunUpgrade() error {
 	fmt.Println("horizonx " + version.Version + " → checking for updates…")
 
-	rel, err := latestRelease()
+	rel, err := latestReleaseFn()
 	if err != nil {
 		return err
 	}
 
 	tag := strings.TrimPrefix(rel.TagName, "v")
+	updated := false
 	if tag == version.Version {
 		fmt.Println("already up to date (" + version.Version + ").")
-		return nil
+	} else {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve executable: %w", err)
+		}
+
+		arch := runtime.GOARCH
+		if arch == "amd64" {
+			arch = "x86_64"
+		}
+		asset := fmt.Sprintf("horizonx-%s-%s.tar.gz", runtime.GOOS, arch)
+
+		fmt.Printf("downloading %s (%s)…\n", asset, tag)
+
+		url := fmt.Sprintf("%s/%s", githubDL, asset)
+		tarball, err := download(url, asset)
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tarball)
+
+		checksumURL := fmt.Sprintf("%s/SHA256SUMS", githubDL)
+		sums, err := download(checksumURL, "SHA256SUMS")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(sums)
+
+		want, err := checksumFor(sums, asset)
+		if err != nil {
+			return err
+		}
+		if err := verifySHA256(tarball, want); err != nil {
+			return err
+		}
+		fmt.Println("checksum OK.")
+
+		newBin, err := extractBinary(tarball, "horizonx")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(newBin)
+
+		if err := replaceBinary(newBin, exe); err != nil {
+			return err
+		}
+		updated = true
+		fmt.Printf("updated to horizonx %s.\n", tag)
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve executable: %w", err)
-	}
-
-	arch := runtime.GOARCH
-	if arch == "amd64" {
-		arch = "x86_64"
-	}
-	asset := fmt.Sprintf("horizonx-%s-%s.tar.gz", runtime.GOOS, arch)
-
-	fmt.Printf("downloading %s (%s)…\n", asset, tag)
-
-	url := fmt.Sprintf("%s/%s", githubDL, asset)
-	tarball, err := download(url, asset)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tarball)
-
-	checksumURL := fmt.Sprintf("%s/SHA256SUMS", githubDL)
-	sums, err := download(checksumURL, "SHA256SUMS")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(sums)
-
-	want, err := checksumFor(sums, asset)
-	if err != nil {
-		return err
-	}
-	if err := verifySHA256(tarball, want); err != nil {
-		return err
-	}
-	fmt.Println("checksum OK.")
-
-	newBin, err := extractBinary(tarball, "horizonx")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(newBin)
-
-	if err := replaceBinary(newBin, exe); err != nil {
-		return err
-	}
-
-	fmt.Printf("updated to horizonx %s.\n", tag)
-
-	// --- Restart the running service (the "wonder" part) ------------------
-	// Detect how we're installed and bounce the right unit so the new binary
-	// actually takes effect — no manual `systemctl restart` step.
+	// --- Component pass (runs even when the binary was already current —
+	// the instance may have been installed/left on an older release) ---------
 	rt := DetectRuntime()
-	if unit := rt.ActiveUnit(); unit != "" {
-		fmt.Printf("restarting %s…\n", unit)
-		return restartService(unit, rt.IsUserUnit(unit))
+	fmt.Println()
+	fmt.Println("Upgrading components…")
+
+	// Server instance: regenerate the tree (install-or-upgrade: existing .env
+	// preserved by generateInstance) then apply. applyInstance pins HX_VERSION to
+	// version.Version — the binary was just swapped, so this is the NEW
+	// release.
+	instanceDone := false
+	detected := false
+	if rt.InstanceInstalled() {
+		detected = true
+		fmt.Println("  server instance: detected at " + rt.InstanceDir)
+		host := "127.0.0.1"
+		// Reuse the install-server generation with defaults: the existing
+		// .env (admin creds, secrets, origins) is kept verbatim by
+		// generateInstance, so admin/pass/origins are irrelevant here.
+		l, gerr := GenerateInstanceWithAdmin(rt.InstanceDir, host, "", "", nil)
+		if gerr != nil {
+			fmt.Printf("  ⚠ server instance: regenerate tree failed: %v\n", gerr)
+		} else if aerr := applyInstance(l, InstallServerOptions{Host: host}); aerr != nil {
+			fmt.Printf("  ⚠ server instance: update failed: %v\n", aerr)
+		} else {
+			instanceDone = true
+		}
 	}
-	if rt.ComposeFile != "" {
-		fmt.Println("restarting docker compose stack…")
-		return restartCompose(rt.ComposeFile)
+
+	// Agent unit: restart only (provisioning is install agent's job).
+	if rt.UnitActive(agentUnit) {
+		detected = true
+		fmt.Println("  agent: unit active, restarting…")
+		if err := restartServiceFn(agentUnit, rt.IsUserUnit(agentUnit)); err != nil {
+			fmt.Printf("  ⚠ agent: restart failed: %v\n", err)
+		} else {
+			fmt.Println("  ✔ agent restarted")
+		}
+	} else if !instanceDone && rt.UnitActive(serverUnit) {
+		// Legacy bare-metal server under systemd (no instance): restart it so
+		// the swapped binary takes effect.
+		detected = true
+		fmt.Println("  server (systemd): restarting…")
+		if err := restartServiceFn(serverUnit, rt.IsUserUnit(serverUnit)); err != nil {
+			fmt.Printf("  ⚠ server: restart failed: %v\n", err)
+		} else {
+			fmt.Println("  ✔ server restarted")
+		}
+	} else if !instanceDone && rt.ComposeFile != "" {
+		// Legacy compose layout (pre-instance): force-recreate the stack.
+		detected = true
+		fmt.Println("  restarting docker compose stack…")
+		if err := restartCompose(rt.ComposeFile); err != nil {
+			fmt.Printf("  ⚠ compose stack restart failed: %v\n", err)
+		} else {
+			fmt.Println("  ✔ compose stack restarted")
+		}
 	}
-	fmt.Println("no active systemd unit or compose stack detected — start it manually when ready.")
+
+	if !detected {
+		fmt.Println("No HorizonX components detected on this box.")
+		fmt.Println("  Control plane (server + dashboard): sudo horizonx install server")
+		fmt.Println("  Agent on this host:                 sudo horizonx install agent --token <token>")
+	}
+
+	fmt.Println()
+	if updated {
+		fmt.Println("✔ horizonx upgraded to v" + tag + ".")
+	} else {
+		fmt.Println("✔ horizonx already current (v" + tag + "); components reconciled.")
+	}
 	return nil
 }
 

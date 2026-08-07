@@ -25,6 +25,29 @@ func setExecCompose(f func(args ...string) (string, error)) func() {
 // failing docker command.
 var errExecFailure = errors.New("exec failed")
 
+func TestDashboardCacheDirDefault(t *testing.T) {
+	// The default instance root (/opt/horizonx) must cache the dashboard
+	// tarball OUTSIDE the instance — /var/cache/horizonx/dashboard — so the
+	// transport artifact never mixes with runtime state or backups.
+	if got := dashboardCacheDir(instanceDir); got != "/var/cache/horizonx/dashboard" {
+		t.Errorf("dashboardCacheDir(/opt/horizonx) = %q, want /var/cache/horizonx/dashboard", got)
+	}
+	if got := dashboardCacheDir(""); got != "/var/cache/horizonx/dashboard" {
+		t.Errorf("dashboardCacheDir(\"\") = %q, want /var/cache/horizonx/dashboard", got)
+	}
+}
+
+func TestDashboardCacheDirCustomRoot(t *testing.T) {
+	// Custom instance roots (dev/tests via --dir) keep the cache under the
+	// instance so tests stay self-contained and don't touch /var/cache.
+	root := t.TempDir()
+	got := dashboardCacheDir(root)
+	want := filepath.Join(root, "dashboard")
+	if got != want {
+		t.Errorf("dashboardCacheDir(custom) = %q, want %q", got, want)
+	}
+}
+
 func TestInstallServerGenerateOnly(t *testing.T) {
 	restore := setExecCompose(func(args ...string) (string, error) {
 		t.Fatalf("generate-only must not call docker compose (got %v)", args)
@@ -82,9 +105,9 @@ func TestInstallServerApplyHealthCheck(t *testing.T) {
 }
 
 func TestInstallServerUpgradeAllowsBusyPorts(t *testing.T) {
-	// Regression: `install server` on an existing bubble (upgrade path) must
-	// not fail when the signature ports are busy — the bubble owns them.
-	// (v0.3.3→v0.3.4 fix; Maul hit this re-running install over a live bubble.)
+	// Regression: `install server` on an existing instance (upgrade path) must
+	// not fail when the signature ports are busy — the instance owns them.
+	// (v0.3.3→v0.3.4 fix; Maul hit this re-running install over a live instance.)
 	var calls [][]string
 	restore := setExecCompose(func(args ...string) (string, error) {
 		calls = append(calls, args)
@@ -109,7 +132,7 @@ func TestInstallServerUpgradeAllowsBusyPorts(t *testing.T) {
 	defer func() { latestDashboardRelease = oldRel }()
 
 	dir := t.TempDir()
-	// Simulate an existing bubble: .env present (upgrade, not first install).
+	// Simulate an existing instance: .env present (upgrade, not first install).
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("DATABASE_URL=postgres://x\n"), 0o644); err != nil {
 		t.Fatalf("write .env: %v", err)
 	}
@@ -416,22 +439,22 @@ func TestPollHealth(t *testing.T) {
 	}
 }
 
-func TestHasBubbleVolumes(t *testing.T) {
+func TestHasInstanceVolumes(t *testing.T) {
 	origRun := runCommand
 	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
-		// Real docker compose prefixes with the project name: for a bubble at
+		// Real docker compose prefixes with the project name: for a instance at
 		// /opt/horizonx the project is `horizonx`, so the volume is
 		// `horizonx_horizonx_pgdata`.
 		return "horizonx_horizonx_pgdata\nother-volume\n", nil
 	}
 	defer func() { runCommand = origRun }()
 
-	if !hasBubbleVolumes("/opt/horizonx") {
-		t.Error("hasBubbleVolumes should detect horizonx_pgdata")
+	if !hasInstanceVolumes("/opt/horizonx") {
+		t.Error("hasInstanceVolumes should detect horizonx_pgdata")
 	}
 }
 
-func TestHasBubbleVolumesBareName(t *testing.T) {
+func TestHasInstanceVolumesBareName(t *testing.T) {
 	origRun := runCommand
 	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
 		// A bare `horizonx_pgdata` (hand-created or old layout) still counts.
@@ -439,33 +462,33 @@ func TestHasBubbleVolumesBareName(t *testing.T) {
 	}
 	defer func() { runCommand = origRun }()
 
-	if !hasBubbleVolumes("/opt/horizonx") {
-		t.Error("hasBubbleVolumes should detect bare horizonx_pgdata")
+	if !hasInstanceVolumes("/opt/horizonx") {
+		t.Error("hasInstanceVolumes should detect bare horizonx_pgdata")
 	}
 }
 
-func TestHasBubbleVolumesNoVolumes(t *testing.T) {
+func TestHasInstanceVolumesNoVolumes(t *testing.T) {
 	origRun := runCommand
 	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
 		return "unrelated-volume\n", nil
 	}
 	defer func() { runCommand = origRun }()
 
-	if hasBubbleVolumes("/opt/horizonx") {
-		t.Error("hasBubbleVolumes should be false when only unrelated volumes exist")
+	if hasInstanceVolumes("/opt/horizonx") {
+		t.Error("hasInstanceVolumes should be false when only unrelated volumes exist")
 	}
 }
 
-func TestHasBubbleVolumesProjectPrefixed(t *testing.T) {
+func TestHasInstanceVolumesProjectPrefixed(t *testing.T) {
 	origRun := runCommand
 	runCommand = func(ctx context.Context, name string, args ...string) (string, error) {
 		// Real docker prefixes with the compose project name
-		// (e.g. bubble dir /tmp/test → project `test` → `test_horizonx_pgdata`).
+		// (e.g. instance dir /tmp/test → project `test` → `test_horizonx_pgdata`).
 		return "test_horizonx_pgdata\n", nil
 	}
 	defer func() { runCommand = origRun }()
 
-	if !hasBubbleVolumes("/tmp/test") {
-		t.Error("hasBubbleVolumes should detect project-prefixed horizonx volumes")
+	if !hasInstanceVolumes("/tmp/test") {
+		t.Error("hasInstanceVolumes should detect project-prefixed horizonx volumes")
 	}
 }

@@ -5,16 +5,16 @@ package app
 // The agent NEVER runs in docker (design rule locked with Maul, 2026-08-03):
 // its job is to run docker-compose deploys on the host, read host hardware
 // (/sys, hwmon, powercap, nvidia-smi), and survive `docker compose down` to
-// redeploy the bubble. So provisioning creates a dedicated system user with
+// redeploy the instance. So provisioning creates a dedicated system user with
 // docker group membership, a git SSH key, hwmon udev rules, an env file, and
 // a systemd unit — no container involved.
 //
 // Credentials: the agent authenticates with the token the server generated
 // when the server was REGISTERED IN THE DASHBOARD (the servers table stores
-// the bcrypt hash; the bubble .env's HORIZONX_SERVER_ID/API_TOKEN are
+// the bcrypt hash; the instance .env's HORIZONX_SERVER_ID/API_TOKEN are
 // placeholders that never authenticate). So --token is REQUIRED: pass the
 // token shown by the dashboard at registration. --server defaults to the
-// bubble's control plane URL when run on the same box.
+// instance's control plane URL when run on the same box.
 
 import (
 	"flag"
@@ -26,7 +26,7 @@ import (
 
 // InstallAgentOptions carries the flags for `horizonx install agent`.
 type InstallAgentOptions struct {
-	Server string // control-plane base URL (http://host:4858); default: read from bubble .env
+	Server string // control-plane base URL (http://host:4858); default: read from instance .env
 	Token  string // agent token from dashboard server registration (REQUIRED)
 	Yes    bool
 }
@@ -39,7 +39,7 @@ func RunInstallAgent(opts InstallAgentOptions) error {
 		return fmt.Errorf("agent token is required: register the server in the dashboard, then pass --token <token>")
 	}
 	if opts.Server == "" {
-		if err := loadAgentServerURLFromBubble(prov); err != nil {
+		if err := loadAgentServerURLFromInstance(prov); err != nil {
 			return err
 		}
 	} else {
@@ -80,16 +80,16 @@ func RunInstallAgent(opts InstallAgentOptions) error {
 	return nil
 }
 
-// loadAgentServerURLFromBubble reads the control-plane URL from the server
-// bubble's .env at /opt/horizonx (same-box install). The token is NOT read
-// from the bubble — it must come from dashboard registration (the servers
+// loadAgentServerURLFromInstance reads the control-plane URL from the server
+// instance's .env at /opt/horizonx (same-box install). The token is NOT read
+// from the instance — it must come from dashboard registration (the servers
 // table is the source of truth; the .env's HORIZONX_SERVER_ID/API_TOKEN are
 // placeholders that never authenticate).
-func loadAgentServerURLFromBubble(prov *AgentProvision) error {
-	envPath := filepath.Join(bubbleDir, ".env")
+func loadAgentServerURLFromInstance(prov *AgentProvision) error {
+	envPath := filepath.Join(instanceDir, ".env")
 	data, err := os.ReadFile(envPath)
 	if err != nil {
-		return fmt.Errorf("no --server given and no server bubble found at %s.\n"+
+		return fmt.Errorf("no --server given and no server instance found at %s.\n"+
 			"  On the same box as the server, install the server first (horizonx install server).\n"+
 			"  On a different host, pass: horizonx install agent --server http://host:4858 --token <token>", envPath)
 	}
@@ -97,14 +97,14 @@ func loadAgentServerURLFromBubble(prov *AgentProvision) error {
 	prov.APIURL = vars["HORIZONX_API_URL"]
 	prov.WSURL = vars["HORIZONX_WS_URL"]
 	if prov.APIURL == "" {
-		return fmt.Errorf("server bubble .env at %s is missing HORIZONX_API_URL.\n"+
+		return fmt.Errorf("server instance .env at %s is missing HORIZONX_API_URL.\n"+
 			"  Re-run: horizonx install server --generate-only", envPath)
 	}
 	return nil
 }
 
 // parseEnv parses KEY=VALUE lines (ignores comments/blank). Used to read the
-// bubble .env for agent credentials.
+// instance .env for agent credentials.
 func parseEnv(content string) map[string]string {
 	out := map[string]string{}
 	for _, line := range strings.Split(content, "\n") {
@@ -123,7 +123,7 @@ func parseEnv(content string) map[string]string {
 func InstallAgentFlags(args []string) (InstallAgentOptions, error) {
 	fs := flag.NewFlagSet("install agent", flag.ExitOnError)
 	var opts InstallAgentOptions
-	fs.StringVar(&opts.Server, "server", "", "control-plane base URL (http://host:4858); default: read from bubble .env")
+	fs.StringVar(&opts.Server, "server", "", "control-plane base URL (http://host:4858); default: read from instance .env")
 	fs.StringVar(&opts.Token, "token", "", "agent token from dashboard server registration (REQUIRED: <server-id>.<secret>)")
 	fs.BoolVar(&opts.Yes, "yes", false, "non-interactive")
 	if err := fs.Parse(args); err != nil {
