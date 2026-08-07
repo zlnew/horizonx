@@ -2,7 +2,7 @@
 //
 // One binary, subcommands — the opencode-style install target:
 //
-//	horizonx install server   # install OR upgrade the docker bubble (server+dashboard+postgres+redis)
+//	horizonx install server   # install OR upgrade the HorizonX instance (server+dashboard+postgres+redis)
 //	horizonx install agent    # install OR upgrade a host agent (systemd + user + ssh key + udev)
 //	horizonx server           # run the control-plane server (foreground)
 //	horizonx agent            # run an app-host agent (foreground)
@@ -59,7 +59,7 @@ func main() {
 func runInstall(args []string) error {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "install requires a component: server | agent")
-		fmt.Fprintln(os.Stderr, "  horizonx install server   # install/upgrade the docker bubble")
+		fmt.Fprintln(os.Stderr, "  horizonx install server   # install/upgrade the HorizonX instance")
 		fmt.Fprintln(os.Stderr, "  horizonx install agent    # install/upgrade a host agent")
 		os.Exit(1)
 	}
@@ -85,7 +85,7 @@ func usage() {
 	fmt.Println(`horizonx — HorizonX control plane
 
 Usage:
-  horizonx install server     Install or upgrade the control plane (docker bubble
+  horizonx install server     Install or upgrade the control plane (HorizonX instance
                               with server + dashboard + postgres + redis at /opt/horizonx)
   horizonx install agent      Install or upgrade a host agent (systemd unit, horizonx
                               user, SSH key, udev rules — never docker)

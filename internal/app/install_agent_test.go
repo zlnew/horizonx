@@ -20,16 +20,16 @@ func TestParseEnv(t *testing.T) {
 	}
 }
 
-func TestLoadAgentServerURLFromBubble(t *testing.T) {
-	// Same-box install: --token not given, so the URL comes from the bubble
+func TestLoadAgentServerURLFromInstance(t *testing.T) {
+	// Same-box install: --token not given, so the URL comes from the instance
 	// .env but the token MUST NOT (dashboard registration is the only valid
 	// source; the .env HORIZONX_SERVER_ID/API_TOKEN are placeholders).
 	dir := t.TempDir()
-	// bubbleDir is a package const pointing at /opt/horizonx — can't change.
+	// instanceDir is a package const pointing at /opt/horizonx — can't change.
 	// Instead verify the read logic against a temp .env via the parser +
 	// URL derivation, and that the .env contains the URL keys.
-	if _, err := GenerateBubble(dir, "203.0.113.10"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "203.0.113.10"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".env"))
 	if err != nil {
@@ -61,7 +61,7 @@ func TestInstallAgentTokenSplit(t *testing.T) {
 }
 
 func TestInstallAgentRequiresToken(t *testing.T) {
-	// Regression (2026-08-04): install agent must NOT fall back to the bubble
+	// Regression (2026-08-04): install agent must NOT fall back to the instance
 	// .env's HORIZONX_SERVER_ID/API_TOKEN — those placeholders never
 	// authenticate (the server checks the dashboard-registered servers table).
 	// Token is now REQUIRED; missing -> clear error.

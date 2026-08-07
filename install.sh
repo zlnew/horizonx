@@ -108,7 +108,7 @@ chmod +x "$BIN_DIR/horizonx"
 ok "installed $( "$BIN_DIR/horizonx" version )"
 echo
 echo "  Next steps:"
-echo "    1. Install the control plane (docker bubble, ports 4858/4859):"
+echo "    1. Install the control plane (HorizonX instance, ports 4858/4859):"
 echo "       sudo $BIN_DIR/horizonx install server"
 echo "    2. On each app host, install the agent (host systemd):"
 echo "       curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo bash"

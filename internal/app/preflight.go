@@ -161,7 +161,7 @@ type PreflightResult struct {
 	DockerGroupHint string // actionable hint when docker access is denied
 }
 
-// RunPreflight probes the box for the capabilities the docker-bubble install
+// RunPreflight probes the box for the capabilities the docker-instance install
 // needs. It never fails — a box missing everything is still a valid answer —
 // and always returns a fully populated PreflightResult.
 func RunPreflight() PreflightResult {
@@ -196,7 +196,7 @@ func RunPreflight() PreflightResult {
 		}
 	}
 
-	// Port probe: the signature ports must be free for the bubble to bind.
+	// Port probe: the signature ports must be free for the instance to bind.
 	r.PortsFree = portFree("127.0.0.1:"+ServerPort) && portFree(":"+DashboardPort)
 
 	return r

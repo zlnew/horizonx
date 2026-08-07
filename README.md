@@ -70,17 +70,17 @@ install.) The installer:
 - Fetches the latest release tarball + `SHA256SUMS`, **verifies the checksum**
 - Installs `horizonx` to `/usr/local/bin`
 
-### 2. Install the control plane (docker bubble)
+### 2. Install the control plane (HorizonX instance)
 
 ```bash
 horizonx install server
 ```
 
-One command, one bubble. It installs (or upgrades) everything at `/opt/horizonx`:
+One command, one instance. It installs (or upgrades) everything at `/opt/horizonx`:
 
 - **Server** — the control plane API, exposed on **port 4858**
 - **Dashboard** — the Vue UI, bundled and served on **port 4859**
-- **Postgres + Redis** — private to the bubble (no host ports)
+- **Postgres + Redis** — private to the instance (no host ports)
 
 The dashboard is fetched automatically: `install server` resolves the latest
 [horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard/releases)
@@ -98,9 +98,9 @@ The flow is *preflight → generate → validate → apply → verify*:
 1. **Preflight** probes real capabilities — docker socket access, Compose ≥ 2.20,
    free ports. If docker is installed but your user can't reach the socket, it
    tells you exactly what to fix (`sudo usermod -aG docker $USER && re-login`).
-   On re-runs (upgrade path) the port check is skipped — the bubble owns its
-   own ports, so `install server` over a live bubble just works.
-2. **Generate** writes the full bubble tree (root compose + `server/` + `dashboard/`).
+   On re-runs (upgrade path) the port check is skipped — the instance owns its
+   own ports, so `install server` over a live instance just works.
+2. **Generate** writes the full instance tree (root compose + `server/` + `dashboard/`).
    Everything builds from the release tarball — **no registry pulls, ever**.
 3. **Validate** runs `docker compose config --quiet` before touching anything.
 4. **Apply** brings up postgres + redis + server, then fetches + loads + starts
@@ -108,7 +108,7 @@ The flow is *preflight → generate → validate → apply → verify*:
 5. **Verify** polls `GET /health` on 4858 until the control plane answers, then
    prints the URLs + first-login info.
 
-**First boot auto-seeds the admin user** (`AUTO_SEED=true` in the bubble
+**First boot auto-seeds the admin user** (`AUTO_SEED=true` in the instance
 `.env`) — email + password are prompted during install (or passed with
 `--admin` / `--admin-password`, random when blank) and printed at the end.
 On re-runs the printed credentials always work: the server reconciles the
@@ -127,7 +127,7 @@ Preview without applying: `horizonx install server --generate-only`.
 The ports are signature ports, not common ones: **4858 = 0x4858 = ASCII "HX"**.
 Override with `HORIZONX_PORT` / `DASHBOARD_PORT` in `/opt/horizonx/.env`.
 
-Requirements: **Linux**, **Docker + Compose v2.20+** (the bubble uses the
+Requirements: **Linux**, **Docker + Compose v2.20+** (the instance uses the
 `include:` feature). Bare-metal/no-docker path: run `horizonx server` in the
 foreground with your own postgres/redis.
 
@@ -139,7 +139,7 @@ sudo horizonx install agent
 ```
 
 On the same box as the server, `install agent` reads the credentials from the
-bubble's `.env` — no token juggling. On a different host, pass them:
+instance's `.env` — no token juggling. On a different host, pass them:
 
 ```bash
 sudo horizonx install agent --server http://host:4858 --token <token>
@@ -157,12 +157,21 @@ In the dashboard: **Applications → New** → point at a git repo + branch, set
 ### 5. Upgrading (self-contained)
 
 ```bash
-horizonx upgrade
+sudo horizonx upgrade
 ```
 
-Downloads + checksum-verifies the new release, swaps the binary, and
-**restarts the running service itself** (systemd unit or compose stack) — you
-don't touch anything afterwards.
+One command updates **everything HorizonX on this box**:
+
+1. **Binary** — downloads + checksum-verifies the new release, swaps it in place.
+2. **Server instance** (when this box runs the control plane) — rebuilds the server
+   image from the new release, fetches + loads the latest dashboard, and
+   health-checks the control plane. Existing data and `.env` are untouched.
+3. **Agent** (when this box runs the agent) — restarts the agent unit so the new
+   binary takes effect. No token needed: provisioning stays with
+   `horizonx install agent`.
+
+Run it on each host (server box and every app host); on a box with both, both
+are upgraded in one go. A failure in one component never aborts the others.
 
 ### 6. Migrations
 
@@ -176,7 +185,7 @@ control stays available: `horizonx migrate -op=up|down|version|force`.
 ## Requirements
 
 - **Linux** for the agent and server.
-- **Docker + Compose v2.20+** for the control plane (the `/opt/horizonx` bubble
+- **Docker + Compose v2.20+** for the control plane (the `/opt/horizonx` instance
   bundles postgres + redis — no manual database setup).
 - **Docker + Compose** on each app host (the agent deploys with `docker compose`).
 - **Git** on each app host (the agent clones repos).
