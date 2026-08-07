@@ -126,6 +126,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /servers", serverWriteStack.ThenFunc(deps.Server.Store))
 	mux.Handle("PUT /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Update))
 	mux.Handle("DELETE /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Destroy))
+	mux.Handle("POST /servers/{id}/rotate-secret", serverWriteStack.ThenFunc(deps.Server.RotateSecret))
 
 	// SERVER METRICS
 	mux.Handle("GET /servers/{id}/metrics/latest", metricsReadStack.ThenFunc(deps.Metrics.Latest))
