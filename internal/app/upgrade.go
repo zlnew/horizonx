@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"horizonx/internal/version"
@@ -43,7 +44,29 @@ var restartServiceFn = restartService
 // can fake the network (same pattern as execCompose / preflightFn).
 var latestReleaseFn = latestRelease
 
+// downloadFn, replaceBinaryFn, and execSelfFn are seams for the self-update
+// pipeline so tests can exercise the swap + re-exec decision without real
+// network or a process-image replace.
+var downloadFn = download
+var replaceBinaryFn = replaceBinary
+
+// execSelfFn replaces the current process image with the given binary.
+// Default is syscall.Exec, which never returns on success. Test seam.
+var execSelfFn = func(exe string, args, env []string) error {
+	return syscall.Exec(exe, args, env)
+}
+
+// envComponentsOnly is set right before re-exec so the fresh process skips
+// the self-update check and goes straight to the component pass.
+const envComponentsOnly = "HORIZONX_UPGRADE_COMPONENTS_ONLY"
+
 func RunUpgrade() error {
+	// Re-exec'd after a binary swap: the new code is already running, so skip
+	// the update check and go straight to the component pass.
+	if os.Getenv(envComponentsOnly) == "1" {
+		return upgradeComponents()
+	}
+
 	fmt.Println("horizonx " + version.Version + " → checking for updates…")
 
 	rel, err := latestReleaseFn()
@@ -52,7 +75,6 @@ func RunUpgrade() error {
 	}
 
 	tag := strings.TrimPrefix(rel.TagName, "v")
-	updated := false
 	if tag == version.Version {
 		fmt.Println("already up to date (" + version.Version + ").")
 	} else {
@@ -70,14 +92,14 @@ func RunUpgrade() error {
 		fmt.Printf("downloading %s (%s)…\n", asset, tag)
 
 		url := fmt.Sprintf("%s/%s", githubDL, asset)
-		tarball, err := download(url, asset)
+		tarball, err := downloadFn(url, asset)
 		if err != nil {
 			return err
 		}
 		defer os.Remove(tarball)
 
 		checksumURL := fmt.Sprintf("%s/SHA256SUMS", githubDL)
-		sums, err := download(checksumURL, "SHA256SUMS")
+		sums, err := downloadFn(checksumURL, "SHA256SUMS")
 		if err != nil {
 			return err
 		}
@@ -98,15 +120,32 @@ func RunUpgrade() error {
 		}
 		defer os.Remove(newBin)
 
-		if err := replaceBinary(newBin, exe); err != nil {
+		if err := replaceBinaryFn(newBin, exe); err != nil {
 			return err
 		}
-		updated = true
 		fmt.Printf("updated to horizonx %s.\n", tag)
+
+		// CRITICAL: the swap replaced the FILE, but THIS process is still
+		// executing the OLD binary's code. Running the component pass here
+		// would use the old detection logic — the exact bug that shipped
+		// v0.3.11: the still-running v0.3.10 process restarted the agent but
+		// never looked in /opt/horizonx, so server + dashboard stayed stale.
+		// Re-exec the new binary so the component pass runs with NEW code.
+		os.Setenv(envComponentsOnly, "1")
+		if err := execSelfFn(exe, os.Args, os.Environ()); err != nil {
+			return fmt.Errorf("re-exec new binary: %w", err)
+		}
+		return nil // unreachable when execSelfFn is syscall.Exec (image replaced)
 	}
 
-	// --- Component pass (runs even when the binary was already current —
-	// the instance may have been installed/left on an older release) ---------
+	return upgradeComponents()
+}
+
+// upgradeComponents detects what's installed on this box and updates each
+// component. Runs even when the binary was already current — the instance may
+// have been installed/left on an older release. Runs in a fresh process after
+// a binary swap (see RunUpgrade), so it always executes the newest code.
+func upgradeComponents() error {
 	rt := DetectRuntime()
 	fmt.Println()
 	fmt.Println("Upgrading components…")
@@ -171,10 +210,13 @@ func RunUpgrade() error {
 	}
 
 	fmt.Println()
-	if updated {
-		fmt.Println("✔ horizonx upgraded to v" + tag + ".")
+	// In the components-only child (re-exec'd after a swap), the binary stamp
+	// is the NEW release — we were just updated. Otherwise the parent hit
+	// "already up to date" and we reconciled an existing install.
+	if os.Getenv(envComponentsOnly) == "1" {
+		fmt.Println("✔ horizonx upgraded to v" + version.Version + "; components reconciled.")
 	} else {
-		fmt.Println("✔ horizonx already current (v" + tag + "); components reconciled.")
+		fmt.Println("✔ horizonx already current (v" + version.Version + "); components reconciled.")
 	}
 	return nil
 }
