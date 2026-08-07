@@ -196,7 +196,14 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	if out2, err2 := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "--build", "--force-recreate", "--no-deps", "server"); err2 != nil {
 		return fmt.Errorf("docker compose up --build --force-recreate server failed: %s\n  (raw error above)", strings.TrimSpace(out2))
 	}
-	fmt.Println("  server image built from the latest release + container recreated")
+	// HX_VERSION source: the binary's own stamped version (pinned release),
+	// not "latest" — see the HX_VERSION comment above. Say the concrete
+	// version so the message is honest when the binary lags latest.
+	srcDesc := "latest release"
+	if strings.HasPrefix(version.Version, "v") {
+		srcDesc = "release " + version.Version
+	}
+	fmt.Printf("  server image built from %s + container recreated\n", srcDesc)
 
 	// 4b. Dashboard — fetch the latest dashboard release automatically, load
 	//     the image, then start it. Best-effort: any dashboard failure (network
@@ -268,20 +275,24 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	} else {
 		fmt.Println()
 		fmt.Println("  Admin account: existing user kept (password not reset by re-runs).")
-		fmt.Println("    If you forgot the password, reset it in the dashboard account page")
-		fmt.Println("    or re-seed it from .env (wipes just the admin row, keeps all data):")
+		fmt.Println("    Forgot it? Reset in the dashboard account page, or re-seed from .env:")
 		fmt.Printf("      docker compose -f %s exec postgres psql -U postgres -d horizonx -c \"DELETE FROM users WHERE email='admin@horizonx.local';\"\n", filepath.Join(l.Root, "docker-compose.yml"))
-		fmt.Println("      # set a new ADMIN_PASSWORD in .env first, then:")
-		fmt.Printf("      docker compose -f %s up -d --force-recreate server\n", filepath.Join(l.Root, "docker-compose.yml"))
+		fmt.Printf("      # set a new ADMIN_PASSWORD in .env, then: docker compose -f %s up -d --force-recreate server\n", filepath.Join(l.Root, "docker-compose.yml"))
 	}
-	fmt.Println()
-	fmt.Println("Install the agent on app hosts:")
-	fmt.Println("  1. Register the server in the dashboard (Servers → Add Server); the")
-	fmt.Println("     dashboard shows the agent token ONCE — copy it.")
-	fmt.Println("  2. On the app host, run: horizonx install agent --token <token>")
-	fmt.Printf("     (--server defaults to http://%s:%s on this box; use --server on other hosts)\n", host, ServerPort)
-	fmt.Println("  The bubble .env's HORIZONX_SERVER_ID/API_TOKEN are placeholders — the")
-	fmt.Println("  server only accepts tokens from dashboard-registered servers.")
+
+	// Agent onboarding is FIRST-install guidance (registration happens once in
+	// the dashboard). On upgrades the agent is already provisioned — printing
+	// the registration flow every re-run is noise.
+	if firstInstall {
+		fmt.Println()
+		fmt.Println("Install the agent on app hosts:")
+		fmt.Println("  1. Register the server in the dashboard (Servers → Add Server); the")
+		fmt.Println("     dashboard shows the agent token ONCE — copy it.")
+		fmt.Println("  2. On the app host, run: horizonx install agent --token <token>")
+		fmt.Printf("     (--server defaults to http://%s:%s on this box; use --server on other hosts)\n", host, ServerPort)
+		fmt.Println("  The bubble .env's HORIZONX_SERVER_ID/API_TOKEN are placeholders — the")
+		fmt.Println("  server only accepts tokens from dashboard-registered servers.")
+	}
 	return nil
 }
 
