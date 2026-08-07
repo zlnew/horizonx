@@ -5,6 +5,7 @@ package ratelimit
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,7 +53,9 @@ func (l *Limiter) Allow(key string) bool {
 	return true
 }
 
-// ClientIP returns the remote address without the port.
+// ClientIP returns the remote address without the port. This is the
+// pre-proxy address (the tunnel's IP) — use RealClientIP for the
+// user-facing client when TRUST_PROXY is on.
 func ClientIP(r *http.Request) string {
 	host := r.RemoteAddr
 	for i := len(host) - 1; i >= 0; i-- {
@@ -61,6 +64,27 @@ func ClientIP(r *http.Request) string {
 		}
 	}
 	return host
+}
+
+// RealClientIP resolves the actual client IP. When trustProxy is true it
+// uses the FIRST X-Forwarded-For entry (set by the Cloudflare tunnel /
+// tailscale serve in front of a 127.0.0.1-bound service) and falls back to
+// RemoteAddr when absent. When false it returns the plain remote address —
+// safe for direct exposure where spoofing XFF must not defeat the limiter.
+func RealClientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			first := xff
+			if i := strings.IndexByte(first, ','); i >= 0 {
+				first = first[:i]
+			}
+			first = strings.TrimSpace(first)
+			if first != "" {
+				return first
+			}
+		}
+	}
+	return ClientIP(r)
 }
 
 // Middleware returns a handler that 429s keys over the limit.

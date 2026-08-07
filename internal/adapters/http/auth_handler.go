@@ -74,7 +74,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.svc.Login(r.Context(), req)
+	// Capture client context for the session record (IP + user agent).
+	ctx := domain.SetClientIP(r.Context(), clientIP(r, h.cfg))
+	ctx = domain.SetUserAgent(ctx, r.UserAgent())
+
+	res, err := h.svc.Login(ctx, req)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidCredentials) {
 			h.writer.Write(w, http.StatusUnauthorized, &response.Response{
@@ -105,6 +109,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// Revoke the server-side session FIRST — this is what actually kills the
+	// token. The cookie clears are belt-and-braces for the client.
+	if err := h.svc.Logout(r.Context()); err != nil && !errors.Is(err, domain.ErrUnauthorized) {
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to sign out",
+		})
+		return
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "horizonx_access_token",
 		Value:    "",

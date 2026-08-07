@@ -122,9 +122,10 @@ func RunServer() error {
 	// Services
 	logService := logSvc.NewService(logRepo, bus)
 	serverService := server.NewService(serverRepo, bus)
-	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
+	sessionStore := redis.NewSessionStore(redisClient)
+	authService := auth.NewService(userRepo, sessionStore, cfg.JWTSecret, cfg.JWTExpiry)
 	roleService := role.NewService(roleRepo)
-	accountService := account.NewService(userRepo)
+	accountService := account.NewService(userRepo, sessionStore)
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, logService, bus)
 	metricsService := metrics.NewService(metricsRepo, redisRegistry, bus, log)
@@ -204,7 +205,7 @@ func RunServer() error {
 	serverHandler := http.NewServerHandler(serverService, jsonDecoder, jsonWriter, validator)
 	authHandler := http.NewAuthHandler(authService, cfg, jsonDecoder, jsonWriter, validator)
 	accountHandler := http.NewAccountHandler(accountService, jsonDecoder, jsonWriter, validator)
-	userHandler := http.NewUserHandler(userService, jsonDecoder, jsonWriter, validator)
+	userHandler := http.NewUserHandler(userService, authService, jsonDecoder, jsonWriter, validator)
 	jobHandler := http.NewJobHandler(jobService, jsonDecoder, jsonWriter, validator)
 	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
 	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
@@ -240,6 +241,8 @@ func RunServer() error {
 		Deployment:  deploymentHandler,
 		AuditLog:    auditLogHandler,
 		Settings:    settingsHandler,
+
+		SessionStore: sessionStore,
 
 		RoleService:   roleService,
 		ServerService: serverService,

@@ -31,6 +31,8 @@ type RouterDeps struct {
 	AuditLog    *AuditLogHandler
 	Settings    *SettingsHandler
 
+	SessionStore domain.SessionStore
+
 	RoleService   domain.RoleService
 	ServerService domain.ServerService
 
@@ -51,7 +53,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	}
 
 	userStack := middleware.New()
-	userStack.Use(middleware.JWT(cfg))
+	userStack.Use(middleware.JWT(cfg, deps.SessionStore))
 	userStack.Use(middleware.CSRF(cfg))
 
 	agentStack := middleware.New()
@@ -69,9 +71,13 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	appWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppWrite))
 
 	// P1-10: brute-force guard on the public login endpoint — 5 attempts per
-	// IP per minute, then HTTP 429.
+	// IP per minute, then HTTP 429. With TRUST_PROXY the key is the real
+	// client IP from X-Forwarded-For (Cloudflare tunnel); otherwise the
+	// tunnel's address.
 	loginLimiter := ratelimit.New(5, time.Minute)
-	loginStack := middleware.New().Use(loginLimiter.Middleware(ratelimit.ClientIP))
+	loginStack := middleware.New().Use(loginLimiter.Middleware(func(r *http.Request) string {
+		return ratelimit.RealClientIP(r, cfg.TrustProxy)
+	}))
 
 	// HEALTH
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +141,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /users", memberWriteStack.ThenFunc(deps.User.Store))
 	mux.Handle("PUT /users/{id}", memberWriteStack.ThenFunc(deps.User.Update))
 	mux.Handle("DELETE /users/{id}", memberWriteStack.ThenFunc(deps.User.Destroy))
+	mux.Handle("POST /users/{id}/revoke-sessions", memberWriteStack.ThenFunc(deps.User.RevokeSessions))
 
 	// APPLICATIONS
 	mux.Handle("GET /applications", appReadStack.ThenFunc(deps.Application.Index))

@@ -32,7 +32,7 @@ func TestAccountService_UpdateProfile_Success(t *testing.T) {
 
 	ctx := domain.SetUserContext(context.Background(), domain.UserContext{ID: 1})
 
-	svc := account.NewService(mockUserRepo)
+	svc := account.NewService(mockUserRepo, &fakeSessionStore{})
 	err := svc.UpdateProfile(ctx, domain.AccountProfileRequest{Name: "New Name"})
 
 	assert.NoError(t, err)
@@ -41,7 +41,7 @@ func TestAccountService_UpdateProfile_Success(t *testing.T) {
 func TestAccountService_UpdateProfile_Unauthorized(t *testing.T) {
 	mockUserRepo := mocks.NewMockUserRepository(t)
 
-	svc := account.NewService(mockUserRepo)
+	svc := account.NewService(mockUserRepo, &fakeSessionStore{})
 	err := svc.UpdateProfile(context.Background(), domain.AccountProfileRequest{Name: "New Name"})
 
 	assert.ErrorIs(t, err, domain.ErrUnauthorized)
@@ -56,7 +56,7 @@ func TestAccountService_UpdateProfile_UserNotFound(t *testing.T) {
 
 	ctx := domain.SetUserContext(context.Background(), domain.UserContext{ID: 1})
 
-	svc := account.NewService(mockUserRepo)
+	svc := account.NewService(mockUserRepo, &fakeSessionStore{})
 	err := svc.UpdateProfile(ctx, domain.AccountProfileRequest{Name: "New Name"})
 
 	assert.ErrorIs(t, err, domain.ErrUserNotFound)
