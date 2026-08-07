@@ -155,6 +155,65 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 		}
 	}
 
+	// 3-5. Validate, apply, and health-check. Shared with `horizonx upgrade`
+	// so both commands apply the bubble identically (validate compose → up
+	// postgres/redis → build server from pinned release → dashboard
+	// best-effort → health poll → live banner).
+	if err := applyBubble(l, opts); err != nil {
+		return err
+	}
+
+	// Print the admin credentials ONLY on first install — the .env password
+	// seeds the admin on first boot and is never re-applied, so on re-runs
+	// printing the .env value would show creds that may not match the account
+	// (e.g. if the password was changed in the dashboard). First install is
+	// when they're genuinely fresh, so they're safe to show then.
+	if firstInstall {
+		if envData, err := os.ReadFile(l.EnvPath); err == nil {
+			email := envValue(envData, "ADMIN_EMAIL")
+			pass := envValue(envData, "ADMIN_PASSWORD")
+			if email != "" {
+				fmt.Println()
+				fmt.Println("  Admin credentials (save these — shown once):")
+				fmt.Printf("    Email    : %s\n", email)
+				fmt.Printf("    Password : %s\n", pass)
+				fmt.Println("    Login at  http://" + host + ":" + DashboardPort)
+			}
+		}
+	} else {
+		fmt.Println()
+		fmt.Println("  Admin account: existing user kept (password not reset by re-runs).")
+		fmt.Println("    Forgot it? Reset in the dashboard account page, or re-seed from .env:")
+		fmt.Printf("      docker compose -f %s exec postgres psql -U postgres -d horizonx -c \"DELETE FROM users WHERE email='admin@horizonx.local';\"\n", filepath.Join(l.Root, "docker-compose.yml"))
+		fmt.Printf("      # set a new ADMIN_PASSWORD in .env, then: docker compose -f %s up -d --force-recreate server\n", filepath.Join(l.Root, "docker-compose.yml"))
+	}
+
+	// Agent onboarding is FIRST-install guidance (registration happens once in
+	// the dashboard). On upgrades the agent is already provisioned — printing
+	// the registration flow every re-run is noise.
+	if firstInstall {
+		fmt.Println()
+		fmt.Println("Install the agent on app hosts:")
+		fmt.Println("  1. Register the server in the dashboard (Servers → Add Server); the")
+		fmt.Println("     dashboard shows the agent token ONCE — copy it.")
+		fmt.Println("  2. On the app host, run: horizonx install agent --token <token>")
+		fmt.Printf("     (--server defaults to http://%s:%s on this box; use --server on other hosts)\n", host, ServerPort)
+		fmt.Println("  The bubble .env's HORIZONX_SERVER_ID/API_TOKEN are placeholders — the")
+		fmt.Println("  server only accepts tokens from dashboard-registered servers.")
+	}
+	return nil
+}
+
+// applyBubble validates, applies, and health-checks the bubble. Shared by
+// `install server` and `upgrade` so both commands apply the bubble
+// identically: validate compose → up postgres/redis → build server from the
+// pinned release → dashboard best-effort → health poll → live banner.
+func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
+	host := opts.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
 	// 3. Validate the compose before applying.
 	fmt.Println("  validating compose…")
 	if out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "config", "--quiet"); err != nil {
@@ -254,45 +313,6 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	fmt.Println("✔ HorizonX bubble is live.")
 	fmt.Printf("  Control plane : http://%s:%s\n", host, ServerPort)
 	fmt.Printf("  Dashboard     : http://%s:%s\n", host, DashboardPort)
-
-	// Print the admin credentials ONLY on first install — the .env password
-	// seeds the admin on first boot and is never re-applied, so on re-runs
-	// printing the .env value would show creds that may not match the account
-	// (e.g. if the password was changed in the dashboard). First install is
-	// when they're genuinely fresh, so they're safe to show then.
-	if firstInstall {
-		if envData, err := os.ReadFile(l.EnvPath); err == nil {
-			email := envValue(envData, "ADMIN_EMAIL")
-			pass := envValue(envData, "ADMIN_PASSWORD")
-			if email != "" {
-				fmt.Println()
-				fmt.Println("  Admin credentials (save these — shown once):")
-				fmt.Printf("    Email    : %s\n", email)
-				fmt.Printf("    Password : %s\n", pass)
-				fmt.Println("    Login at  http://" + host + ":" + DashboardPort)
-			}
-		}
-	} else {
-		fmt.Println()
-		fmt.Println("  Admin account: existing user kept (password not reset by re-runs).")
-		fmt.Println("    Forgot it? Reset in the dashboard account page, or re-seed from .env:")
-		fmt.Printf("      docker compose -f %s exec postgres psql -U postgres -d horizonx -c \"DELETE FROM users WHERE email='admin@horizonx.local';\"\n", filepath.Join(l.Root, "docker-compose.yml"))
-		fmt.Printf("      # set a new ADMIN_PASSWORD in .env, then: docker compose -f %s up -d --force-recreate server\n", filepath.Join(l.Root, "docker-compose.yml"))
-	}
-
-	// Agent onboarding is FIRST-install guidance (registration happens once in
-	// the dashboard). On upgrades the agent is already provisioned — printing
-	// the registration flow every re-run is noise.
-	if firstInstall {
-		fmt.Println()
-		fmt.Println("Install the agent on app hosts:")
-		fmt.Println("  1. Register the server in the dashboard (Servers → Add Server); the")
-		fmt.Println("     dashboard shows the agent token ONCE — copy it.")
-		fmt.Println("  2. On the app host, run: horizonx install agent --token <token>")
-		fmt.Printf("     (--server defaults to http://%s:%s on this box; use --server on other hosts)\n", host, ServerPort)
-		fmt.Println("  The bubble .env's HORIZONX_SERVER_ID/API_TOKEN are placeholders — the")
-		fmt.Println("  server only accepts tokens from dashboard-registered servers.")
-	}
 	return nil
 }
 
