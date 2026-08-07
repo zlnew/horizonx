@@ -157,12 +157,21 @@ In the dashboard: **Applications → New** → point at a git repo + branch, set
 ### 5. Upgrading (self-contained)
 
 ```bash
-horizonx upgrade
+sudo horizonx upgrade
 ```
 
-Downloads + checksum-verifies the new release, swaps the binary, and
-**restarts the running service itself** (systemd unit or compose stack) — you
-don't touch anything afterwards.
+One command updates **everything HorizonX on this box**:
+
+1. **Binary** — downloads + checksum-verifies the new release, swaps it in place.
+2. **Server bubble** (when this box runs the control plane) — rebuilds the server
+   image from the new release, fetches + loads the latest dashboard, and
+   health-checks the control plane. Existing data and `.env` are untouched.
+3. **Agent** (when this box runs the agent) — restarts the agent unit so the new
+   binary takes effect. No token needed: provisioning stays with
+   `horizonx install agent`.
+
+Run it on each host (server box and every app host); on a box with both, both
+are upgraded in one go. A failure in one component never aborts the others.
 
 ### 6. Migrations
 
