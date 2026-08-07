@@ -6,7 +6,7 @@
 # /var/lib/horizonx/apps/<app>). The agent env (HORIZONX_SERVER_ID,
 # HORIZONX_SERVER_API_TOKEN, HORIZONX_API_URL, HORIZONX_WS_URL, REDIS_ADDR)
 # lives in /etc/horizonx/agent.env on the app host — `install agent` writes it
-# there (NOT /etc/horizonx/.env, which is the server bubble's env file).
+# there (NOT /etc/horizonx/.env, which is the server instance's env file).
 
 [Unit]
 Description=HorizonX app-host agent

@@ -139,7 +139,7 @@ func RunServer() error {
 	// Opt out entirely with AUTO_SEED=false.
 	if cfg.AutoSeed {
 		if cfg.AdminPass == "" {
-			return errors.New("auto-seed: ADMIN_PASSWORD is empty (set it in the bubble .env, or run `horizonx install server`)")
+			return errors.New("auto-seed: ADMIN_PASSWORD is empty (set it in the instance .env, or run `horizonx install server`)")
 		}
 		if _, err := userRepo.GetByEmail(ctx, cfg.AdminEmail); errors.Is(err, domain.ErrUserNotFound) {
 			log.Info("auto-seeding roles + admin user", "email", cfg.AdminEmail)

@@ -104,9 +104,9 @@ func TestRuntimeDockerComposeDetection(t *testing.T) {
 	}
 }
 
-func TestDetectRuntimeBubbleAtOptHorizonx(t *testing.T) {
-	// A bubble root with docker-compose.yml must be detected as BubbleDir,
-	// and with a .env present BubbleInstalled must be true.
+func TestDetectRuntimeInstanceAtOptHorizonx(t *testing.T) {
+	// A instance root with docker-compose.yml must be detected as InstanceDir,
+	// and with a .env present InstanceInstalled must be true.
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -117,17 +117,17 @@ func TestDetectRuntimeBubbleAtOptHorizonx(t *testing.T) {
 	t.Setenv("HORIZONX_PREFIX", root)
 
 	rt := DetectRuntime()
-	if rt.BubbleDir != root {
-		t.Errorf("BubbleDir = %q, want %q", rt.BubbleDir, root)
+	if rt.InstanceDir != root {
+		t.Errorf("InstanceDir = %q, want %q", rt.InstanceDir, root)
 	}
-	if !rt.BubbleInstalled() {
-		t.Error("BubbleInstalled = false, want true (compose + .env present)")
+	if !rt.InstanceInstalled() {
+		t.Error("InstanceInstalled = false, want true (compose + .env present)")
 	}
 }
 
-func TestBubbleInstalledRequiresEnv(t *testing.T) {
-	// A half-generated bubble dir (compose but no .env) is NOT a live
-	// install — BubbleInstalled must be false so upgrade doesn't try to
+func TestInstanceInstalledRequiresEnv(t *testing.T) {
+	// A half-generated instance dir (compose but no .env) is NOT a live
+	// install — InstanceInstalled must be false so upgrade doesn't try to
 	// apply against it.
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
@@ -136,20 +136,20 @@ func TestBubbleInstalledRequiresEnv(t *testing.T) {
 	t.Setenv("HORIZONX_PREFIX", root)
 
 	rt := DetectRuntime()
-	if rt.BubbleDir != root {
-		t.Errorf("BubbleDir = %q, want %q (compose present, env absent)", rt.BubbleDir, root)
+	if rt.InstanceDir != root {
+		t.Errorf("InstanceDir = %q, want %q (compose present, env absent)", rt.InstanceDir, root)
 	}
-	if rt.BubbleInstalled() {
-		t.Error("BubbleInstalled = true, want false (no .env)")
+	if rt.InstanceInstalled() {
+		t.Error("InstanceInstalled = true, want false (no .env)")
 	}
 }
 
-func TestBubbleInstalledNoBubble(t *testing.T) {
-	// No bubble dir at all — BubbleInstalled must be false without crashing.
+func TestInstanceInstalledNoInstance(t *testing.T) {
+	// No instance dir at all — InstanceInstalled must be false without crashing.
 	t.Setenv("HORIZONX_PREFIX", filepath.Join(t.TempDir(), "does-not-exist"))
 	rt := DetectRuntime()
-	if rt.BubbleInstalled() {
-		t.Error("BubbleInstalled = true on a bare box, want false")
+	if rt.InstanceInstalled() {
+		t.Error("InstanceInstalled = true on a bare box, want false")
 	}
 }
 
@@ -231,8 +231,8 @@ func fakeUpgradeNetwork(t *testing.T) func() {
 	}
 }
 
-func TestUpgradeBubbleOnly(t *testing.T) {
-	// A box with only the server bubble: upgrade must detect it, regenerate
+func TestUpgradeInstanceOnly(t *testing.T) {
+	// A box with only the server instance: upgrade must detect it, regenerate
 	// the tree, apply it (compose config + up), and NOT report an agent.
 	restoreNet := fakeUpgradeNetwork(t)
 	defer restoreNet()
@@ -248,15 +248,15 @@ func TestUpgradeBubbleOnly(t *testing.T) {
 	pollHealthFn = func(url string) bool { return true }
 	defer func() { pollHealthFn = oldPoll }()
 
-	// Fake the bubble at HORIZONX_PREFIX: compose + .env present.
-	bubble := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bubble, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+	// Fake the instance at HORIZONX_PREFIX: compose + .env present.
+	instance := t.TempDir()
+	if err := os.WriteFile(filepath.Join(instance, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bubble, ".env"), []byte("HORIZONX_PORT=4858\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(instance, ".env"), []byte("HORIZONX_PORT=4858\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HORIZONX_PREFIX", bubble)
+	t.Setenv("HORIZONX_PREFIX", instance)
 
 	err := RunUpgrade()
 	if err != nil {
@@ -268,14 +268,14 @@ func TestUpgradeBubbleOnly(t *testing.T) {
 		joined += strings.Join(c, " ") + "\n"
 	}
 	if !strings.Contains(joined, "config") || !strings.Contains(joined, "up") {
-		t.Errorf("expected compose config + up for the bubble, got:\n%s", joined)
+		t.Errorf("expected compose config + up for the instance, got:\n%s", joined)
 	}
 }
 
 func TestUpgradeAgentOnly(t *testing.T) {
 	// A box with only an active agent unit: upgrade must restart it (via the
 	// indirection point — never a real systemctl restart in tests) and not
-	// touch the bubble.
+	// touch the instance.
 	restoreNet := fakeUpgradeNetwork(t)
 	defer restoreNet()
 	restoreSys := fakeSystemctlOnPath(t, agentUnit)
@@ -289,8 +289,8 @@ func TestUpgradeAgentOnly(t *testing.T) {
 	}
 	defer func() { restartServiceFn = oldRestart }()
 
-	// No bubble anywhere.
-	t.Setenv("HORIZONX_PREFIX", filepath.Join(t.TempDir(), "no-bubble"))
+	// No instance anywhere.
+	t.Setenv("HORIZONX_PREFIX", filepath.Join(t.TempDir(), "no-instance"))
 
 	err := RunUpgrade()
 	if err != nil {
@@ -302,7 +302,7 @@ func TestUpgradeAgentOnly(t *testing.T) {
 }
 
 func TestUpgradeBoth(t *testing.T) {
-	// Same-box server+agent (Maul's decision): upgrade does both — bubble
+	// Same-box server+agent (Maul's decision): upgrade does both — instance
 	// apply AND agent restart.
 	restoreNet := fakeUpgradeNetwork(t)
 	defer restoreNet()
@@ -327,21 +327,21 @@ func TestUpgradeBoth(t *testing.T) {
 	}
 	defer func() { restartServiceFn = oldRestart }()
 
-	bubble := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bubble, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+	instance := t.TempDir()
+	if err := os.WriteFile(filepath.Join(instance, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bubble, ".env"), []byte("HORIZONX_PORT=4858\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(instance, ".env"), []byte("HORIZONX_PORT=4858\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HORIZONX_PREFIX", bubble)
+	t.Setenv("HORIZONX_PREFIX", instance)
 
 	err := RunUpgrade()
 	if err != nil {
 		t.Fatalf("RunUpgrade: %v", err)
 	}
 	if len(composeCalls) == 0 {
-		t.Error("expected bubble apply calls (bubble detected)")
+		t.Error("expected instance apply calls (instance detected)")
 	}
 	if len(restarted) != 1 || restarted[0] != agentUnit {
 		t.Errorf("expected agent restart, got %v", restarted)
@@ -353,7 +353,7 @@ func TestUpgradeNothingDetected(t *testing.T) {
 	// "no active unit detected — start it manually" message.
 	restoreNet := fakeUpgradeNetwork(t)
 	defer restoreNet()
-	t.Setenv("HORIZONX_PREFIX", filepath.Join(t.TempDir(), "no-bubble"))
+	t.Setenv("HORIZONX_PREFIX", filepath.Join(t.TempDir(), "no-instance"))
 
 	err := RunUpgrade()
 	if err != nil {
@@ -364,8 +364,8 @@ func TestUpgradeNothingDetected(t *testing.T) {
 	// message text is covered by the branch itself.
 }
 
-func TestUpgradeBubbleFailureDoesNotAbort(t *testing.T) {
-	// Bubble apply fails → upgrade must report the failure and still succeed
+func TestUpgradeInstanceFailureDoesNotAbort(t *testing.T) {
+	// Instance apply fails → upgrade must report the failure and still succeed
 	// (per-component best-effort), not return an error that kills the agent
 	// restart step.
 	restoreNet := fakeUpgradeNetwork(t)
@@ -394,21 +394,21 @@ func TestUpgradeBubbleFailureDoesNotAbort(t *testing.T) {
 	}
 	defer func() { restartServiceFn = oldRestart }()
 
-	bubble := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bubble, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+	instance := t.TempDir()
+	if err := os.WriteFile(filepath.Join(instance, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bubble, ".env"), []byte("HORIZONX_PORT=4858\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(instance, ".env"), []byte("HORIZONX_PORT=4858\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HORIZONX_PREFIX", bubble)
+	t.Setenv("HORIZONX_PREFIX", instance)
 
 	err := RunUpgrade()
 	if err != nil {
-		t.Fatalf("RunUpgrade must not abort on bubble failure, got: %v", err)
+		t.Fatalf("RunUpgrade must not abort on instance failure, got: %v", err)
 	}
 	if len(restarted) != 1 {
-		t.Errorf("agent must still be restarted after bubble failure, got %v", restarted)
+		t.Errorf("agent must still be restarted after instance failure, got %v", restarted)
 	}
 }
 

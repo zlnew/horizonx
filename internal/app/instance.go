@@ -1,8 +1,8 @@
 package app
 
-// Bubble templates for `horizonx install server`.
+// Instance templates for `horizonx install server`.
 //
-// The bubble lives at /opt/horizonx and is ONE docker compose project:
+// The instance lives at /opt/horizonx and is ONE docker compose project:
 //   docker-compose.yml        <- root: postgres + redis + include: [server, dashboard]
 //   .env                      <- single source of truth (interpolates into sub-projects)
 //   server/docker-compose.yml <- the control plane (builds from release tarball, no GHCR)
@@ -23,9 +23,9 @@ import (
 	"path/filepath"
 )
 
-// BubbleLayout describes the files GenerateBubble writes.
-type BubbleLayout struct {
-	Root             string // absolute path to the bubble dir (e.g. /opt/horizonx)
+// InstanceLayout describes the files GenerateInstance writes.
+type InstanceLayout struct {
+	Root             string // absolute path to the instance dir (e.g. /opt/horizonx)
 	ComposeRoot      string // docker-compose.yml
 	EnvPath          string // .env
 	ServerDir        string // server/
@@ -35,8 +35,8 @@ type BubbleLayout struct {
 	DashboardCompose string // dashboard/docker-compose.yml
 }
 
-// bubbleEnv is the set of values rendered into the bubble.
-type bubbleEnv struct {
+// instanceEnv is the set of values rendered into the instance.
+type instanceEnv struct {
 	HTTPAddr         string // ":4858"
 	DashboardPort    string // "4859"
 	JWTSecret        string
@@ -50,23 +50,23 @@ type bubbleEnv struct {
 	AllowedOrigins   []string // browser origins allowed to open the user WebSocket
 }
 
-// GenerateBubble writes the full bubble tree into dir (created if missing).
+// GenerateInstance writes the full instance tree into dir (created if missing).
 // It is pure generation — no privileged steps, no docker calls — so it can be
 // used by `--generate-only` and by tests. Returns the layout so callers can
 // run `docker compose -f <root> config --quiet` afterwards.
-func GenerateBubble(dir, host string) (*BubbleLayout, error) {
-	return generateBubble(dir, host, "", "", nil)
+func GenerateInstance(dir, host string) (*InstanceLayout, error) {
+	return generateInstance(dir, host, "", "", nil)
 }
 
-// GenerateBubbleWithAdmin is GenerateBubble plus the first admin credentials
-// (written into the bubble .env; the server auto-seeds the user at boot) and
+// GenerateInstanceWithAdmin is GenerateInstance plus the first admin credentials
+// (written into the instance .env; the server auto-seeds the user at boot) and
 // an explicit list of browser origins allowed to open the user WebSocket
 // (defaults to the same-box dashboard URL when empty — see TK-0019).
-func GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass string, allowedOrigins []string) (*BubbleLayout, error) {
-	return generateBubble(dir, host, adminEmail, adminPass, allowedOrigins)
+func GenerateInstanceWithAdmin(dir, host, adminEmail, adminPass string, allowedOrigins []string) (*InstanceLayout, error) {
+	return generateInstance(dir, host, adminEmail, adminPass, allowedOrigins)
 }
 
-func generateBubble(dir, host, adminEmail, adminPass string, allowedOrigins []string) (*BubbleLayout, error) {
+func generateInstance(dir, host, adminEmail, adminPass string, allowedOrigins []string) (*InstanceLayout, error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -77,12 +77,12 @@ func generateBubble(dir, host, adminEmail, adminPass string, allowedOrigins []st
 		}
 	}
 
-	env, err := newBubbleEnv(host, adminEmail, adminPass, allowedOrigins)
+	env, err := newInstanceEnv(host, adminEmail, adminPass, allowedOrigins)
 	if err != nil {
 		return nil, err
 	}
 
-	l := &BubbleLayout{
+	l := &InstanceLayout{
 		Root:             root,
 		ComposeRoot:      filepath.Join(root, "docker-compose.yml"),
 		EnvPath:          filepath.Join(root, ".env"),
@@ -97,17 +97,17 @@ func generateBubble(dir, host, adminEmail, adminPass string, allowedOrigins []st
 	// upgrade). Regenerating secrets would break the postgres/redis volumes
 	// already initialized with the old passwords — the server could never
 	// authenticate against them.
-	envContent := renderBubbleEnv(env)
+	envContent := renderInstanceEnv(env)
 	if existing, err := os.ReadFile(l.EnvPath); err == nil && len(existing) > 0 {
 		envContent = string(existing)
 	}
 
 	files := map[string]string{
 		l.EnvPath:          envContent,
-		l.ComposeRoot:      bubbleComposeRoot,
-		l.ServerCompose:    bubbleComposeServer,
-		l.ServerDockerfile: bubbleServerDockerfile,
-		l.DashboardCompose: bubbleComposeDashboard,
+		l.ComposeRoot:      instanceComposeRoot,
+		l.ServerCompose:    instanceComposeServer,
+		l.ServerDockerfile: instanceServerDockerfile,
+		l.DashboardCompose: instanceComposeDashboard,
 	}
 	for path, content := range files {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -124,7 +124,7 @@ func generateBubble(dir, host, adminEmail, adminPass string, allowedOrigins []st
 	return l, nil
 }
 
-const bubbleComposeRoot = `# HorizonX bubble — root compose.
+const instanceComposeRoot = `# HorizonX instance — root compose.
 # ` + "`install server`" + ` owns this whole tree; do not hand-edit the include list.
 #
 #   docker compose up -d     # brings up postgres + redis + server + dashboard
@@ -164,7 +164,7 @@ volumes:
   horizonx_redisdata:
 `
 
-const bubbleComposeServer = `# HorizonX control plane — sub-project, included by the root compose.
+const instanceComposeServer = `# HorizonX control plane — sub-project, included by the root compose.
 # Built from the release tarball via the Dockerfile in this dir — no registry
 # pulls (the project registry is billing-blocked, so images are built locally).
 services:
@@ -186,7 +186,7 @@ services:
     restart: unless-stopped
 `
 
-const bubbleComposeDashboard = `# HorizonX dashboard — sub-project, included by the root compose.
+const instanceComposeDashboard = `# HorizonX dashboard — sub-project, included by the root compose.
 # The image is loaded locally from the release tarball (docker load) — never
 # pulled from a registry. nginx serves the SPA and proxies /api + WebSocket
 # to the server at 'server:3000' on this project's network.
@@ -200,7 +200,7 @@ services:
     restart: unless-stopped
 `
 
-const bubbleServerDockerfile = `# HorizonX server image — built by the bubble's install.
+const instanceServerDockerfile = `# HorizonX server image — built by the instance's install.
 # Downloads the release tarball + SHA256SUMS from GitHub and verifies the
 # checksum BEFORE unpacking. No registry images involved (the registry is
 # billing-blocked).

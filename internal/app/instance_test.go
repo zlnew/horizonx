@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-func TestGenerateBubbleLayout(t *testing.T) {
+func TestGenerateInstanceLayout(t *testing.T) {
 	dir := t.TempDir()
-	l, err := GenerateBubble(dir, "myserver")
+	l, err := GenerateInstance(dir, "myserver")
 	if err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	if l.Root == "" || l.ComposeRoot == "" || l.ServerCompose == "" || l.DashboardCompose == "" {
 		t.Fatalf("layout not fully populated: %+v", l)
@@ -23,10 +23,10 @@ func TestGenerateBubbleLayout(t *testing.T) {
 	}
 }
 
-func TestGenerateBubbleNoGHCR(t *testing.T) {
+func TestGenerateInstanceNoGHCR(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -46,10 +46,10 @@ func TestGenerateBubbleNoGHCR(t *testing.T) {
 	}
 }
 
-func TestGenerateBubbleRootIncludeStatic(t *testing.T) {
+func TestGenerateInstanceRootIncludeStatic(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	root, err := os.ReadFile(filepath.Join(dir, "docker-compose.yml"))
 	if err != nil {
@@ -61,10 +61,10 @@ func TestGenerateBubbleRootIncludeStatic(t *testing.T) {
 	}
 }
 
-func TestGenerateBubbleEnvPorts(t *testing.T) {
+func TestGenerateInstanceEnvPorts(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	env, err := os.ReadFile(filepath.Join(dir, ".env"))
 	if err != nil {
@@ -91,10 +91,10 @@ func TestGenerateBubbleEnvPorts(t *testing.T) {
 	}
 }
 
-func TestGenerateBubbleEnvDatabaseURLMatchesPostgresPassword(t *testing.T) {
+func TestGenerateInstanceEnvDatabaseURLMatchesPostgresPassword(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	env, err := os.ReadFile(filepath.Join(dir, ".env"))
 	if err != nil {
@@ -120,10 +120,10 @@ func extractEnv(content, key string) string {
 	return ""
 }
 
-func TestGenerateBubbleServerCompose(t *testing.T) {
+func TestGenerateInstanceServerCompose(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	sc, err := os.ReadFile(filepath.Join(dir, "server", "docker-compose.yml"))
 	if err != nil {
@@ -146,10 +146,10 @@ func TestGenerateBubbleServerCompose(t *testing.T) {
 	}
 }
 
-func TestGenerateBubbleDockerfileChecksum(t *testing.T) {
+func TestGenerateInstanceDockerfileChecksum(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	df, err := os.ReadFile(filepath.Join(dir, "server", "Dockerfile"))
 	if err != nil {
@@ -173,10 +173,10 @@ func TestGenerateBubbleDockerfileChecksum(t *testing.T) {
 	}
 }
 
-func TestGenerateBubblePreservesExistingEnv(t *testing.T) {
+func TestGenerateInstancePreservesExistingEnv(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance: %v", err)
 	}
 	// Simulate an existing .env (e.g. first install created it) and re-run:
 	// re-install must NOT regenerate secrets — volumes depend on them.
@@ -184,8 +184,8 @@ func TestGenerateBubblePreservesExistingEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(custom), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GenerateBubble(dir, "myserver"); err != nil {
-		t.Fatalf("GenerateBubble re-run: %v", err)
+	if _, err := GenerateInstance(dir, "myserver"); err != nil {
+		t.Fatalf("GenerateInstance re-run: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, ".env"))
 	if err != nil {
@@ -196,10 +196,10 @@ func TestGenerateBubblePreservesExistingEnv(t *testing.T) {
 	}
 }
 
-func TestGenerateBubbleEnvContainsAdminCreds(t *testing.T) {
+func TestGenerateInstanceEnvContainsAdminCreds(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubbleWithAdmin(dir, "myserver", "ops@example.com", "S3cret!", nil); err != nil {
-		t.Fatalf("GenerateBubbleWithAdmin: %v", err)
+	if _, err := GenerateInstanceWithAdmin(dir, "myserver", "ops@example.com", "S3cret!", nil); err != nil {
+		t.Fatalf("GenerateInstanceWithAdmin: %v", err)
 	}
 	env, err := os.ReadFile(filepath.Join(dir, ".env"))
 	if err != nil {
@@ -217,71 +217,71 @@ func TestGenerateBubbleEnvContainsAdminCreds(t *testing.T) {
 	}
 }
 
-func TestNewBubbleEnvUnique(t *testing.T) {
-	a, err := newBubbleEnv("h", "", "", nil)
+func TestNewInstanceEnvUnique(t *testing.T) {
+	a, err := newInstanceEnv("h", "", "", nil)
 	if err != nil {
-		t.Fatalf("newBubbleEnv: %v", err)
+		t.Fatalf("newInstanceEnv: %v", err)
 	}
-	b, err := newBubbleEnv("h", "", "", nil)
+	b, err := newInstanceEnv("h", "", "", nil)
 	if err != nil {
-		t.Fatalf("newBubbleEnv: %v", err)
+		t.Fatalf("newInstanceEnv: %v", err)
 	}
 	if a.JWTSecret == b.JWTSecret || a.PostgresPassword == b.PostgresPassword ||
 		a.AgentSecret == b.AgentSecret || a.ServerID == b.ServerID {
 		t.Errorf("secrets must be unique per generation")
 	}
 	if a.HTTPAddr != ":3000" || a.DashboardPort != "4859" {
-		t.Errorf("bubbleEnv ports wrong: %s %s", a.HTTPAddr, a.DashboardPort)
+		t.Errorf("instanceEnv ports wrong: %s %s", a.HTTPAddr, a.DashboardPort)
 	}
 	if a.AdminEmail != "admin@horizonx.local" || a.AdminPass == "" {
-		t.Errorf("bubbleEnv must default admin email + random password")
+		t.Errorf("instanceEnv must default admin email + random password")
 	}
 	if a.AdminPass == b.AdminPass {
 		t.Errorf("random admin passwords must differ per generation")
 	}
 }
 
-func TestNewBubbleEnvAdminCreds(t *testing.T) {
-	a, err := newBubbleEnv("h", "ops@example.com", "S3cret!", nil)
+func TestNewInstanceEnvAdminCreds(t *testing.T) {
+	a, err := newInstanceEnv("h", "ops@example.com", "S3cret!", nil)
 	if err != nil {
-		t.Fatalf("newBubbleEnv: %v", err)
+		t.Fatalf("newInstanceEnv: %v", err)
 	}
 	if a.AdminEmail != "ops@example.com" || a.AdminPass != "S3cret!" {
 		t.Errorf("admin creds not honored: %s / %s", a.AdminEmail, a.AdminPass)
 	}
 }
 
-// TestNewBubbleEnvAllowedOriginsDefault pins the TK-0019 fix: when no origins
+// TestNewInstanceEnvAllowedOriginsDefault pins the TK-0019 fix: when no origins
 // are given, ALLOWED_ORIGINS defaults to the same-box dashboard URL so the
 // user WebSocket works without manual config.
-func TestNewBubbleEnvAllowedOriginsDefault(t *testing.T) {
-	a, err := newBubbleEnv("myhost", "", "", nil)
+func TestNewInstanceEnvAllowedOriginsDefault(t *testing.T) {
+	a, err := newInstanceEnv("myhost", "", "", nil)
 	if err != nil {
-		t.Fatalf("newBubbleEnv: %v", err)
+		t.Fatalf("newInstanceEnv: %v", err)
 	}
 	if len(a.AllowedOrigins) != 1 || a.AllowedOrigins[0] != "http://myhost:4859" {
 		t.Errorf("default AllowedOrigins = %v, want [http://myhost:4859]", a.AllowedOrigins)
 	}
 }
 
-// TestNewBubbleEnvAllowedOriginsExplicit pins that an explicit origin list is
+// TestNewInstanceEnvAllowedOriginsExplicit pins that an explicit origin list is
 // honored verbatim (e.g. a tunnel/domain the dashboard is served from).
-func TestNewBubbleEnvAllowedOriginsExplicit(t *testing.T) {
-	a, err := newBubbleEnv("myhost", "", "", []string{"https://horizonx.example.com", "http://myhost:4859"})
+func TestNewInstanceEnvAllowedOriginsExplicit(t *testing.T) {
+	a, err := newInstanceEnv("myhost", "", "", []string{"https://horizonx.example.com", "http://myhost:4859"})
 	if err != nil {
-		t.Fatalf("newBubbleEnv: %v", err)
+		t.Fatalf("newInstanceEnv: %v", err)
 	}
 	if len(a.AllowedOrigins) != 2 || a.AllowedOrigins[0] != "https://horizonx.example.com" {
 		t.Errorf("explicit AllowedOrigins = %v, want [https://horizonx.example.com http://myhost:4859]", a.AllowedOrigins)
 	}
 }
 
-// TestGenerateBubbleEnvAllowedOrigins renders the ALLOWED_ORIGINS key joined
-// by comma into the bubble .env.
-func TestGenerateBubbleEnvAllowedOrigins(t *testing.T) {
+// TestGenerateInstanceEnvAllowedOrigins renders the ALLOWED_ORIGINS key joined
+// by comma into the instance .env.
+func TestGenerateInstanceEnvAllowedOrigins(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateBubbleWithAdmin(dir, "myhost", "", "", []string{"https://horizonx.example.com"}); err != nil {
-		t.Fatalf("GenerateBubbleWithAdmin: %v", err)
+	if _, err := GenerateInstanceWithAdmin(dir, "myhost", "", "", []string{"https://horizonx.example.com"}); err != nil {
+		t.Fatalf("GenerateInstanceWithAdmin: %v", err)
 	}
 	env, err := os.ReadFile(filepath.Join(dir, ".env"))
 	if err != nil {

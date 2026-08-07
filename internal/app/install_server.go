@@ -1,17 +1,17 @@
 package app
 
-// `horizonx install server` — install OR upgrade the HorizonX docker bubble.
+// `horizonx install server` — install OR upgrade the HorizonX instance.
 //
 // Flow (locked with Maul, 2026-08-03):
 //   1. preflight   — probe docker socket access, compose >= 2.20, ports free
-//   2. generate    — write the full bubble tree at /opt/horizonx
+//   2. generate    — write the full instance tree at /opt/horizonx
 //   3. validate    — docker compose config --quiet (fail fast, readable error)
 //   4. apply       — docker compose up -d (stream output; re-run command on error)
 //   5. verify      — poll GET /health until the control plane answers
 //
 // --generate-only stops after step 2 (no privileged steps, no docker calls).
 // Dashboard is BUNDLED (MVP): the dashboard sub-project is part of the same
-// bubble, so there is no separate `install dashboard` command.
+// instance, so there is no separate `install dashboard` command.
 
 import (
 	"bufio"
@@ -31,8 +31,8 @@ import (
 	"horizonx/internal/version"
 )
 
-// bubbleDir is where the docker bubble lives (root compose + sub-projects).
-const bubbleDir = "/opt/horizonx"
+// instanceDir is where the HorizonX instance lives (root compose + sub-projects).
+const instanceDir = "/opt/horizonx"
 
 // execCompose is the indirection point for docker compose invocations in the
 // install-server apply path, so tests can fake the daemon. Defaults to real
@@ -44,28 +44,28 @@ var execCompose = func(args ...string) (string, error) {
 
 // InstallServerOptions carries the flags for `horizonx install server`.
 type InstallServerOptions struct {
-	Dir            string // bubble dir (default /opt/horizonx)
+	Dir            string // instance dir (default /opt/horizonx)
 	Host           string // public host agents/dashboard use
 	Admin          string // admin email (prompted if empty; default admin@horizonx.local)
 	AdminPass      string // admin password (prompted if empty; random if blank)
 	AllowedOrigins string // comma-separated browser origins allowed to open the user WebSocket (default: same-box dashboard URL)
 	GenerateOnly   bool
 	Yes            bool // non-interactive (no prompts; default email + random password)
-	ResetVolumes   bool // wipe existing bubble volumes first (data loss!)
+	ResetVolumes   bool // wipe existing instance volumes first (data loss!)
 }
 
-// RunInstallServer installs or upgrades the HorizonX docker bubble.
+// RunInstallServer installs or upgrades the HorizonX instance.
 func RunInstallServer(opts InstallServerOptions) error {
 	dir := opts.Dir
 	if dir == "" {
-		dir = bubbleDir
+		dir = instanceDir
 	}
 	host := opts.Host
 	if host == "" {
 		host = "127.0.0.1"
 	}
 
-	fmt.Println("horizonx install server — HorizonX docker bubble")
+	fmt.Println("horizonx install server — HorizonX instance")
 	fmt.Println()
 
 	// First install = .env absent. Prompt for the admin credentials once so
@@ -102,10 +102,10 @@ func RunInstallServer(opts InstallServerOptions) error {
 	if firstInstall {
 		fmt.Printf("  preflight: docker OK · compose %s OK · ports %s/%s free\n", r.ComposeVersion, ServerPort, DashboardPort)
 	} else {
-		fmt.Printf("  preflight: docker OK · compose %s OK · upgrade path (ports owned by existing bubble)\n", r.ComposeVersion)
+		fmt.Printf("  preflight: docker OK · compose %s OK · upgrade path (ports owned by existing instance)\n", r.ComposeVersion)
 	}
 
-	// 2. Generate the bubble tree.
+	// 2. Generate the instance tree.
 	var allowed []string
 	if opts.AllowedOrigins != "" {
 		for _, o := range strings.Split(opts.AllowedOrigins, ",") {
@@ -114,9 +114,9 @@ func RunInstallServer(opts InstallServerOptions) error {
 			}
 		}
 	}
-	l, err := GenerateBubbleWithAdmin(dir, host, adminEmail, adminPass, allowed)
+	l, err := GenerateInstanceWithAdmin(dir, host, adminEmail, adminPass, allowed)
 	if err != nil {
-		return fmt.Errorf("generate bubble: %w", err)
+		return fmt.Errorf("generate instance: %w", err)
 	}
 	fmt.Printf("  generated: %s (root compose + server/ + dashboard/)\n", l.Root)
 
@@ -135,8 +135,8 @@ func RunInstallServer(opts InstallServerOptions) error {
 	// loops with `password authentication failed for user "postgres"`. Block
 	// with the exact remediation instead of letting it fail 30s later.
 	if firstInstall && !opts.ResetVolumes {
-		if hasBubbleVolumes(l.Root) {
-			return fmt.Errorf(`stale bubble volumes detected: a postgres/redis volume from a previous
+		if hasInstanceVolumes(l.Root) {
+			return fmt.Errorf(`stale instance volumes detected: a postgres/redis volume from a previous
 install exists, but no .env was found — the volume's password differs from the
 freshly generated one, so the server would crash-loop with "password
 authentication failed for user postgres".
@@ -149,17 +149,17 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 		}
 	}
 	if opts.ResetVolumes {
-		fmt.Println("  resetting bubble volumes (--reset-volumes: data wiped)…")
+		fmt.Println("  resetting instance volumes (--reset-volumes: data wiped)…")
 		if out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "down", "-v"); err != nil {
 			return fmt.Errorf("reset volumes failed: %s", strings.TrimSpace(out))
 		}
 	}
 
 	// 3-5. Validate, apply, and health-check. Shared with `horizonx upgrade`
-	// so both commands apply the bubble identically (validate compose → up
+	// so both commands apply the instance identically (validate compose → up
 	// postgres/redis → build server from pinned release → dashboard
 	// best-effort → health poll → live banner).
-	if err := applyBubble(l, opts); err != nil {
+	if err := applyInstance(l, opts); err != nil {
 		return err
 	}
 
@@ -198,30 +198,30 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 		fmt.Println("     dashboard shows the agent token ONCE — copy it.")
 		fmt.Println("  2. On the app host, run: horizonx install agent --token <token>")
 		fmt.Printf("     (--server defaults to http://%s:%s on this box; use --server on other hosts)\n", host, ServerPort)
-		fmt.Println("  The bubble .env's HORIZONX_SERVER_ID/API_TOKEN are placeholders — the")
+		fmt.Println("  The instance .env's HORIZONX_SERVER_ID/API_TOKEN are placeholders — the")
 		fmt.Println("  server only accepts tokens from dashboard-registered servers.")
 	}
 	return nil
 }
 
 // dashboardCacheDir is where the dashboard image tarball + SHA256SUMS are
-// cached between installs. NOT inside the bubble (/opt/horizonx): the tarball
+// cached between installs. NOT inside the instance (/opt/horizonx): the tarball
 // is a disposable transport artifact, not runtime state — it shouldn't be
-// backed up with the bubble or mistaken for a config file. /var/cache is the
-// FHS home for such artifacts. Tests use a custom bubble root via --dir, so
+// backed up with the instance or mistaken for a config file. /var/cache is the
+// FHS home for such artifacts. Tests use a custom instance root via --dir, so
 // they fall back to <root>/dashboard to stay self-contained.
 func dashboardCacheDir(root string) string {
-	if root == bubbleDir || root == "" {
+	if root == instanceDir || root == "" {
 		return "/var/cache/horizonx/dashboard"
 	}
 	return filepath.Join(root, "dashboard")
 }
 
-// applyBubble validates, applies, and health-checks the bubble. Shared by
-// `install server` and `upgrade` so both commands apply the bubble
+// applyInstance validates, applies, and health-checks the instance. Shared by
+// `install server` and `upgrade` so both commands apply the instance
 // identically: validate compose → up postgres/redis → build server from the
 // pinned release → dashboard best-effort → health poll → live banner.
-func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
+func applyInstance(l *InstanceLayout, opts InstallServerOptions) error {
 	host := opts.Host
 	if host == "" {
 		host = "127.0.0.1"
@@ -233,7 +233,7 @@ func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
 		return fmt.Errorf("compose config invalid:\n%s\n  Re-run: cd %s && docker compose config", strings.TrimSpace(out), l.Root)
 	}
 
-	// 4. Apply. The CORE bubble (postgres + redis + server) comes up first;
+	// 4. Apply. The core of the instance (postgres + redis + server) comes up first;
 	//    the dashboard is best-effort because its image is loaded locally from
 	//    a release tarball and may not be present yet. Starting the core
 	//    separately means a missing dashboard image can never take down the
@@ -250,17 +250,17 @@ func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
 	if strings.HasPrefix(version.Version, "v") {
 		_ = os.Setenv("HX_VERSION", version.Version)
 	}
-	fmt.Println("  starting core bubble (postgres + redis + server)…")
+	fmt.Println("  starting the HorizonX instance (postgres + redis + server)…")
 	out, err := execCompose("-f", filepath.Join(l.Root, "docker-compose.yml"), "up", "-d", "postgres", "redis")
 	if err != nil {
 		return fmt.Errorf("docker compose up failed: %s\n  Re-run: cd %s && docker compose up -d\n  (raw error above)", strings.TrimSpace(out), l.Root)
 	}
-	// Server image: ALWAYS build. The bubble Dockerfile fetches
+	// Server image: ALWAYS build. The instance Dockerfile fetches
 	// releases/latest at build time, so an existing horizonx:latest image
-	// would pin the bubble to whatever release it was first built from — the
+	// would pin the instance to whatever release it was first built from — the
 	// exact "fresh install but admin never auto-seeded" bug Maul hit on
 	// creatokuserver (stale v0.3.2-era binary kept running; `up -d` never
-	// rebuilds an image that already exists, and rm -rf of the bubble dir
+	// rebuilds an image that already exists, and rm -rf of the instance dir
 	// does not remove local docker images). --build + --force-recreate
 	// guarantees a fresh container from the CURRENT release, and a fresh
 	// boot re-runs the admin auto-seed (AUTO_SEED) after any DELETE.
@@ -282,7 +282,7 @@ func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
 	//     down, release API unreachable, checksum mismatch) warns and skips —
 	//     a missing dashboard can never take down the control plane. The
 	//     tarball + SHA256SUMS are cached under /var/cache/horizonx (not in
-	//     the bubble — they're transport artifacts, not runtime state).
+	//     the instance — they're transport artifacts, not runtime state).
 	if tarball, err := fetchDashboardTarball(dashboardCacheDir(l.Root)); err != nil {
 		fmt.Printf("  ⚠ dashboard image not available: %v\n", err)
 		fmt.Println("    The control plane is up; add the dashboard later:")
@@ -304,7 +304,7 @@ func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
 	if !ok {
 		// Diagnose the two most common crash-loop causes so the user gets the
 		// fix instead of a raw log dump.
-		if logs := bubbleServerLogs(l.Root); logs != "" {
+		if logs := instanceServerLogs(l.Root); logs != "" {
 			if strings.Contains(logs, "password authentication failed") || strings.Contains(logs, "SQLSTATE 28P01") {
 				return fmt.Errorf(`control plane did not become healthy within 30s — the server can't
 +authenticate to postgres. The postgres volume was initialized with a password
@@ -325,7 +325,7 @@ func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
 	}
 
 	fmt.Println()
-	fmt.Println("✔ HorizonX bubble is live.")
+	fmt.Println("✔ HorizonX instance is live.")
 	fmt.Printf("  Control plane : http://%s:%s\n", host, ServerPort)
 	fmt.Printf("  Dashboard     : http://%s:%s\n", host, DashboardPort)
 	return nil
@@ -342,11 +342,11 @@ func envValue(data []byte, key string) string {
 	return ""
 }
 
-// hasBubbleVolumes reports whether a postgres/redis volume from a previous
-// bubble install exists in docker (any compose project prefix). Used by the
+// hasInstanceVolumes reports whether a postgres/redis volume from a previous
+// instance install exists in docker (any compose project prefix). Used by the
 // stale-volume guard: postgres only sets its password on FIRST volume init, so
 // a surviving volume + freshly regenerated .env = guaranteed auth failure.
-func hasBubbleVolumes(dir string) bool {
+func hasInstanceVolumes(dir string) bool {
 	out, err := runCommand(context.Background(), "docker", "volume", "ls", "--format", "{{.Name}}")
 	if err != nil {
 		return false
@@ -361,10 +361,10 @@ func hasBubbleVolumes(dir string) bool {
 	return false
 }
 
-// bubbleServerLogs returns the last ~60 lines of the server container's log
+// instanceServerLogs returns the last ~60 lines of the server container's log
 // (best-effort; empty string when the container isn't running or compose
-// fails). Used to diagnose why a freshly applied bubble isn't healthy.
-func bubbleServerLogs(dir string) string {
+// fails). Used to diagnose why a freshly applied instance isn't healthy.
+func instanceServerLogs(dir string) string {
 	out, err := execCompose("-f", filepath.Join(dir, "docker-compose.yml"), "logs", "--tail", "60", "server")
 	if err != nil {
 		return strings.TrimSpace(out)
@@ -431,14 +431,14 @@ func pollHealth(url string, timeout time.Duration) bool {
 func InstallServerFlags(args []string) (InstallServerOptions, error) {
 	fs := flag.NewFlagSet("install server", flag.ExitOnError)
 	var opts InstallServerOptions
-	fs.StringVar(&opts.Dir, "dir", "", "bubble directory (default /opt/horizonx)")
+	fs.StringVar(&opts.Dir, "dir", "", "instance directory (default /opt/horizonx)")
 	fs.StringVar(&opts.Host, "host", "", "public host/IP agents + dashboard use (default 127.0.0.1)")
 	fs.StringVar(&opts.Admin, "admin", "", "admin email for the first dashboard user (default admin@horizonx.local)")
 	fs.StringVar(&opts.AdminPass, "admin-password", "", "admin password (default: random, shown after install)")
 	fs.StringVar(&opts.AllowedOrigins, "origin", "", "comma-separated browser origins allowed to open the user WebSocket (default: http://<host>:4859; add your public/tunnel domain here)")
 	fs.BoolVar(&opts.GenerateOnly, "generate-only", false, "write files only, skip apply")
 	fs.BoolVar(&opts.Yes, "yes", false, "non-interactive")
-	fs.BoolVar(&opts.ResetVolumes, "reset-volumes", false, "wipe existing bubble postgres/redis volumes first (DATA LOSS)")
+	fs.BoolVar(&opts.ResetVolumes, "reset-volumes", false, "wipe existing instance postgres/redis volumes first (DATA LOSS)")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}

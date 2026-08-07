@@ -32,12 +32,13 @@ var restartServiceFn = restartService
 // RunUpgrade updates everything HorizonX on this box to the latest release:
 //  1. Self-update the CLI binary (checksum-verified swap).
 //  2. Detect components and update each:
-//     - server bubble (/opt/horizonx): regenerate tree (keeps .env), rebuild
-//       the server image from the pinned release, fetch+load the latest
-//       dashboard (best-effort), health-poll.
+//     - server instance (/opt/horizonx): regenerate tree (keeps .env), rebuild
+//     the server image from the pinned release, fetch+load the latest
+//     dashboard (best-effort), health-poll.
 //     - agent systemd unit: restart it (restart only — provisioning is
-//       `install agent`'s job and needs the dashboard token).
+//     `install agent`'s job and needs the dashboard token).
 //  3. Report per component; a failure in one never aborts the others.
+//
 // latestReleaseFn is the indirection point for the release lookup, so tests
 // can fake the network (same pattern as execCompose / preflightFn).
 var latestReleaseFn = latestRelease
@@ -105,31 +106,31 @@ func RunUpgrade() error {
 	}
 
 	// --- Component pass (runs even when the binary was already current —
-	// the bubble may have been installed/left on an older release) ---------
+	// the instance may have been installed/left on an older release) ---------
 	rt := DetectRuntime()
 	fmt.Println()
 	fmt.Println("Upgrading components…")
 
-	// Server bubble: regenerate the tree (install-or-upgrade: existing .env
-	// preserved by generateBubble) then apply. applyBubble pins HX_VERSION to
+	// Server instance: regenerate the tree (install-or-upgrade: existing .env
+	// preserved by generateInstance) then apply. applyInstance pins HX_VERSION to
 	// version.Version — the binary was just swapped, so this is the NEW
 	// release.
-	bubbleDone := false
+	instanceDone := false
 	detected := false
-	if rt.BubbleInstalled() {
+	if rt.InstanceInstalled() {
 		detected = true
-		fmt.Println("  server bubble: detected at " + rt.BubbleDir)
+		fmt.Println("  server instance: detected at " + rt.InstanceDir)
 		host := "127.0.0.1"
 		// Reuse the install-server generation with defaults: the existing
 		// .env (admin creds, secrets, origins) is kept verbatim by
-		// generateBubble, so admin/pass/origins are irrelevant here.
-		l, gerr := GenerateBubbleWithAdmin(rt.BubbleDir, host, "", "", nil)
+		// generateInstance, so admin/pass/origins are irrelevant here.
+		l, gerr := GenerateInstanceWithAdmin(rt.InstanceDir, host, "", "", nil)
 		if gerr != nil {
-			fmt.Printf("  ⚠ server bubble: regenerate tree failed: %v\n", gerr)
-		} else if aerr := applyBubble(l, InstallServerOptions{Host: host}); aerr != nil {
-			fmt.Printf("  ⚠ server bubble: update failed: %v\n", aerr)
+			fmt.Printf("  ⚠ server instance: regenerate tree failed: %v\n", gerr)
+		} else if aerr := applyInstance(l, InstallServerOptions{Host: host}); aerr != nil {
+			fmt.Printf("  ⚠ server instance: update failed: %v\n", aerr)
 		} else {
-			bubbleDone = true
+			instanceDone = true
 		}
 	}
 
@@ -142,8 +143,8 @@ func RunUpgrade() error {
 		} else {
 			fmt.Println("  ✔ agent restarted")
 		}
-	} else if !bubbleDone && rt.UnitActive(serverUnit) {
-		// Legacy bare-metal server under systemd (no bubble): restart it so
+	} else if !instanceDone && rt.UnitActive(serverUnit) {
+		// Legacy bare-metal server under systemd (no instance): restart it so
 		// the swapped binary takes effect.
 		detected = true
 		fmt.Println("  server (systemd): restarting…")
@@ -152,8 +153,8 @@ func RunUpgrade() error {
 		} else {
 			fmt.Println("  ✔ server restarted")
 		}
-	} else if !bubbleDone && rt.ComposeFile != "" {
-		// Legacy compose layout (pre-bubble): force-recreate the stack.
+	} else if !instanceDone && rt.ComposeFile != "" {
+		// Legacy compose layout (pre-instance): force-recreate the stack.
 		detected = true
 		fmt.Println("  restarting docker compose stack…")
 		if err := restartCompose(rt.ComposeFile); err != nil {
