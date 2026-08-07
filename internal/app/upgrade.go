@@ -213,10 +213,13 @@ func upgradeComponents() error {
 	// In the components-only child (re-exec'd after a swap), the binary stamp
 	// is the NEW release — we were just updated. Otherwise the parent hit
 	// "already up to date" and we reconciled an existing install.
+	// version.Version already carries the "v" in release builds (stamp
+	// "v0.3.12") — don't prepend another one (caught live on v0.3.12:
+	// "upgraded to vv0.3.12").
 	if os.Getenv(envComponentsOnly) == "1" {
-		fmt.Println("✔ horizonx upgraded to v" + version.Version + "; components reconciled.")
+		fmt.Println("✔ horizonx upgraded to " + version.Version + "; components reconciled.")
 	} else {
-		fmt.Println("✔ horizonx already current (v" + version.Version + "); components reconciled.")
+		fmt.Println("✔ horizonx already current (" + version.Version + "); components reconciled.")
 	}
 	return nil
 }
