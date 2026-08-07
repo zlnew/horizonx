@@ -3,7 +3,9 @@ package app
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -228,6 +230,120 @@ func fakeUpgradeNetwork(t *testing.T) func() {
 	return func() {
 		latestReleaseFn = oldRel
 		latestDashboardRelease = oldDash
+	}
+}
+
+func fakeUpgradeNetworkTag(t *testing.T, tag string) func() {
+	t.Helper()
+	oldRel := latestReleaseFn
+	latestReleaseFn = func() (*ghRelease, error) {
+		return &ghRelease{TagName: tag}, nil
+	}
+	oldDash := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{}, errors.New("network disabled in test")
+	}
+	return func() {
+		latestReleaseFn = oldRel
+		latestDashboardRelease = oldDash
+	}
+}
+
+func TestUpgradeReexecsAfterSwap(t *testing.T) {
+	// Regression for the v0.3.11 one-shot bug: after swapping the binary
+	// FILE, the running process still executes the OLD code — so running the
+	// component pass in-place uses stale detection (v0.3.10 never looked in
+	// /opt/horizonx, leaving server+dashboard stale). The fix: re-exec the
+	// new binary and let the FRESH process run the component pass.
+	restore := fakeUpgradeNetworkTag(t, "v9.9.9")
+	defer restore()
+
+	// Fake the self-update pipeline: a tarball with the plain binary name,
+	// matching SUMS, a no-op swap, and a re-exec that just records the call.
+	tarball := makeTarball(t, map[string][]byte{"horizonx": []byte("#!/bin/sh\necho hi\n")})
+	defer os.Remove(tarball)
+	tarballBytes, err := os.ReadFile(tarball)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := fmt.Sprintf("%x", sha256.Sum256(tarballBytes))
+	sumsPath := filepath.Join(t.TempDir(), "SHA256SUMS")
+	if err := os.WriteFile(sumsPath, []byte(sum+"  horizonx-linux-x86_64.tar.gz\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldDownload := downloadFn
+	downloadFn = func(url, name string) (string, error) {
+		if name == "SHA256SUMS" {
+			return sumsPath, nil
+		}
+		return tarball, nil
+	}
+	defer func() { downloadFn = oldDownload }()
+
+	oldReplace := replaceBinaryFn
+	replaceBinaryFn = func(newBin, exe string) error { return nil }
+	defer func() { replaceBinaryFn = oldReplace }()
+
+	var reexecExe string
+	oldExec := execSelfFn
+	execSelfFn = func(exe string, args, env []string) error {
+		reexecExe = exe
+		return nil // simulate exec returning (test seam)
+	}
+	defer func() { execSelfFn = oldExec }()
+
+	// The component pass must NOT run in the OLD process — if it does, the
+	// swap didn't hand off control. Track compose calls as a proxy.
+	var composeCalls int
+	restoreCompose := setExecCompose(func(args ...string) (string, error) {
+		composeCalls++
+		return "", nil
+	})
+	defer restoreCompose()
+
+	err = RunUpgrade()
+	if err != nil {
+		t.Fatalf("RunUpgrade: %v", err)
+	}
+	if reexecExe == "" {
+		t.Fatal("expected re-exec of the new binary after swap, got none")
+	}
+	if composeCalls != 0 {
+		t.Errorf("component pass ran in the OLD process (%d compose calls); it must run only after re-exec", composeCalls)
+	}
+}
+
+func TestUpgradeComponentsOnlyEnv(t *testing.T) {
+	// The re-exec'd process runs with HORIZONX_UPGRADE_COMPONENTS_ONLY=1:
+	// it must skip the network check and go straight to the component pass.
+	t.Setenv(envComponentsOnly, "1")
+
+	restoreSys := fakeSystemctlOnPath(t, agentUnit)
+	defer restoreSys()
+	var restarted []string
+	oldRestart := restartServiceFn
+	restartServiceFn = func(unit string, userScope bool) error {
+		restarted = append(restarted, unit)
+		return nil
+	}
+	defer func() { restartServiceFn = oldRestart }()
+	t.Setenv("HORIZONX_PREFIX", filepath.Join(t.TempDir(), "no-instance"))
+
+	// latestReleaseFn would panic if called — the env branch must bypass it.
+	oldRel := latestReleaseFn
+	latestReleaseFn = func() (*ghRelease, error) {
+		t.Fatal("update check ran in components-only mode")
+		return nil, nil
+	}
+	defer func() { latestReleaseFn = oldRel }()
+
+	err := RunUpgrade()
+	if err != nil {
+		t.Fatalf("RunUpgrade: %v", err)
+	}
+	if len(restarted) != 1 || restarted[0] != agentUnit {
+		t.Errorf("expected agent restart in components-only pass, got %v", restarted)
 	}
 }
 
