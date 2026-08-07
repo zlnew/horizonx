@@ -204,6 +204,19 @@ Or restore the previous .env into %s and re-run.`, filepath.Join(l.Root, "docker
 	return nil
 }
 
+// dashboardCacheDir is where the dashboard image tarball + SHA256SUMS are
+// cached between installs. NOT inside the bubble (/opt/horizonx): the tarball
+// is a disposable transport artifact, not runtime state — it shouldn't be
+// backed up with the bubble or mistaken for a config file. /var/cache is the
+// FHS home for such artifacts. Tests use a custom bubble root via --dir, so
+// they fall back to <root>/dashboard to stay self-contained.
+func dashboardCacheDir(root string) string {
+	if root == bubbleDir || root == "" {
+		return "/var/cache/horizonx/dashboard"
+	}
+	return filepath.Join(root, "dashboard")
+}
+
 // applyBubble validates, applies, and health-checks the bubble. Shared by
 // `install server` and `upgrade` so both commands apply the bubble
 // identically: validate compose → up postgres/redis → build server from the
@@ -267,8 +280,10 @@ func applyBubble(l *BubbleLayout, opts InstallServerOptions) error {
 	// 4b. Dashboard — fetch the latest dashboard release automatically, load
 	//     the image, then start it. Best-effort: any dashboard failure (network
 	//     down, release API unreachable, checksum mismatch) warns and skips —
-	//     a missing dashboard can never take down the control plane.
-	if tarball, err := fetchDashboardTarball(l.DashboardDir); err != nil {
+	//     a missing dashboard can never take down the control plane. The
+	//     tarball + SHA256SUMS are cached under /var/cache/horizonx (not in
+	//     the bubble — they're transport artifacts, not runtime state).
+	if tarball, err := fetchDashboardTarball(dashboardCacheDir(l.Root)); err != nil {
 		fmt.Printf("  ⚠ dashboard image not available: %v\n", err)
 		fmt.Println("    The control plane is up; add the dashboard later:")
 		fmt.Println("      docker compose -f " + filepath.Join(l.Root, "docker-compose.yml") + " up -d dashboard")

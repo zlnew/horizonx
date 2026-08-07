@@ -25,6 +25,29 @@ func setExecCompose(f func(args ...string) (string, error)) func() {
 // failing docker command.
 var errExecFailure = errors.New("exec failed")
 
+func TestDashboardCacheDirDefault(t *testing.T) {
+	// The default bubble root (/opt/horizonx) must cache the dashboard
+	// tarball OUTSIDE the bubble — /var/cache/horizonx/dashboard — so the
+	// transport artifact never mixes with runtime state or backups.
+	if got := dashboardCacheDir(bubbleDir); got != "/var/cache/horizonx/dashboard" {
+		t.Errorf("dashboardCacheDir(/opt/horizonx) = %q, want /var/cache/horizonx/dashboard", got)
+	}
+	if got := dashboardCacheDir(""); got != "/var/cache/horizonx/dashboard" {
+		t.Errorf("dashboardCacheDir(\"\") = %q, want /var/cache/horizonx/dashboard", got)
+	}
+}
+
+func TestDashboardCacheDirCustomRoot(t *testing.T) {
+	// Custom bubble roots (dev/tests via --dir) keep the cache under the
+	// bubble so tests stay self-contained and don't touch /var/cache.
+	root := t.TempDir()
+	got := dashboardCacheDir(root)
+	want := filepath.Join(root, "dashboard")
+	if got != want {
+		t.Errorf("dashboardCacheDir(custom) = %q, want %q", got, want)
+	}
+}
+
 func TestInstallServerGenerateOnly(t *testing.T) {
 	restore := setExecCompose(func(args ...string) (string, error) {
 		t.Fatalf("generate-only must not call docker compose (got %v)", args)
