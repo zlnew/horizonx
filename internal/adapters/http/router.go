@@ -121,6 +121,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// P2-17: queue depth summary (no pagination — tiny fixed-size response).
 	mux.Handle("GET /jobs/summary", userStack.ThenFunc(deps.Job.Summary))
 
+	// v0.3.13 Track C: re-queue a failed/expired job with its original payload.
+	mux.Handle("POST /jobs/{id}/retry", userStack.ThenFunc(deps.Job.Retry))
+
 	// SERVERS
 	mux.Handle("GET /servers", serverReadStack.ThenFunc(deps.Server.Index))
 	mux.Handle("POST /servers", serverWriteStack.ThenFunc(deps.Server.Store))
