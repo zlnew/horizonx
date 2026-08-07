@@ -29,6 +29,7 @@ type RouterDeps struct {
 	Application *ApplicationHandler
 	Deployment  *DeploymentHandler
 	AuditLog    *AuditLogHandler
+	Settings    *SettingsHandler
 
 	RoleService   domain.RoleService
 	ServerService domain.ServerService
@@ -156,6 +157,11 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// AUDIT LOG
 	mux.Handle("GET /audit-logs", userStack.ThenFunc(deps.AuditLog.Index))
+
+	// SETTINGS (runtime-configurable knobs — webhook etc.)
+	mux.Handle("GET /settings/webhook", userStack.ThenFunc(deps.Settings.GetWebhook))
+	mux.Handle("PUT /settings/webhook", userStack.ThenFunc(deps.Settings.UpdateWebhook))
+	mux.Handle("POST /settings/webhook/test", userStack.ThenFunc(deps.Settings.TestWebhook))
 
 	// ENVIRONMENT VARIABLES
 	mux.Handle("POST /applications/{id}/env", appWriteStack.ThenFunc(deps.Application.AddEnvVar))
