@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	netHttp "net/http"
@@ -116,13 +117,15 @@ func RunServer() error {
 	applicationRepo := postgres.NewApplicationRepository(dbPool, security.KeyFromSecret(cfg.JWTSecret))
 	deploymentRepo := postgres.NewDeploymentRepository(dbPool)
 	auditLogRepo := postgres.NewAuditLogRepository(dbPool)
+	settingsRepo := postgres.NewSettingsRepository(dbPool)
 
 	// Services
 	logService := logSvc.NewService(logRepo, bus)
 	serverService := server.NewService(serverRepo, bus)
-	authService := auth.NewService(userRepo, cfg.JWTSecret, cfg.JWTExpiry)
+	sessionStore := redis.NewSessionStore(redisClient)
+	authService := auth.NewService(userRepo, sessionStore, cfg.JWTSecret, cfg.JWTExpiry)
 	roleService := role.NewService(roleRepo)
-	accountService := account.NewService(userRepo)
+	accountService := account.NewService(userRepo, sessionStore)
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, logService, bus)
 	metricsService := metrics.NewService(metricsRepo, redisRegistry, bus, log)
@@ -173,11 +176,21 @@ func RunServer() error {
 	// P2-14: Prometheus registry (request counters + job queue gauges).
 	metricsRegistry := httpmetrics.NewRegistry(jobRepo, serverRepo, log)
 
-	// P2-15: deploy-event webhook (no-op when WEBHOOK_URL unset).
-	if cfg.WebhookURL != "" {
-		notifier := webhook.New(cfg.WebhookURL, applicationService, log)
-		bus.Subscribe("deployment_status_changed", notifier.Handle)
-	}
+	// P2-15: deploy-event webhook. Settings come from the settings repo
+	// (changeable from the dashboard); WEBHOOK_URL env remains a fallback for
+	// existing installs until the first dashboard save, so a pre-0.3.13
+	// install keeps working without reconfiguration.
+	notifier := webhook.New(func() domain.WebhookSettings {
+		raw, err := settingsRepo.Get(runtimeCtx, domain.SettingWebhook)
+		if err == nil {
+			var ws domain.WebhookSettings
+			if json.Unmarshal(raw, &ws) == nil {
+				return ws
+			}
+		}
+		return domain.WebhookSettings{Enabled: cfg.WebhookURL != "", URL: cfg.WebhookURL}
+	}, applicationService, log)
+	bus.Subscribe("deployment_status_changed", notifier.Handle)
 
 	// P3-19: audit log — record deploy/app/server events.
 	auditSubscriber := auditlog.NewSubscriber(auditLogService)
@@ -192,12 +205,13 @@ func RunServer() error {
 	serverHandler := http.NewServerHandler(serverService, jsonDecoder, jsonWriter, validator)
 	authHandler := http.NewAuthHandler(authService, cfg, jsonDecoder, jsonWriter, validator)
 	accountHandler := http.NewAccountHandler(accountService, jsonDecoder, jsonWriter, validator)
-	userHandler := http.NewUserHandler(userService, jsonDecoder, jsonWriter, validator)
+	userHandler := http.NewUserHandler(userService, authService, jsonDecoder, jsonWriter, validator)
 	jobHandler := http.NewJobHandler(jobService, jsonDecoder, jsonWriter, validator)
 	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
 	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
 	applicationHandler := http.NewApplicationHandler(applicationService, jsonDecoder, jsonWriter, validator)
 	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)
+	settingsHandler := http.NewSettingsHandler(settingsRepo, notifier, jsonDecoder, jsonWriter, validator)
 
 	// WebSocket Handlers
 	wsUserhub := userws.NewHub(runtimeCtx, log)
@@ -226,6 +240,9 @@ func RunServer() error {
 		Application: applicationHandler,
 		Deployment:  deploymentHandler,
 		AuditLog:    auditLogHandler,
+		Settings:    settingsHandler,
+
+		SessionStore: sessionStore,
 
 		RoleService:   roleService,
 		ServerService: serverService,

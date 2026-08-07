@@ -138,3 +138,24 @@ func (s *Service) UpdateStatus(ctx context.Context, serverID uuid.UUID, status b
 
 	return nil
 }
+
+func (s *Service) RotateSecret(ctx context.Context, serverID uuid.UUID) (string, error) {
+	if _, err := s.repo.GetByID(ctx, serverID); err != nil {
+		return "", err
+	}
+
+	token, err := domain.GenerateToken()
+	if err != nil {
+		return "", err
+	}
+
+	hashedToken, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+
+	if err := s.repo.UpdateSecret(ctx, serverID, string(hashedToken)); err != nil {
+		return "", err
+	}
+	return token, nil
+}

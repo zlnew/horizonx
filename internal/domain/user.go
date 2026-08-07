@@ -27,8 +27,33 @@ type User struct {
 }
 
 type UserContext struct {
-	ID   int64
-	Role RoleConst
+	ID        int64
+	Role      RoleConst
+	SessionID string
+}
+
+// Context helpers for session metadata (IP + user agent captured at login).
+
+type ipContextKey struct{}
+
+type uaContextKey struct{}
+
+func SetClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, ipContextKey{}, ip)
+}
+
+func ClientIPFromContext(ctx context.Context) string {
+	ip, _ := ctx.Value(ipContextKey{}).(string)
+	return ip
+}
+
+func SetUserAgent(ctx context.Context, ua string) context.Context {
+	return context.WithValue(ctx, uaContextKey{}, ua)
+}
+
+func UserAgentFromContext(ctx context.Context) string {
+	ua, _ := ctx.Value(uaContextKey{}).(string)
+	return ua
 }
 
 type UserListOptions struct {

@@ -12,7 +12,8 @@ import (
 )
 
 type UserHandler struct {
-	svc domain.UserService
+	svc  domain.UserService
+	auth domain.AuthService
 
 	decoder   request.RequestDecoder
 	writer    response.ResponseWriter
@@ -21,12 +22,14 @@ type UserHandler struct {
 
 func NewUserHandler(
 	svc domain.UserService,
+	auth domain.AuthService,
 	d request.RequestDecoder,
 	w response.ResponseWriter,
 	v validator.Validator,
 ) *UserHandler {
 	return &UserHandler{
 		svc:       svc,
+		auth:      auth,
 		decoder:   d,
 		writer:    w,
 		validator: v,
@@ -199,5 +202,35 @@ func (h *UserHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 
 	h.writer.Write(w, http.StatusOK, &response.Response{
 		Message: "user deleted successfully",
+	})
+}
+
+// RevokeSessions kills every session for a user (admin kick). The user must
+// log in again everywhere. Works on any user, including self.
+func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid user id",
+		})
+		return
+	}
+
+	if h.auth == nil {
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "session revocation unavailable",
+		})
+		return
+	}
+
+	if err := h.auth.RevokeAllSessions(r.Context(), userID); err != nil {
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to revoke sessions",
+		})
+		return
+	}
+
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Message: "user sessions revoked",
 	})
 }

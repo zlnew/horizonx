@@ -168,3 +168,40 @@ func (h *ServerHandler) Destroy(w http.ResponseWriter, r *http.Request) {
 		Message: "server deleted successfully",
 	})
 }
+
+// RotateSecret issues a new agent token. The raw token is returned ONCE —
+// display it with a copy button and a "shown once" warning; the old token
+// stops working immediately.
+func (h *ServerHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
+	paramID := r.PathValue("id")
+
+	serverID, err := uuid.Parse(paramID)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid server ID",
+		})
+		return
+	}
+
+	token, err := h.svc.RotateSecret(r.Context(), serverID)
+	if err != nil {
+		if errors.Is(err, domain.ErrServerNotFound) {
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "server not found",
+			})
+			return
+		}
+
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to rotate server secret",
+		})
+		return
+	}
+
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: map[string]any{
+			"token":     token,
+			"shownOnce": true,
+		},
+	})
+}

@@ -73,12 +73,19 @@ type captureHandler struct {
 	mu       sync.Mutex
 	body     map[string]any
 	requests int
+	headers  http.Header
 }
 
 func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.requests++
+	if h.headers == nil {
+		h.headers = http.Header{}
+	}
+	for k, v := range r.Header {
+		h.headers[k] = v
+	}
 	defer r.Body.Close()
 	_ = json.NewDecoder(r.Body).Decode(&h.body)
 	w.WriteHeader(http.StatusNoContent)
@@ -104,12 +111,21 @@ func waitForRequests(t *testing.T, h *captureHandler, want int) {
 	t.Fatalf("expected %d requests, got %d", want, h.requests)
 }
 
+// settings returns a provider that serves the given settings until replaced.
+func settings(ws domain.WebhookSettings) func() domain.WebhookSettings {
+	return func() domain.WebhookSettings { return ws }
+}
+
+func enabled(url string) domain.WebhookSettings {
+	return domain.WebhookSettings{Enabled: true, URL: url}
+}
+
 func TestNotifierPostsOnFailedDeployment(t *testing.T) {
 	var captured captureHandler
 	srv := httptest.NewServer(&captured)
 	defer srv.Close()
 
-	n := New(srv.URL, &fakeAppSvc{}, nil)
+	n := New(settings(enabled(srv.URL)), &fakeAppSvc{}, nil)
 	n.Handle(domain.EventDeploymentStatusChanged{
 		DeploymentID:  42,
 		ApplicationID: 5,
@@ -134,7 +150,7 @@ func TestNotifierPostsOnSuccessDeployment(t *testing.T) {
 	srv := httptest.NewServer(&captured)
 	defer srv.Close()
 
-	n := New(srv.URL, &fakeAppSvc{}, nil)
+	n := New(settings(enabled(srv.URL)), &fakeAppSvc{}, nil)
 	n.Handle(domain.EventDeploymentStatusChanged{
 		DeploymentID:  43,
 		ApplicationID: 5,
@@ -156,7 +172,7 @@ func TestNotifierSkipsIntermediateStatus(t *testing.T) {
 	srv := httptest.NewServer(&captured)
 	defer srv.Close()
 
-	n := New(srv.URL, &fakeAppSvc{}, nil)
+	n := New(settings(enabled(srv.URL)), &fakeAppSvc{}, nil)
 	n.Handle(domain.EventDeploymentStatusChanged{
 		DeploymentID:  42,
 		ApplicationID: 5,
@@ -170,12 +186,31 @@ func TestNotifierSkipsIntermediateStatus(t *testing.T) {
 	}
 }
 
+func TestNotifierNoopWhenDisabled(t *testing.T) {
+	var captured captureHandler
+	srv := httptest.NewServer(&captured)
+	defer srv.Close()
+
+	n := New(settings(domain.WebhookSettings{Enabled: false, URL: srv.URL}), &fakeAppSvc{}, nil)
+	n.Handle(domain.EventDeploymentStatusChanged{
+		DeploymentID:  42,
+		ApplicationID: 5,
+		Status:        domain.DeploymentSuccess,
+	})
+
+	captured.mu.Lock()
+	defer captured.mu.Unlock()
+	if captured.requests != 0 {
+		t.Fatalf("expected 0 requests when disabled, got %d", captured.requests)
+	}
+}
+
 func TestNotifierNoopWhenURLUnset(t *testing.T) {
 	var captured captureHandler
 	srv := httptest.NewServer(&captured)
 	defer srv.Close()
 
-	n := New("", &fakeAppSvc{}, nil)
+	n := New(settings(domain.WebhookSettings{Enabled: true, URL: ""}), &fakeAppSvc{}, nil)
 	n.Handle(domain.EventDeploymentStatusChanged{
 		DeploymentID:  42,
 		ApplicationID: 5,
@@ -186,5 +221,80 @@ func TestNotifierNoopWhenURLUnset(t *testing.T) {
 	defer captured.mu.Unlock()
 	if captured.requests != 0 {
 		t.Fatalf("expected 0 requests when URL unset, got %d", captured.requests)
+	}
+}
+
+func TestNotifierSignsWhenSecretSet(t *testing.T) {
+	var captured captureHandler
+	srv := httptest.NewServer(&captured)
+	defer srv.Close()
+
+	ws := enabled(srv.URL)
+	ws.Secret = "hunter2"
+	n := New(settings(ws), &fakeAppSvc{}, nil)
+	n.Handle(domain.EventDeploymentStatusChanged{
+		DeploymentID:  42,
+		ApplicationID: 5,
+		Status:        domain.DeploymentSuccess,
+	})
+
+	waitForRequests(t, &captured, 1)
+
+	captured.mu.Lock()
+	defer captured.mu.Unlock()
+	sig := captured.headers.Get(SignatureHeader)
+	if sig == "" {
+		t.Fatal("expected X-HorizonX-Signature header when secret set")
+	}
+	// The handler only stores the raw body after decode; verify the header is
+	// a plausible 64-char hex HMAC (sha256 digest length).
+	if len(sig) != 64 {
+		t.Fatalf("signature length = %d, want 64 hex chars", len(sig))
+	}
+}
+
+func TestNotifierNoSignatureWhenSecretEmpty(t *testing.T) {
+	var captured captureHandler
+	srv := httptest.NewServer(&captured)
+	defer srv.Close()
+
+	n := New(settings(enabled(srv.URL)), &fakeAppSvc{}, nil)
+	n.Handle(domain.EventDeploymentStatusChanged{
+		DeploymentID:  42,
+		ApplicationID: 5,
+		Status:        domain.DeploymentSuccess,
+	})
+
+	waitForRequests(t, &captured, 1)
+
+	captured.mu.Lock()
+	defer captured.mu.Unlock()
+	if sig := captured.headers.Get(SignatureHeader); sig != "" {
+		t.Fatalf("expected no signature header when secret empty, got %q", sig)
+	}
+}
+
+func TestNotifierTestPing(t *testing.T) {
+	var captured captureHandler
+	srv := httptest.NewServer(&captured)
+	defer srv.Close()
+
+	n := New(settings(enabled(srv.URL)), &fakeAppSvc{}, nil)
+	code, err := n.TestPing(context.Background())
+	if err != nil {
+		t.Fatalf("TestPing: %v", err)
+	}
+	if code != http.StatusNoContent {
+		t.Fatalf("TestPing code = %d, want 204", code)
+	}
+	if captured.requests != 1 {
+		t.Fatalf("expected 1 request from TestPing, got %d", captured.requests)
+	}
+}
+
+func TestNotifierTestPingDisabled(t *testing.T) {
+	n := New(settings(domain.DefaultWebhookSettings()), &fakeAppSvc{}, nil)
+	if _, err := n.TestPing(context.Background()); err == nil {
+		t.Fatal("expected error when webhook disabled")
 	}
 }

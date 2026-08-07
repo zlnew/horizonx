@@ -50,6 +50,14 @@ type Config struct {
 	RedisUsername string
 	RedisPassword string
 	RedisDB       int
+
+	// TrustProxy makes login rate limiting + session IP capture key on the
+	// FIRST X-Forwarded-For entry instead of the tunnel's RemoteAddr. Set
+	// true when the server sits behind a trusted proxy (Cloudflare tunnel /
+	// tailscale serve — the default HorizonX topology). Leave false when the
+	// box is directly exposed, where a spoofed XFF must not bypass the
+	// limiter.
+	TrustProxy bool
 }
 
 func Load() *Config {
@@ -142,6 +150,14 @@ func Load() *Config {
 		}
 	}
 
+	// TRUST_PROXY: default ON for the HorizonX topology (server binds
+	// 127.0.0.1, exposed via Cloudflare tunnel / tailscale serve which set
+	// X-Forwarded-For). Explicitly set TRUST_PROXY=false for direct exposure.
+	trustProxy := true
+	if raw := strings.ToLower(os.Getenv("TRUST_PROXY")); raw != "" {
+		trustProxy = raw == "1" || raw == "true" || raw == "yes"
+	}
+
 	return &Config{
 		AppEnv: appEnv,
 
@@ -173,6 +189,7 @@ func Load() *Config {
 		RedisUsername: redisUsername,
 		RedisPassword: redisPassword,
 		RedisDB:       redisDB,
+		TrustProxy:    trustProxy,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"horizonx/internal/adapters/http/middleware"
 	"horizonx/internal/adapters/http/request"
@@ -206,5 +207,58 @@ func (h *JobHandler) Summary(w http.ResponseWriter, r *http.Request) {
 
 	h.writer.Write(w, http.StatusOK, &response.Response{
 		Data: counts,
+	})
+}
+
+// Retry re-queues a failed or expired job with its original payload so the
+// owning agent picks it up again. v0.3.13 Track C: queue recoverability.
+func (h *JobHandler) Retry(w http.ResponseWriter, r *http.Request) {
+	jobID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid job id",
+		})
+		return
+	}
+
+	job, err := h.svc.GetByID(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, domain.ErrJobNotFound) {
+			h.writer.Write(w, http.StatusNotFound, &response.Response{
+				Message: "job not found",
+			})
+			return
+		}
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to get job",
+		})
+		return
+	}
+
+	// Only terminal failures can be retried.
+	if job.Status != domain.JobFailed && job.Status != domain.JobExpired {
+		h.writer.Write(w, http.StatusConflict, &response.Response{
+			Message: "job is not in a retryable state",
+		})
+		return
+	}
+
+	now := time.Now()
+	retryJob := &domain.Job{
+		Payload:  job.Payload,
+		Status:   domain.JobQueued,
+		QueuedAt: &now,
+	}
+
+	retried, err := h.svc.Retry(r.Context(), jobID, retryJob)
+	if err != nil {
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to retry job",
+		})
+		return
+	}
+
+	h.writer.Write(w, http.StatusOK, &response.Response{
+		Data: retried,
 	})
 }
