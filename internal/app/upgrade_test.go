@@ -103,6 +103,55 @@ func TestRuntimeDockerComposeDetection(t *testing.T) {
 	}
 }
 
+func TestDetectRuntimeBubbleAtOptHorizonx(t *testing.T) {
+	// A bubble root with docker-compose.yml must be detected as BubbleDir,
+	// and with a .env present BubbleInstalled must be true.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("HORIZONX_PORT=4858\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZONX_PREFIX", root)
+
+	rt := DetectRuntime()
+	if rt.BubbleDir != root {
+		t.Errorf("BubbleDir = %q, want %q", rt.BubbleDir, root)
+	}
+	if !rt.BubbleInstalled() {
+		t.Error("BubbleInstalled = false, want true (compose + .env present)")
+	}
+}
+
+func TestBubbleInstalledRequiresEnv(t *testing.T) {
+	// A half-generated bubble dir (compose but no .env) is NOT a live
+	// install — BubbleInstalled must be false so upgrade doesn't try to
+	// apply against it.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZONX_PREFIX", root)
+
+	rt := DetectRuntime()
+	if rt.BubbleDir != root {
+		t.Errorf("BubbleDir = %q, want %q (compose present, env absent)", rt.BubbleDir, root)
+	}
+	if rt.BubbleInstalled() {
+		t.Error("BubbleInstalled = true, want false (no .env)")
+	}
+}
+
+func TestBubbleInstalledNoBubble(t *testing.T) {
+	// No bubble dir at all — BubbleInstalled must be false without crashing.
+	t.Setenv("HORIZONX_PREFIX", filepath.Join(t.TempDir(), "does-not-exist"))
+	rt := DetectRuntime()
+	if rt.BubbleInstalled() {
+		t.Error("BubbleInstalled = true on a bare box, want false")
+	}
+}
+
 func TestRuntimeUserUnitDetection(t *testing.T) {
 	// Simulate a user-level unit and confirm it lands in UserUnits.
 	home := t.TempDir()

@@ -21,6 +21,10 @@ type Runtime struct {
 	DockerCLI bool
 	// ComposeFile is the docker-compose file horizonx should use, if any.
 	ComposeFile string
+	// BubbleDir is the /opt/horizonx bubble root when the install-server
+	// bubble tree is present (its own root compose). Distinct from
+	// ComposeFile, which covers legacy compose layouts elsewhere on disk.
+	BubbleDir string
 	// SystemdUnits lists horizonx-*.service units present on the box.
 	SystemdUnits []string
 	// UserUnits lists units found in ~/.config/systemd/user (no sudo installs).
@@ -93,6 +97,20 @@ func DetectRuntime() *Runtime {
 			}
 		}
 		if rt.ComposeFile != "" {
+			break
+		}
+	}
+
+	// The install-server bubble (/opt/horizonx, or HORIZONX_PREFIX override)
+	// is the modern layout — its own root compose + .env. Detection is by the
+	// root compose file; BubbleInstalled() additionally requires the .env so
+	// a half-generated dir is not treated as a live bubble.
+	for _, d := range []string{os.Getenv("HORIZONX_PREFIX"), bubbleDir} {
+		if d == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(d, "docker-compose.yml")); err == nil {
+			rt.BubbleDir = d
 			break
 		}
 	}
@@ -172,6 +190,17 @@ func (r *Runtime) ActiveUnit() string {
 		}
 	}
 	return ""
+}
+
+// BubbleInstalled reports whether the install-server bubble is live on this
+// box: the bubble root compose exists AND the .env exists (a half-generated
+// dir without .env is not a real install).
+func (r *Runtime) BubbleInstalled() bool {
+	if r.BubbleDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(r.BubbleDir, ".env"))
+	return err == nil
 }
 
 // IsUserUnit reports whether the named unit is installed in the user scope.
