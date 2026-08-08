@@ -213,6 +213,14 @@ const instanceServerDockerfile = `# HorizonX server image — built by the insta
 # With a pinned version the layer cache misses each release -> fresh download.
 ARG HX_VERSION=latest
 FROM alpine:3.20
+# Docker scoping: an ARG before FROM is only in scope for FROM lines. The
+# build-arg value (passed by compose) is invisible to RUN steps unless the
+# ARG is re-declared inside the stage. Without this re-declaration the RUN
+# below sees an empty HX_VERSION, falls back to releases/latest, and the
+# layer cache never busts — the stale-image bug, silently (caught live on
+# creatokuserver v0.5.0: upgrade left the old binary in the image; a manual
+# no-cache rebuild was the tell).
+ARG HX_VERSION
 RUN apk add --no-cache ca-certificates curl
 # Detect the build arch from uname (release tarballs use x86_64/arm64 —
 # BuildKit's automatic TARGETARCH arg is unreliable across builders).
