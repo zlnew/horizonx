@@ -1,12 +1,15 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"horizonx/internal/adapters/http/request"
 	"horizonx/internal/adapters/http/response"
 	"horizonx/internal/adapters/http/validator"
+	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/domain"
 
 	"github.com/google/uuid"
@@ -15,6 +18,8 @@ import (
 type ServerHandler struct {
 	svc domain.ServerService
 
+	agentRouter *agentws.Router
+
 	decoder   request.RequestDecoder
 	writer    response.ResponseWriter
 	validator validator.Validator
@@ -22,15 +27,17 @@ type ServerHandler struct {
 
 func NewServerHandler(
 	svc domain.ServerService,
+	agentRouter *agentws.Router,
 	d request.RequestDecoder,
 	w response.ResponseWriter,
 	v validator.Validator,
 ) *ServerHandler {
 	return &ServerHandler{
-		svc:       svc,
-		decoder:   d,
-		writer:    w,
-		validator: v,
+		svc:         svc,
+		agentRouter: agentRouter,
+		decoder:     d,
+		writer:      w,
+		validator:   v,
 	}
 }
 
@@ -203,5 +210,50 @@ func (h *ServerHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 			"token":     token,
 			"shownOnce": true,
 		},
+	})
+}
+
+// Ping is the A1 protocol proof: it sends a ping command through the agent
+// WS router to the server's live agent. 202 means the command was handed to
+// the agent's socket; 409 (ErrAgentOffline) means no live connection.
+func (h *ServerHandler) Ping(w http.ResponseWriter, r *http.Request) {
+	paramID := r.PathValue("id")
+	serverID, err := uuid.Parse(paramID)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{
+			Message: "invalid server ID",
+		})
+		return
+	}
+
+	if h.agentRouter == nil {
+		h.writer.Write(w, http.StatusServiceUnavailable, &response.Response{
+			Message: "agent router unavailable",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	err = h.agentRouter.SendCommand(ctx, serverID, domain.AgentCommand{
+		Type: "ping",
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrAgentOffline) {
+			h.writer.Write(w, http.StatusConflict, &response.Response{
+				Message: "agent offline",
+			})
+			return
+		}
+
+		h.writer.Write(w, http.StatusInternalServerError, &response.Response{
+			Message: "failed to send ping",
+		})
+		return
+	}
+
+	h.writer.Write(w, http.StatusAccepted, &response.Response{
+		Message: "ping sent",
 	})
 }

@@ -17,7 +17,9 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 8192
+	// agentws carries server→agent commands (log batches in A2 can reach
+	// hundreds of KB) — 256KB cap. userws stays at the default 8KB.
+	maxMessageSize = 262144
 )
 
 type Client struct {

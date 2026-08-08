@@ -22,7 +22,9 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 8192
+	// Server→agent commands can carry log batches in A2 (hundreds of KB);
+	// the server's agentws socket allows 256KB inbound, match it here.
+	maxMessageSize = 262144
 )
 
 type Agent struct {
@@ -145,13 +147,55 @@ func (a *Agent) readPump(ctx context.Context) error {
 				continue
 			}
 
+			var cmd domain.AgentCommand
+			if err := json.Unmarshal(serverMessage.Payload, &cmd); err != nil {
+				a.log.Error("invalid server command payload", "error", err)
+				continue
+			}
+
 			select {
 			case <-ctx.Done():
 				return nil
 			default:
-				a.log.Debug("incoming server message", "payload", serverMessage.Payload)
+				if err := a.handleCommand(ctx, cmd); err != nil {
+					a.log.Error("command failed", "type", cmd.Type, "error", err)
+				}
 			}
 		}
+	}
+}
+
+// handleCommand dispatches a server→agent command. A1 ships the transport
+// plus the trivial ping/pong proof; log tail/stop/query land in A2.
+func (a *Agent) handleCommand(ctx context.Context, cmd domain.AgentCommand) error {
+	switch cmd.Type {
+	case "ping":
+		reply := &domain.WsAgentMessage{
+			ServerID: a.cfg.AgentServerID,
+			Event:    "pong",
+			Payload:  cmd.Payload,
+		}
+		return a.sendMessage(reply)
+	default:
+		a.log.Warn("unknown server command", "type", cmd.Type)
+		return nil
+	}
+}
+
+// sendMessage marshals and queues an agent→server message, dropping (with a
+// warning) when the send buffer is full rather than blocking the read loop.
+func (a *Agent) sendMessage(msg *domain.WsAgentMessage) error {
+	message, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	select {
+	case a.send <- message:
+		return nil
+	default:
+		a.log.Warn("send channel full, message dropped", "event", msg.Event)
+		return nil
 	}
 }
 

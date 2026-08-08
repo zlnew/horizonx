@@ -196,13 +196,21 @@ func RunServer() error {
 	auditSubscriber := auditlog.NewSubscriber(auditLogService)
 	auditSubscriber.Register(bus)
 
+	// WebSocket Handlers — the agent router must exist before the server
+	// handler (A1's ping proof sends commands through it).
+	wsUserhub := userws.NewHub(runtimeCtx, log)
+	wsUserHandler := userws.NewHandler(wsUserhub, log, cfg.JWTSecret, cfg.AllowedOrigins)
+
+	wsAgentRouter := agentws.NewRouter(runtimeCtx, log)
+	wsAgentHandler := agentws.NewHandler(wsAgentRouter, log, serverService)
+
 	// HTTP Handlers
 	jsonDecoder := request.NewJSONDecoder()
 	jsonWriter := response.NewJSONWriter(log)
 	validator := validator.NewValidator()
 
 	logHandler := http.NewLogHandler(logService, jsonDecoder, jsonWriter, validator)
-	serverHandler := http.NewServerHandler(serverService, jsonDecoder, jsonWriter, validator)
+	serverHandler := http.NewServerHandler(serverService, wsAgentRouter, jsonDecoder, jsonWriter, validator)
 	authHandler := http.NewAuthHandler(authService, cfg, jsonDecoder, jsonWriter, validator)
 	accountHandler := http.NewAccountHandler(accountService, jsonDecoder, jsonWriter, validator)
 	userHandler := http.NewUserHandler(userService, authService, jsonDecoder, jsonWriter, validator)
@@ -213,13 +221,6 @@ func RunServer() error {
 	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)
 	settingsHandler := http.NewSettingsHandler(settingsRepo, notifier, jsonDecoder, jsonWriter, validator)
 
-	// WebSocket Handlers
-	wsUserhub := userws.NewHub(runtimeCtx, log)
-	wsUserHandler := userws.NewHandler(wsUserhub, log, cfg.JWTSecret, cfg.AllowedOrigins)
-
-	wsAgentRouter := agentws.NewRouter(runtimeCtx, log)
-	wsAgentHandler := agentws.NewHandler(wsAgentRouter, log, serverService)
-
 	go wsUserhub.Run()
 	go wsAgentRouter.Run()
 
@@ -227,8 +228,9 @@ func RunServer() error {
 	subscribers.Register(bus, wsUserhub)
 
 	router := http.NewRouter(cfg, &http.RouterDeps{
-		WsUser:  wsUserHandler,
-		WsAgent: wsAgentHandler,
+		WsUser:       wsUserHandler,
+		WsAgent:      wsAgentHandler,
+		WsAgentRoute: wsAgentRouter,
 
 		Auth:        authHandler,
 		Account:     accountHandler,
