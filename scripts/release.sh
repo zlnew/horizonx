@@ -33,6 +33,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
 REPO_ROOT="$PWD"
 
+# The branch releases tag. Default main, but this repo's flow ships FROM
+# develop (PRs merge to develop; main is a stale mirror). Without an
+# explicit target, gh release create tags origin/main — the tags for
+# v0.5.0 landed on a pre-A-track commit because of exactly that (caught
+# 2026-08-08). Run releases from develop and say so.
+RELEASE_BRANCH="${RELEASE_BRANCH:-$(git branch --show-current)}"
+echo "== release target branch: $RELEASE_BRANCH =="
+
 RESOLVE="${1:?usage: scripts/release.sh <major|minor|patch|vX.Y.Z> [--dry-run]}"
 DRY_RUN="${2:-}"
 if [ -n "$DRY_RUN" ] && [ "$DRY_RUN" != "--dry-run" ]; then
@@ -42,6 +50,9 @@ fi
 # -- resolve version ----------------------------------------------------------
 # Accept a semver bump keyword or an explicit vX.Y.Z. Keywords compute the
 # next version from the latest git tag (sorted as versions, not strings).
+# Tags are fetched FIRST: a stale local tag list made `patch` resolve below
+# an already-published release (v0.4.1 under v0.5.0, caught 2026-08-08).
+git fetch --tags origin -q 2>/dev/null || true
 case "$RESOLVE" in
   v[0-9]*.[0-9]*.[0-9]*)
     VERSION="$RESOLVE"
@@ -184,7 +195,7 @@ for pair in "${TARGETS[@]}"; do
 done
 ASSETS+=("$OUT/SHA256SUMS")
 
-gh release create "$VERSION" --repo "$REPO" --title "$VERSION" --notes-file "$BODY" "${ASSETS[@]}"
+gh release create "$VERSION" --repo "$REPO" --title "$VERSION" --notes-file "$BODY" --target "$RELEASE_BRANCH" "${ASSETS[@]}"
 rm -f "$BODY"
 echo ""
 echo "✔ published: https://github.com/$REPO/releases/tag/$VERSION"
