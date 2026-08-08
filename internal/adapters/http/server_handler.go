@@ -237,7 +237,7 @@ func (h *ServerHandler) Ping(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	err = h.agentRouter.SendCommand(ctx, serverID, domain.AgentCommand{
-		Command: "ping",
+		Type: "ping",
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrAgentOffline) {

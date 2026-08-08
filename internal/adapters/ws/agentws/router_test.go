@@ -55,7 +55,7 @@ func registerFakeAgent(t *testing.T, r *Router, id uuid.UUID) <-chan []byte {
 func TestSendCommand_Offline_ReturnsErrAgentOffline(t *testing.T) {
 	r := newTestRouter(t)
 
-	err := r.SendCommand(context.Background(), uuid.New(), domain.AgentCommand{Command: "ping"})
+	err := r.SendCommand(context.Background(), uuid.New(), domain.AgentCommand{Type: "ping"})
 
 	assert.ErrorIs(t, err, domain.ErrAgentOffline)
 }
@@ -65,7 +65,7 @@ func TestSendCommand_Online_DeliversEnvelope(t *testing.T) {
 	serverID := uuid.New()
 	send := registerFakeAgent(t, r, serverID)
 
-	cmd := domain.AgentCommand{Command: "ping", Payload: []byte(`{"t":1}`)}
+	cmd := domain.AgentCommand{ID: "cmd-1", Type: "ping", Payload: []byte(`{"t":1}`)}
 	err := r.SendCommand(context.Background(), serverID, cmd)
 	assert.NoError(t, err)
 
@@ -79,7 +79,8 @@ func TestSendCommand_Online_DeliversEnvelope(t *testing.T) {
 
 		var got domain.AgentCommand
 		require.NoError(t, json.Unmarshal(msg.Payload, &got))
-		assert.Equal(t, "ping", got.Command)
+		assert.Equal(t, "cmd-1", got.ID)
+		assert.Equal(t, "ping", got.Type)
 		assert.Equal(t, `{"t":1}`, string(got.Payload))
 	default:
 		t.Fatal("expected command to be delivered to the agent's send channel")

@@ -158,7 +158,7 @@ func (a *Agent) readPump(ctx context.Context) error {
 				return nil
 			default:
 				if err := a.handleCommand(ctx, cmd); err != nil {
-					a.log.Error("command failed", "command", cmd.Command, "error", err)
+					a.log.Error("command failed", "type", cmd.Type, "error", err)
 				}
 			}
 		}
@@ -168,7 +168,7 @@ func (a *Agent) readPump(ctx context.Context) error {
 // handleCommand dispatches a server→agent command. A1 ships the transport
 // plus the trivial ping/pong proof; log tail/stop/query land in A2.
 func (a *Agent) handleCommand(ctx context.Context, cmd domain.AgentCommand) error {
-	switch cmd.Command {
+	switch cmd.Type {
 	case "ping":
 		reply := &domain.WsAgentMessage{
 			ServerID: a.cfg.AgentServerID,
@@ -177,7 +177,7 @@ func (a *Agent) handleCommand(ctx context.Context, cmd domain.AgentCommand) erro
 		}
 		return a.sendMessage(reply)
 	default:
-		a.log.Warn("unknown server command", "command", cmd.Command)
+		a.log.Warn("unknown server command", "type", cmd.Type)
 		return nil
 	}
 }
