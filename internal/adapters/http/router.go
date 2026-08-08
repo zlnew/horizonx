@@ -139,6 +139,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// ACCOUNT
 	mux.Handle("POST /account/profile", userStack.ThenFunc(deps.Account.Profile))
 	mux.Handle("POST /account/password", userStack.ThenFunc(deps.Account.Password))
+	mux.Handle("GET /account/sessions", userStack.ThenFunc(deps.Account.Sessions))
+	mux.Handle("DELETE /account/sessions/{id}", userStack.ThenFunc(deps.Account.RevokeSession))
+	mux.Handle("POST /account/sessions/revoke-others", userStack.ThenFunc(deps.Account.RevokeOtherSessions))
 
 	// USERS
 	mux.Handle("GET /users", memberReadStack.ThenFunc(deps.User.Index))
