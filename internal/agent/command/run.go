@@ -52,6 +52,14 @@ func (c *Command) Run(ctx context.Context, handlers ...StreamHandler) (string, e
 	return buf.String(), err
 }
 
+// Stream runs the command and streams each line to the handler WITHOUT
+// accumulating output. Run() buffers everything for bounded commands; a
+// `--follow` tail running for an hour must never buffer — that's the
+// unbounded-memory regression this sibling avoids.
+func (c *Command) Stream(ctx context.Context, handler StreamHandler) error {
+	return c.execute(ctx, handler)
+}
+
 func (c *Command) execute(ctx context.Context, handler StreamHandler) error {
 	cmd := exec.CommandContext(ctx, c.name, c.args...)
 	cmd.Dir = c.workDir

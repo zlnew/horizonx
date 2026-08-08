@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"horizonx/internal/agent/logstream"
 	"horizonx/internal/config"
 	"horizonx/internal/domain"
 	"horizonx/internal/logger"
@@ -32,16 +33,29 @@ type Agent struct {
 	send chan []byte
 	cfg  *config.Config
 	log  logger.Logger
+
+	// logstream owns `docker compose logs` streams (A2). Lazily created on
+	// the first logs_* command so existing agents need no new wiring.
+	logstream *logstream.Manager
 }
 
 var ErrUnauthorized = errors.New("connection failed: unauthorized")
 
+// NewAgent creates the agent. The logstream manager is injected separately
+// via SetLogStream (it needs the apps workdir + docker manager, which live
+// in the app wiring, and its send callback needs this agent).
 func NewAgent(cfg *config.Config, log logger.Logger) *Agent {
 	return &Agent{
 		send: make(chan []byte, 256),
 		cfg:  cfg,
 		log:  log,
 	}
+}
+
+// SetLogStream wires the container-log stream manager (A2). Safe to call
+// once before Start; the dispatch switch no-ops on logs_* if unset.
+func (a *Agent) SetLogStream(m *logstream.Manager) {
+	a.logstream = m
 }
 
 func (a *Agent) Start(ctx context.Context) error {
@@ -176,10 +190,57 @@ func (a *Agent) handleCommand(ctx context.Context, cmd domain.AgentCommand) erro
 			Payload:  cmd.Payload,
 		}
 		return a.sendMessage(reply)
+
+	case "logs_tail_start":
+		if a.logstream == nil {
+			return errors.New("logstream manager not configured")
+		}
+		var req domain.LogsTailStartPayload
+		if err := json.Unmarshal(cmd.Payload, &req); err != nil {
+			return fmt.Errorf("invalid logs_tail_start payload: %w", err)
+		}
+		streamID, err := a.logstream.StartTail(req)
+		if err != nil {
+			return fmt.Errorf("start tail: %w", err)
+		}
+		a.log.Info("log tail started", "stream_id", streamID, "app_id", req.ApplicationID)
+
+	case "logs_tail_stop":
+		if a.logstream == nil {
+			return nil // nothing running, nothing to stop
+		}
+		var req domain.LogsTailStopPayload
+		if err := json.Unmarshal(cmd.Payload, &req); err != nil {
+			return fmt.Errorf("invalid logs_tail_stop payload: %w", err)
+		}
+		a.logstream.StopTail(req.StreamID)
+		a.log.Info("log tail stopped", "stream_id", req.StreamID)
+
+	case "logs_query":
+		if a.logstream == nil {
+			return errors.New("logstream manager not configured")
+		}
+		var req domain.LogsQueryPayload
+		if err := json.Unmarshal(cmd.Payload, &req); err != nil {
+			return fmt.Errorf("invalid logs_query payload: %w", err)
+		}
+		queryID, err := a.logstream.Query(req)
+		if err != nil {
+			return fmt.Errorf("query logs: %w", err)
+		}
+		a.log.Info("log query started", "query_id", queryID, "app_id", req.ApplicationID)
+
 	default:
 		a.log.Warn("unknown server command", "type", cmd.Type)
 		return nil
 	}
+	return nil
+}
+
+// SendMessage exposes the agent's send path to collaborators that need to
+// push agent→server messages (e.g. the logstream manager in A2).
+func (a *Agent) SendMessage(msg *domain.WsAgentMessage) error {
+	return a.sendMessage(msg)
 }
 
 // sendMessage marshals and queues an agent→server message, dropping (with a

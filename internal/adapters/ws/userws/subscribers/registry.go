@@ -9,6 +9,10 @@ func Register(bus EventBus, hub *userws.Hub) {
 	logReceived := NewLogReceived(hub)
 	bus.Subscribe("log_received", logReceived.Handle)
 
+	// Container Log Chunk Events (A2)
+	containerLogChunk := NewContainerLogChunk(hub)
+	bus.Subscribe("container_log_chunk", containerLogChunk.Handle)
+
 	// Server Events
 	serverStatusChanged := NewServerStatusChanged(hub)
 	serverMetricsReceived := NewServerMetricsReceived(hub)
