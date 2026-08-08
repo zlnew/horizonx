@@ -231,12 +231,12 @@ RUN ARCH=$(uname -m); \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac; \
     if [ "$HX_VERSION" = "latest" ] || [ -z "$HX_VERSION" ]; then \
-      BASE="releases/latest"; \
+      BASE="releases/latest/download"; \
     else \
       BASE="releases/download/$HX_VERSION"; \
     fi; \
-    curl -fsSL https://github.com/zlnew/horizonx/$BASE/download/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
- && curl -fsSL https://github.com/zlnew/horizonx/$BASE/download/SHA256SUMS -o /tmp/SHA256SUMS \
+    curl -fsSL https://github.com/zlnew/horizonx/$BASE/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
+ && curl -fsSL https://github.com/zlnew/horizonx/$BASE/SHA256SUMS -o /tmp/SHA256SUMS \
  && cd /tmp && grep "horizonx-linux-$ARCH.tar.gz" SHA256SUMS | sha256sum -c - \
  && tar -xzf /tmp/horizonx-linux-$ARCH.tar.gz -C /usr/local/bin horizonx \
  && rm /tmp/horizonx-linux-$ARCH.tar.gz /tmp/SHA256SUMS

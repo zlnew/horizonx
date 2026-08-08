@@ -175,8 +175,24 @@ func TestGenerateInstanceDockerfileChecksum(t *testing.T) {
 	if fromIdx < 0 || stageArg < 0 {
 		t.Errorf("server Dockerfile must re-declare ARG HX_VERSION inside the stage (Docker ARG scoping, stale-image fix):\n%s", s)
 	}
-	if strings.Contains(s, "releases/latest/download") {
-		t.Errorf("server Dockerfile must NOT hardcode releases/latest (stale-image fix):\n%s", s)
+	// URL-construction regression (caught live on creatokuserver v0.5.1):
+	// BASE must carry the FULL prefix and the curl must use "$BASE/..." — a
+	// "releases/latest" + "/download/..." split built
+	// "releases/download/v0.5.1/download/..." (double /download/) once the
+	// pin was active, and the container build 404'd on the asset while the
+	// CLI downloaded the same release fine. Both branches must be present
+	// and each must render a well-formed URL.
+	if !strings.Contains(s, `BASE="releases/latest/download"`) {
+		t.Errorf("server Dockerfile latest branch must be 'releases/latest/download' (well-formed URL):\n%s", s)
+	}
+	if !strings.Contains(s, `BASE="releases/download/$HX_VERSION"`) {
+		t.Errorf("server Dockerfile pinned branch must be 'releases/download/$HX_VERSION' (well-formed URL):\n%s", s)
+	}
+	if strings.Contains(s, "$BASE/download/") {
+		t.Errorf("server Dockerfile must not append /download/ after BASE (double-download bug):\n%s", s)
+	}
+	if !strings.Contains(s, "$BASE/horizonx-linux-$ARCH.tar.gz") {
+		t.Errorf("server Dockerfile curl must use $BASE/horizonx-linux-$ARCH.tar.gz:\n%s", s)
 	}
 	if strings.Contains(s, "ghcr.io") {
 		t.Errorf("server Dockerfile references ghcr.io")
