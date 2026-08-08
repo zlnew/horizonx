@@ -33,7 +33,9 @@ func newTestRouter(t *testing.T) *Router {
 }
 
 // registerFakeAgent registers a bare client (only the send channel matters
-// for the send path) under the given server ID.
+// for the send path) under the given server ID and blocks until the router
+// loop has actually processed the registration — otherwise SendCommand can
+// race ahead and report ErrAgentOffline.
 func registerFakeAgent(t *testing.T, r *Router, id uuid.UUID) <-chan []byte {
 	t.Helper()
 
@@ -45,6 +47,28 @@ func registerFakeAgent(t *testing.T, r *Router, id uuid.UUID) <-chan []byte {
 		ID:   id,
 	}
 	r.register <- client
+
+	// Poll with a ping until the router map contains the agent. The
+	// successful ping leaves one message in the send channel — drain it so
+	// the caller's own reads start clean.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		err := r.SendCommand(context.Background(), id, domain.AgentCommand{Type: "ping"})
+		if err == nil {
+			for {
+				select {
+				case <-send:
+				default:
+					goto registered
+				}
+			}
+		}
+		if !errors.Is(err, domain.ErrAgentOffline) {
+			t.Fatalf("unexpected SendCommand error during registration wait: %v", err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+registered:
 
 	t.Cleanup(func() {
 		r.unregister <- client
@@ -101,7 +125,7 @@ func TestSendCommand_ConcurrentWithRegisterUnregister(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
 				serverID := uuid.New()
-				_ = r.SendCommand(context.Background(), serverID, domain.AgentCommand{Command: "ping"})
+				_ = r.SendCommand(context.Background(), serverID, domain.AgentCommand{Type: "ping"})
 			}
 		}()
 	}
@@ -133,7 +157,7 @@ func TestSendCommand_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := r.SendCommand(ctx, uuid.New(), domain.AgentCommand{Command: "ping"})
+	err := r.SendCommand(ctx, uuid.New(), domain.AgentCommand{Type: "ping"})
 	assert.Error(t, err)
 	assert.False(t, errors.Is(err, domain.ErrAgentOffline))
 }
