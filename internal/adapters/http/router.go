@@ -16,8 +16,9 @@ import (
 )
 
 type RouterDeps struct {
-	WsUser  *userws.Handler
-	WsAgent *agentws.Handler
+	WsUser       *userws.Handler
+	WsAgent      *agentws.Handler
+	WsAgentRoute *agentws.Router
 
 	Auth        *AuthHandler
 	Account     *AccountHandler
@@ -130,6 +131,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("PUT /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Update))
 	mux.Handle("DELETE /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Destroy))
 	mux.Handle("POST /servers/{id}/rotate-secret", serverWriteStack.ThenFunc(deps.Server.RotateSecret))
+	mux.Handle("POST /servers/{id}/ping", serverWriteStack.ThenFunc(deps.Server.Ping))
 
 	// SERVER METRICS
 	mux.Handle("GET /servers/{id}/metrics/latest", metricsReadStack.ThenFunc(deps.Metrics.Latest))
