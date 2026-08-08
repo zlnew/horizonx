@@ -165,6 +165,16 @@ func TestGenerateInstanceDockerfileChecksum(t *testing.T) {
 	if !strings.Contains(s, "HX_VERSION") {
 		t.Errorf("server Dockerfile must use HX_VERSION build arg (stale-image fix):\n%s", s)
 	}
+	// Docker scoping regression (caught live on creatokuserver v0.5.0): an
+	// ARG declared before FROM is NOT in scope inside RUN steps — the stage
+	// must re-declare it. Without the re-declaration HX_VERSION was empty in
+	// the RUN, fell back to releases/latest, and the cache never busted, so
+	// `horizonx upgrade` silently left the old binary in the image.
+	fromIdx := strings.Index(s, "FROM alpine")
+	stageArg := strings.Index(s[fromIdx:], "ARG HX_VERSION")
+	if fromIdx < 0 || stageArg < 0 {
+		t.Errorf("server Dockerfile must re-declare ARG HX_VERSION inside the stage (Docker ARG scoping, stale-image fix):\n%s", s)
+	}
 	if strings.Contains(s, "releases/latest/download") {
 		t.Errorf("server Dockerfile must NOT hardcode releases/latest (stale-image fix):\n%s", s)
 	}
