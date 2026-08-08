@@ -102,6 +102,7 @@ func (s *SessionStore) ListForUser(ctx context.Context, userID int64) ([]*domain
 	}
 
 	var sessions []*domain.Session
+	var stale []string
 	for _, id := range ids {
 		sess, err := s.Get(ctx, id)
 		if err != nil {
@@ -109,7 +110,14 @@ func (s *SessionStore) ListForUser(ctx context.Context, userID int64) ([]*domain
 		}
 		if sess != nil {
 			sessions = append(sessions, sess)
+		} else {
+			// sess key TTL'd out but the ID is still in the set — prune it
+			// so the set doesn't grow forever.
+			stale = append(stale, id)
 		}
+	}
+	if len(stale) > 0 {
+		s.client.SRem(ctx, userSessionsKey(userID), stale)
 	}
 	return sessions, nil
 }
