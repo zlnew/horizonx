@@ -2,8 +2,18 @@
 # Build + publish a HorizonX CLI release.
 #
 # Usage:
-#   scripts/release.sh v0.3.5            # build, verify, publish
-#   scripts/release.sh v0.3.5 --dry-run  # build + verify only, no publish
+#   scripts/release.sh minor              # bump + build, verify, publish
+#   scripts/release.sh v0.3.5            # explicit version (same as before)
+#   scripts/release.sh minor --dry-run   # build + verify only, no publish
+#
+# Version semantics (semver 2.0.0, resolved from the latest git tag):
+#   major  = breaking change (incompatible agent/server protocol, config
+#            format that requires manual migration, dropped feature)
+#   minor  = backward-compatible new capability (new endpoints, new pages,
+#            new dialogs, redesigns that change behavior)
+#   patch  = bug fix or invisible refactor (fixes, wording, styling-only,
+#            internal refactors with zero behavior change)
+#   Explicit vX.Y.Z skips resolution and publishes exactly that version.
 #
 # Requires:
 #   - the horizonx-server dev container (Go toolchain) — name can be
@@ -23,12 +33,41 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
 REPO_ROOT="$PWD"
 
-VERSION="${1:?usage: scripts/release.sh vX.Y.Z [--dry-run]}"
+RESOLVE="${1:?usage: scripts/release.sh <major|minor|patch|vX.Y.Z> [--dry-run]}"
 DRY_RUN="${2:-}"
 if [ -n "$DRY_RUN" ] && [ "$DRY_RUN" != "--dry-run" ]; then
   echo "unknown arg: $DRY_RUN (expected --dry-run)" >&2; exit 2
 fi
-[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must look like v0.3.5" >&2; exit 2; }
+
+# -- resolve version ----------------------------------------------------------
+# Accept a semver bump keyword or an explicit vX.Y.Z. Keywords compute the
+# next version from the latest git tag (sorted as versions, not strings).
+case "$RESOLVE" in
+  v[0-9]*.[0-9]*.[0-9]*)
+    VERSION="$RESOLVE"
+    ;;
+  major|minor|patch)
+    LATEST=$(git tag --sort=-version:refname | head -1 || true)
+    LATEST="${LATEST:-v0.0.0}"
+    if [[ "$LATEST" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+      MAJOR=${BASH_REMATCH[1]}; MINOR=${BASH_REMATCH[2]}; PATCH=${BASH_REMATCH[3]}
+      case "$RESOLVE" in
+        major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+        minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+        patch) PATCH=$((PATCH+1)) ;;
+      esac
+      VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+    else
+      echo "cannot parse latest tag: $LATEST" >&2; exit 2
+    fi
+    echo "== version: $RESOLVE bump → $VERSION (latest tag: $LATEST) =="
+    ;;
+  *)
+    echo "usage: scripts/release.sh <major|minor|patch|vX.Y.Z> [--dry-run]" >&2
+    exit 2
+    ;;
+esac
+[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "resolved version invalid: $VERSION" >&2; exit 2; }
 
 REPO="zlnew/horizonx"
 CONTAINER="${HX_BUILD_CONTAINER:-horizonx-server}"
