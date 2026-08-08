@@ -25,6 +25,12 @@ type Hub struct {
 	// (we never kill a slow-but-healthy connection).
 	dropped uint64
 
+	// onChannelEmpty is invoked (from the Run loop) whenever a channel's
+	// subscriber count drops to zero. A2 wires this to stop container-log
+	// tails when the app_logs:{id} channel empties — the browser tab closed,
+	// so the --follow process must not run forever.
+	onChannelEmpty func(channel string)
+
 	log logger.Logger
 }
 
@@ -81,6 +87,9 @@ func (h *Hub) Run() {
 					delete(subs, c)
 					if len(subs) == 0 {
 						delete(h.channels, chID)
+						if h.onChannelEmpty != nil {
+							h.onChannelEmpty(chID)
+						}
 					}
 				}
 			}
@@ -97,6 +106,9 @@ func (h *Hub) Run() {
 					delete(subs, sub.client)
 					if len(subs) == 0 {
 						delete(h.channels, sub.channel)
+						if h.onChannelEmpty != nil {
+							h.onChannelEmpty(sub.channel)
+						}
 					}
 				}
 			}
@@ -109,6 +121,12 @@ func (h *Hub) Run() {
 
 func (h *Hub) Stop() {
 	h.cancel()
+}
+
+// SetChannelEmptyHandler wires the channel-emptied callback (A2 log tails).
+// Called before Run; nil is a safe no-op.
+func (h *Hub) SetChannelEmptyHandler(fn func(channel string)) {
+	h.onChannelEmpty = fn
 }
 
 func (h *Hub) Broadcast(ev *domain.WsServerEvent) {

@@ -9,6 +9,9 @@ import (
 	"fmt"
 	netHttp "net/http"
 	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -129,8 +132,12 @@ func RunServer() error {
 	userService := user.NewService(userRepo)
 	jobService := job.NewService(jobRepo, logService, bus)
 	metricsService := metrics.NewService(metricsRepo, redisRegistry, bus, log)
+	// The agent WS router must exist before the application service (A2
+	// logs send commands through it) and the server handler (A1 ping proof).
+	wsAgentRouter := agentws.NewRouter(runtimeCtx, log)
+
 	deploymentService := deployment.NewService(deploymentRepo, logService, bus)
-	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus)
+	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus, wsAgentRouter)
 	auditLogService := auditlog.NewService(auditLogRepo)
 
 	// Auto-seed the admin user (Laravel-style seeding, like auto-migrate).
@@ -201,8 +208,18 @@ func RunServer() error {
 	wsUserhub := userws.NewHub(runtimeCtx, log)
 	wsUserHandler := userws.NewHandler(wsUserhub, log, cfg.JWTSecret, cfg.AllowedOrigins)
 
-	wsAgentRouter := agentws.NewRouter(runtimeCtx, log)
 	wsAgentHandler := agentws.NewHandler(wsAgentRouter, log, serverService)
+	wsAgentHandler.SetPublisher(bus.Publish)
+
+	// Track active log-tail stream IDs so channel-empty can stop the right
+	// stream (A2). Defined before the handler uses it.
+	appLogStreams := make(map[int64]string)
+	var appLogMu sync.Mutex
+	trackedLogs := &trackedContainerLogs{
+		inner:   applicationService,
+		streams: appLogStreams,
+		mu:      &appLogMu,
+	}
 
 	// HTTP Handlers
 	jsonDecoder := request.NewJSONDecoder()
@@ -217,12 +234,38 @@ func RunServer() error {
 	jobHandler := http.NewJobHandler(jobService, jsonDecoder, jsonWriter, validator)
 	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
 	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
-	applicationHandler := http.NewApplicationHandler(applicationService, jsonDecoder, jsonWriter, validator)
+	applicationHandler := http.NewApplicationHandler(applicationService, trackedLogs, jsonDecoder, jsonWriter, validator)
 	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)
 	settingsHandler := http.NewSettingsHandler(settingsRepo, notifier, jsonDecoder, jsonWriter, validator)
 
 	go wsUserhub.Run()
 	go wsAgentRouter.Run()
+
+	// Stop container-log tails when their app_logs channel empties (browser
+	// tab closed). The stream ID was recorded by trackedContainerLogs when
+	// the tail started, so the stop command targets the right stream.
+	wsUserhub.SetChannelEmptyHandler(func(channel string) {
+		const prefix = "app_logs:"
+		if !strings.HasPrefix(channel, prefix) {
+			return
+		}
+		appID, err := strconv.ParseInt(strings.TrimPrefix(channel, prefix), 10, 64)
+		if err != nil {
+			return
+		}
+		appLogMu.Lock()
+		streamID := appLogStreams[appID]
+		delete(appLogStreams, appID)
+		appLogMu.Unlock()
+		if streamID == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(runtimeCtx, 5*time.Second)
+		defer cancel()
+		if err := applicationService.StopTailLogs(ctx, appID, streamID); err != nil {
+			log.Warn("failed to stop log tail on channel empty", "app_id", appID, "error", err)
+		}
+	})
 
 	// Register event subscribers
 	subscribers.Register(bus, wsUserhub)

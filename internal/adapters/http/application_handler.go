@@ -17,6 +17,10 @@ import (
 type ApplicationHandler struct {
 	svc domain.ApplicationService
 
+	// logs is the container-log entry point (A2). Kept separate so the
+	// handler depends on the narrow interface, not a fat service.
+	logs domain.ContainerLogService
+
 	decoder   request.RequestDecoder
 	writer    response.ResponseWriter
 	validator validator.Validator
@@ -24,12 +28,14 @@ type ApplicationHandler struct {
 
 func NewApplicationHandler(
 	svc domain.ApplicationService,
+	logs domain.ContainerLogService,
 	d request.RequestDecoder,
 	w response.ResponseWriter,
 	v validator.Validator,
 ) *ApplicationHandler {
 	return &ApplicationHandler{
 		svc:       svc,
+		logs:      logs,
 		decoder:   d,
 		writer:    w,
 		validator: v,
@@ -315,6 +321,121 @@ func (h *ApplicationHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	h.writer.Write(w, http.StatusOK, &response.Response{
 		Message: "starting application",
+	})
+}
+
+// TailLogs starts a live container-log tail. Returns 202 immediately with
+// the stream ID; log chunks arrive over the userws channel app_logs:{id}.
+func (h *ApplicationHandler) TailLogs(w http.ResponseWriter, r *http.Request) {
+	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: "invalid application id"})
+		return
+	}
+
+	var req domain.LogsTailRequest
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: "invalid request body"})
+		return
+	}
+	if errs := h.validator.Validate(&req); len(errs) > 0 {
+		h.writer.Write(w, http.StatusUnprocessableEntity, &response.Response{Message: errs["error"]})
+		return
+	}
+
+	streamID, err := h.logs.TailLogs(r.Context(), appID, req)
+	if err != nil {
+		if errors.Is(err, domain.ErrApplicationNotFound) {
+			h.writer.Write(w, http.StatusNotFound, &response.Response{Message: "application not found"})
+			return
+		}
+		if errors.Is(err, domain.ErrAgentOffline) {
+			h.writer.Write(w, http.StatusConflict, &response.Response{Message: "agent offline — cannot start log tail"})
+			return
+		}
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: err.Error()})
+		return
+	}
+
+	h.writer.Write(w, http.StatusAccepted, &response.Response{
+		Message: "log tail started",
+		Data:    map[string]any{"stream_id": streamID},
+	})
+}
+
+// StopTailLogs cancels a running tail stream.
+func (h *ApplicationHandler) StopTailLogs(w http.ResponseWriter, r *http.Request) {
+	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: "invalid application id"})
+		return
+	}
+
+	var req domain.LogsTailStopRequest
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: "invalid request body"})
+		return
+	}
+	if errs := h.validator.Validate(&req); len(errs) > 0 {
+		h.writer.Write(w, http.StatusUnprocessableEntity, &response.Response{Message: errs["error"]})
+		return
+	}
+
+	if err := h.logs.StopTailLogs(r.Context(), appID, req.StreamID); err != nil {
+		if errors.Is(err, domain.ErrApplicationNotFound) {
+			h.writer.Write(w, http.StatusNotFound, &response.Response{Message: "application not found"})
+			return
+		}
+		if errors.Is(err, domain.ErrAgentOffline) {
+			// Nothing to stop if the agent is gone — the process died with it.
+			h.writer.Write(w, http.StatusAccepted, &response.Response{Message: "agent offline — nothing to stop"})
+			return
+		}
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: err.Error()})
+		return
+	}
+
+	h.writer.Write(w, http.StatusAccepted, &response.Response{
+		Message: "log tail stopped",
+	})
+}
+
+// QueryLogs runs a one-shot historical query. Returns 202 immediately with
+// the query ID; chunks (ending EOF:true) arrive over app_logs:{id}.
+func (h *ApplicationHandler) QueryLogs(w http.ResponseWriter, r *http.Request) {
+	appID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: "invalid application id"})
+		return
+	}
+
+	var req domain.LogsQueryRequest
+	if err := h.decoder.Decode(r, &req); err != nil {
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: "invalid request body"})
+		return
+	}
+	if errs := h.validator.Validate(&req); len(errs) > 0 {
+		h.writer.Write(w, http.StatusUnprocessableEntity, &response.Response{Message: errs["error"]})
+		return
+	}
+
+	queryID, err := h.logs.QueryLogs(r.Context(), appID, req)
+	if err != nil {
+		if errors.Is(err, domain.ErrApplicationNotFound) {
+			h.writer.Write(w, http.StatusNotFound, &response.Response{Message: "application not found"})
+			return
+		}
+		if errors.Is(err, domain.ErrAgentOffline) {
+			h.writer.Write(w, http.StatusConflict, &response.Response{Message: "agent offline — cannot query logs"})
+			return
+		}
+		h.writer.Write(w, http.StatusBadRequest, &response.Response{Message: err.Error()})
+		return
+	}
+
+	h.writer.Write(w, http.StatusAccepted, &response.Response{
+		Message: "log query started",
+		Data:    map[string]any{"query_id": queryID},
 	})
 }
 

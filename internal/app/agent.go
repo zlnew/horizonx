@@ -14,8 +14,11 @@ import (
 
 	"horizonx/internal/adapters/redis"
 	"horizonx/internal/agent"
+	"horizonx/internal/agent/docker"
 	"horizonx/internal/agent/executor"
+	"horizonx/internal/agent/logstream"
 	"horizonx/internal/config"
+	"horizonx/internal/domain"
 	"horizonx/internal/logger"
 	"horizonx/internal/metrics"
 	"horizonx/internal/version"
@@ -70,6 +73,13 @@ func RunAgent() error {
 	exec := executor.NewExecutor(appsWorkDir, appLog, collector.Latest)
 	worker := agent.NewJobWorker(cfg, appLog, *httpClient, *exec)
 	conn := agent.NewAgent(cfg, appLog)
+
+	// Container-log streams (A2): the manager needs the agent's send path
+	// and the executor's apps workdir + compose-file resolution.
+	logstreamMgr := logstream.NewManager(cfg.AgentServerID, appsWorkDir, docker.NewManager(), appLog, func(msg *domain.WsAgentMessage) error {
+		return conn.SendMessage(msg)
+	})
+	conn.SetLogStream(logstreamMgr)
 
 	if err := exec.Init(); err != nil {
 		return fmt.Errorf("executor init: %w", err)

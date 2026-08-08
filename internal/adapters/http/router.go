@@ -155,6 +155,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// APPLICATIONS
 	mux.Handle("GET /applications", appReadStack.ThenFunc(deps.Application.Index))
 	mux.Handle("GET /applications/{id}", appReadStack.ThenFunc(deps.Application.Show))
+	mux.Handle("POST /applications/{id}/logs/tail", appReadStack.ThenFunc(deps.Application.TailLogs))
+	mux.Handle("POST /applications/{id}/logs/tail/stop", appReadStack.ThenFunc(deps.Application.StopTailLogs))
+	mux.Handle("POST /applications/{id}/logs/query", appReadStack.ThenFunc(deps.Application.QueryLogs))
 	mux.Handle("POST /applications", appWriteStack.ThenFunc(deps.Application.Store))
 	mux.Handle("PUT /applications/{id}", appWriteStack.ThenFunc(deps.Application.Update))
 	mux.Handle("DELETE /applications/{id}", appWriteStack.ThenFunc(deps.Application.Destroy))

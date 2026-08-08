@@ -102,7 +102,7 @@ func TestRollbackUsesLastSuccessfulCommit(t *testing.T) {
 		{ID: 3, Status: domain.DeploymentSuccess, CommitHash: commitPtr("0123456789abcdef0123456789abcdef01234567")},
 	}}
 
-	svc := application.NewService(appRepo, nil, jobSvc, deploySvc, nil)
+	svc := application.NewService(appRepo, nil, jobSvc, deploySvc, nil, nil)
 
 	dep, err := svc.Rollback(context.Background(), 1, 1)
 	assert.NoError(t, err)
@@ -122,7 +122,7 @@ func TestRollbackFailsWithoutSuccessfulDeployment(t *testing.T) {
 		Branch:   "main",
 	}, nil)
 
-	svc := application.NewService(appRepo, nil, &fakeJobSvc{}, &fakeDeploymentSvc{}, nil)
+	svc := application.NewService(appRepo, nil, &fakeJobSvc{}, &fakeDeploymentSvc{}, nil, nil)
 
 	_, err := svc.Rollback(context.Background(), 1, 1)
 	assert.Error(t, err)
