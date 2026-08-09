@@ -5,6 +5,15 @@ services:
       dockerfile: Dockerfile
     image: ${APP_IMAGE:-horizonx:latest}
     container_name: ${APP_CONTAINER_NAME:-horizonx}
+    env_file:
+      - path: .env
+        required: false
     ports:
       - '${APP_HOST:-127.0.0.1}:${APP_PORT:-4858}:3000'
     restart: unless-stopped
+    networks:
+      - personal-network
+
+networks:
+  personal-network:
+    external: true
