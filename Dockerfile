@@ -19,6 +19,6 @@ RUN apk add --no-cache ca-certificates git docker-cli docker-cli-compose curl ba
 RUN mkdir -p /var/lib/horizonx/apps /etc/horizonx
 COPY --from=build /out/horizonx /usr/local/bin/horizonx
 WORKDIR /etc/horizonx
-EXPOSE 80
+EXPOSE 3000
 ENTRYPOINT ["horizonx"]
 CMD ["server"]
