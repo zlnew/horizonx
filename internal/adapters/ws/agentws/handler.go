@@ -15,6 +15,10 @@ type Handler struct {
 	upgrader websocket.Upgrader
 	log      logger.Logger
 	svc      domain.ServerService
+
+	// publish forwards events onto the server event bus (e.g.
+	// container_log_chunk → userws subscriber → app_logs:{appID} channel).
+	publish func(eventName string, event any)
 }
 
 func NewHandler(router *Router, log logger.Logger, svc domain.ServerService) *Handler {
@@ -30,6 +34,12 @@ func NewHandler(router *Router, log logger.Logger, svc domain.ServerService) *Ha
 		log:      log,
 		svc:      svc,
 	}
+}
+
+// SetPublisher wires the event-bus callback (called before Serve; nil is a
+// safe no-op — events just don't fan out).
+func (h *Handler) SetPublisher(publish func(eventName string, event any)) {
+	h.publish = publish
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +80,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a := NewClient(h.router, conn, h.log, h.svc, serverID)
+	a.publish = h.publish
 	a.hub.register <- a
 
 	go a.writePump()

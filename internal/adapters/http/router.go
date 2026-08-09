@@ -16,8 +16,9 @@ import (
 )
 
 type RouterDeps struct {
-	WsUser  *userws.Handler
-	WsAgent *agentws.Handler
+	WsUser       *userws.Handler
+	WsAgent      *agentws.Handler
+	WsAgentRoute *agentws.Router
 
 	Auth        *AuthHandler
 	Account     *AccountHandler
@@ -130,6 +131,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("PUT /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Update))
 	mux.Handle("DELETE /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Destroy))
 	mux.Handle("POST /servers/{id}/rotate-secret", serverWriteStack.ThenFunc(deps.Server.RotateSecret))
+	mux.Handle("POST /servers/{id}/ping", serverWriteStack.ThenFunc(deps.Server.Ping))
 
 	// SERVER METRICS
 	mux.Handle("GET /servers/{id}/metrics/latest", metricsReadStack.ThenFunc(deps.Metrics.Latest))
@@ -139,6 +141,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// ACCOUNT
 	mux.Handle("POST /account/profile", userStack.ThenFunc(deps.Account.Profile))
 	mux.Handle("POST /account/password", userStack.ThenFunc(deps.Account.Password))
+	mux.Handle("GET /account/sessions", userStack.ThenFunc(deps.Account.Sessions))
+	mux.Handle("DELETE /account/sessions/{id}", userStack.ThenFunc(deps.Account.RevokeSession))
+	mux.Handle("POST /account/sessions/revoke-others", userStack.ThenFunc(deps.Account.RevokeOtherSessions))
 
 	// USERS
 	mux.Handle("GET /users", memberReadStack.ThenFunc(deps.User.Index))
@@ -150,6 +155,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// APPLICATIONS
 	mux.Handle("GET /applications", appReadStack.ThenFunc(deps.Application.Index))
 	mux.Handle("GET /applications/{id}", appReadStack.ThenFunc(deps.Application.Show))
+	mux.Handle("POST /applications/{id}/logs/tail", appReadStack.ThenFunc(deps.Application.TailLogs))
+	mux.Handle("POST /applications/{id}/logs/tail/stop", appReadStack.ThenFunc(deps.Application.StopTailLogs))
+	mux.Handle("POST /applications/{id}/logs/query", appReadStack.ThenFunc(deps.Application.QueryLogs))
 	mux.Handle("POST /applications", appWriteStack.ThenFunc(deps.Application.Store))
 	mux.Handle("PUT /applications/{id}", appWriteStack.ThenFunc(deps.Application.Update))
 	mux.Handle("DELETE /applications/{id}", appWriteStack.ThenFunc(deps.Application.Destroy))

@@ -213,6 +213,14 @@ const instanceServerDockerfile = `# HorizonX server image — built by the insta
 # With a pinned version the layer cache misses each release -> fresh download.
 ARG HX_VERSION=latest
 FROM alpine:3.20
+# Docker scoping: an ARG before FROM is only in scope for FROM lines. The
+# build-arg value (passed by compose) is invisible to RUN steps unless the
+# ARG is re-declared inside the stage. Without this re-declaration the RUN
+# below sees an empty HX_VERSION, falls back to releases/latest, and the
+# layer cache never busts — the stale-image bug, silently (caught live on
+# creatokuserver v0.5.0: upgrade left the old binary in the image; a manual
+# no-cache rebuild was the tell).
+ARG HX_VERSION
 RUN apk add --no-cache ca-certificates curl
 # Detect the build arch from uname (release tarballs use x86_64/arm64 —
 # BuildKit's automatic TARGETARCH arg is unreliable across builders).
@@ -223,12 +231,12 @@ RUN ARCH=$(uname -m); \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac; \
     if [ "$HX_VERSION" = "latest" ] || [ -z "$HX_VERSION" ]; then \
-      BASE="releases/latest"; \
+      BASE="releases/latest/download"; \
     else \
       BASE="releases/download/$HX_VERSION"; \
     fi; \
-    curl -fsSL https://github.com/zlnew/horizonx/$BASE/download/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
- && curl -fsSL https://github.com/zlnew/horizonx/$BASE/download/SHA256SUMS -o /tmp/SHA256SUMS \
+    curl -fsSL https://github.com/zlnew/horizonx/$BASE/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
+ && curl -fsSL https://github.com/zlnew/horizonx/$BASE/SHA256SUMS -o /tmp/SHA256SUMS \
  && cd /tmp && grep "horizonx-linux-$ARCH.tar.gz" SHA256SUMS | sha256sum -c - \
  && tar -xzf /tmp/horizonx-linux-$ARCH.tar.gz -C /usr/local/bin horizonx \
  && rm /tmp/horizonx-linux-$ARCH.tar.gz /tmp/SHA256SUMS

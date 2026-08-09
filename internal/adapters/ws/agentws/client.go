@@ -17,7 +17,9 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 8192
+	// agentws carries server→agent commands (log batches in A2 can reach
+	// hundreds of KB) — 256KB cap. userws stays at the default 8KB.
+	maxMessageSize = 262144
 )
 
 type Client struct {
@@ -29,7 +31,11 @@ type Client struct {
 	send chan []byte
 
 	log logger.Logger
-	svc domain.ServerService
+	svc  domain.ServerService
+
+	// publish forwards events onto the server event bus (wired by the
+	// handler; nil is a safe no-op).
+	publish func(eventName string, event any)
 
 	ID uuid.UUID
 }
@@ -91,6 +97,8 @@ func (a *Client) readPump() {
 				continue
 			}
 
+			srvID := a.ID.String()
+
 			switch msg.Event {
 			case "server_os_info":
 				var osInfo domain.OSInfo
@@ -103,6 +111,17 @@ func (a *Client) readPump() {
 					a.log.Error("ws: failed to update server os info", "error", err)
 					break
 				}
+
+			case "container_log_chunk":
+				var chunk domain.ContainerLogChunk
+				if err := json.Unmarshal(msg.Payload, &chunk); err != nil {
+					a.log.Error("ws: failed to unmarshal container log chunk", "error", err)
+					break
+				}
+				if a.publish != nil {
+					a.publish("container_log_chunk", &chunk)
+				}
+				a.log.Debug("ws: container log chunk relayed", "server_id", srvID, "stream_id", chunk.StreamID, "seq", chunk.Seq, "lines", len(chunk.Lines), "eof", chunk.EOF)
 
 			default:
 				a.log.Debug("ws: unknown agent message event", "event", msg.Event)

@@ -12,12 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// AgentCommandSender is the narrow slice of the agent WS router the logs
+// methods need. Defined here (not in domain) so the application layer never
+// imports the adapter — *agentws.Router satisfies it structurally.
+type AgentCommandSender interface {
+	SendCommand(ctx context.Context, serverID uuid.UUID, cmd domain.AgentCommand) error
+}
+
 type Service struct {
 	repo          domain.ApplicationRepository
 	serverSvc     domain.ServerService
 	jobSvc        domain.JobService
 	deploymentSvc domain.DeploymentService
 	bus           *event.Bus
+
+	agentCmd AgentCommandSender
 }
 
 func NewService(
@@ -26,13 +35,16 @@ func NewService(
 	jobSvc domain.JobService,
 	deploymentSvc domain.DeploymentService,
 	bus *event.Bus,
-) domain.ApplicationService {
+	agentCmd AgentCommandSender,
+) *Service {
 	return &Service{
 		repo:          repo,
 		serverSvc:     serverSvc,
 		jobSvc:        jobSvc,
 		deploymentSvc: deploymentSvc,
 		bus:           bus,
+
+		agentCmd: agentCmd,
 	}
 }
 

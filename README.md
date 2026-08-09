@@ -154,6 +154,33 @@ the public key for GitHub), installs hardware-monitoring **udev rules**
 
 In the dashboard: **Applications → New** → point at a git repo + branch, set env vars → **Deploy**. The agent clones, builds, and health-gates the rollout. Deployments, rollbacks, and job logs are all in the UI.
 
+#### App compose conventions
+
+Every repo the agent deploys must ship a `docker-compose.prod.yml` (the agent
+prefers it over the dev `docker-compose.yml`; both work). Three conventions
+apply:
+
+1. **Production compose preferred** — name it `docker-compose.prod.yml`; the
+   agent's compose resolution tries prod variants first, then falls back to
+   the dev file.
+2. **Env-overridable names** — expose `${APP_IMAGE}` and `${APP_CONTAINER_NAME}`
+   so the agent can tag deployments per-commit and manage container names
+   (rollback replays a tag, so a hardcoded image breaks it).
+3. **Log rotation** — every service must pin the json-file driver with
+   rotation so host disks stay bounded and live-log queries have history to
+   read:
+
+```yaml
+logging:
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+```
+
+Without the `logging:` block, Docker defaults to unbounded json-file logs —
+a chatty app can fill the host disk, and there is no history to query.
+
 ### 5. Upgrading (self-contained)
 
 ```bash
