@@ -31,6 +31,7 @@ type RouterDeps struct {
 	Deployment  *DeploymentHandler
 	AuditLog    *AuditLogHandler
 	Settings    *SettingsHandler
+	Alert       *AlertHandler
 
 	SessionStore domain.SessionStore
 
@@ -70,6 +71,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	appReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppRead))
 	appWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppWrite))
+
+	alertReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAlertRead))
+	alertWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAlertWrite))
 
 	// P1-10: brute-force guard on the public login endpoint — 5 attempts per
 	// IP per minute, then HTTP 429. With TRUST_PROXY the key is the real
@@ -186,6 +190,22 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /applications/{id}/env", appWriteStack.ThenFunc(deps.Application.AddEnvVar))
 	mux.Handle("PUT /applications/{id}/env/{key}", appWriteStack.ThenFunc(deps.Application.UpdateEnvVar))
 	mux.Handle("DELETE /applications/{id}/env/{key}", appWriteStack.ThenFunc(deps.Application.DeleteEnvVar))
+
+	// ALERTS
+	if deps.Alert != nil {
+		mux.Handle("GET /alerts/rules", alertReadStack.ThenFunc(deps.Alert.RulesIndex))
+		mux.Handle("POST /alerts/rules", alertWriteStack.ThenFunc(deps.Alert.RulesStore))
+		mux.Handle("GET /alerts/rules/{id}", alertReadStack.ThenFunc(deps.Alert.RulesShow))
+		mux.Handle("PUT /alerts/rules/{id}", alertWriteStack.ThenFunc(deps.Alert.RulesUpdate))
+		mux.Handle("DELETE /alerts/rules/{id}", alertWriteStack.ThenFunc(deps.Alert.RulesDestroy))
+
+		mux.Handle("GET /alerts/active", alertReadStack.ThenFunc(deps.Alert.ActiveIndex))
+		mux.Handle("GET /alerts/history", alertReadStack.ThenFunc(deps.Alert.HistoryIndex))
+		mux.Handle("GET /alerts/history/{id}", alertReadStack.ThenFunc(deps.Alert.HistoryShow))
+
+		mux.Handle("POST /alerts/{id}/ack", alertWriteStack.ThenFunc(deps.Alert.HistoryAck))
+		mux.Handle("POST /alerts/{id}/silence", alertWriteStack.ThenFunc(deps.Alert.SilenceRule))
+	}
 
 	return globalMw.Apply(mux)
 }

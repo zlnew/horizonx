@@ -510,5 +510,19 @@ func (s *Service) DeleteEnvVar(ctx context.Context, appID int64, key string) err
 }
 
 func (s *Service) UpdateHealth(ctx context.Context, serverID uuid.UUID, reports []domain.ApplicationHealth) error {
-	return s.repo.UpdateHealth(ctx, serverID, reports)
+	if err := s.repo.UpdateHealth(ctx, serverID, reports); err != nil {
+		return err
+	}
+
+	// Alerting hook: the agent's local "app_healths" topic only exists inside
+	// the agent process; the server re-publishes the health report (with the
+	// reporting server id) so the alert evaluator can react to it.
+	if s.bus != nil {
+		s.bus.Publish("app_healths", domain.EventApplicationHealthReported{
+			ServerID: serverID,
+			Reports:  reports,
+		})
+	}
+
+	return nil
 }

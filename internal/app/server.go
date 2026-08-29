@@ -26,7 +26,9 @@ import (
 	"horizonx/internal/adapters/ws/agentws"
 	"horizonx/internal/adapters/ws/userws"
 	"horizonx/internal/adapters/ws/userws/subscribers"
+	"horizonx/internal/alerting"
 	"horizonx/internal/application/account"
+	"horizonx/internal/application/alert"
 	"horizonx/internal/application/application"
 	"horizonx/internal/application/auditlog"
 	"horizonx/internal/application/auth"
@@ -121,6 +123,8 @@ func RunServer() error {
 	deploymentRepo := postgres.NewDeploymentRepository(dbPool)
 	auditLogRepo := postgres.NewAuditLogRepository(dbPool)
 	settingsRepo := postgres.NewSettingsRepository(dbPool)
+	alertRuleRepo := postgres.NewAlertRuleRepository(dbPool)
+	alertHistoryRepo := postgres.NewAlertHistoryRepository(dbPool)
 
 	// Services
 	logService := logSvc.NewService(logRepo, bus)
@@ -139,6 +143,7 @@ func RunServer() error {
 	deploymentService := deployment.NewService(deploymentRepo, logService, bus)
 	applicationService := application.NewService(applicationRepo, serverService, jobService, deploymentService, bus, wsAgentRouter)
 	auditLogService := auditlog.NewService(auditLogRepo)
+	alertService := alert.NewService(alertRuleRepo, alertHistoryRepo)
 
 	// Auto-seed the admin user (Laravel-style seeding, like auto-migrate).
 	// The .env (ADMIN_EMAIL / ADMIN_PASSWORD) seeds the admin on FIRST boot.
@@ -198,6 +203,17 @@ func RunServer() error {
 		return domain.WebhookSettings{Enabled: cfg.WebhookURL != "", URL: cfg.WebhookURL}
 	}, applicationService, log)
 	bus.Subscribe("deployment_status_changed", notifier.Handle)
+	bus.Subscribe("alert_fired", notifier.Handle)
+	bus.Subscribe("alert_resolved", notifier.Handle)
+
+	// P3-21: alert evaluator. Subscribes to the metrics / status / health
+	// bus topics, evaluates enabled rules live (per event), persists fires
+	// and resolutions, and publishes alert_fired / alert_resolved which the
+	// webhook notifier (above) relays.
+	alerting.New(bus, log).
+		WithProvider(alertRuleRepo).
+		WithHistory(alertHistoryRepo).
+		Start()
 
 	// P3-19: audit log — record deploy/app/server events.
 	auditSubscriber := auditlog.NewSubscriber(auditLogService)
@@ -237,6 +253,7 @@ func RunServer() error {
 	applicationHandler := http.NewApplicationHandler(applicationService, trackedLogs, jsonDecoder, jsonWriter, validator)
 	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)
 	settingsHandler := http.NewSettingsHandler(settingsRepo, notifier, jsonDecoder, jsonWriter, validator)
+	alertHandler := http.NewAlertHandler(alertService, jsonDecoder, jsonWriter, validator)
 
 	go wsUserhub.Run()
 	go wsAgentRouter.Run()
@@ -286,6 +303,7 @@ func RunServer() error {
 		Deployment:  deploymentHandler,
 		AuditLog:    auditLogHandler,
 		Settings:    settingsHandler,
+		Alert:       alertHandler,
 
 		SessionStore: sessionStore,
 
