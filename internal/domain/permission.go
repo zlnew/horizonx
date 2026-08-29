@@ -18,4 +18,7 @@ const (
 
 	PermAppRead  PermissionConst = "app_read"
 	PermAppWrite PermissionConst = "app_write"
+
+	PermAlertRead  PermissionConst = "alert_read"
+	PermAlertWrite PermissionConst = "alert_write"
 )

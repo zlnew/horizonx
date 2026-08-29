@@ -23,12 +23,15 @@ var roleHasPermissions = map[domain.RoleConst]map[domain.PermissionConst]bool{
 		domain.PermMemberWrite: true,
 		domain.PermAppRead:     true,
 		domain.PermAppWrite:    true,
+		domain.PermAlertRead:   true,
+		domain.PermAlertWrite:  true,
 	},
 	domain.RoleViewer: {
 		domain.PermMetricsRead: true,
 		domain.PermServerRead:  true,
 		domain.PermMemberRead:  true,
 		domain.PermAppRead:     true,
+		domain.PermAlertRead:   true,
 	},
 }
 
