@@ -88,37 +88,54 @@ func (n *Notifier) run() {
 }
 
 // Handle implements the event bus subscriber signature.
-// It only reacts to terminal deployment states (success/failed) to avoid
-// spamming on every intermediate transition.
+// It reacts to terminal deployment states (success/failed) plus alert
+// firing/resolution events. Both deliveries reuse the same queue, HMAC
+// signing and fire-and-forget semantics; a deployment event is never
+// suppressed by alert traffic and vice versa.
 func (n *Notifier) Handle(event any) {
 	ws := n.getSettings()
 	if !ws.Enabled || ws.URL == "" {
 		return
 	}
 
-	evt, ok := event.(domain.EventDeploymentStatusChanged)
-	if !ok {
-		return
-	}
+	var msg string
 
-	switch evt.Status {
-	case domain.DeploymentSuccess, domain.DeploymentFailed:
+	switch evt := event.(type) {
+	case domain.EventDeploymentStatusChanged:
+		switch evt.Status {
+		case domain.DeploymentSuccess, domain.DeploymentFailed:
+		default:
+			return
+		}
+
+		appName := n.appName(context.Background(), evt.ApplicationID)
+		emoji := "✅"
+		statusText := "succeeded"
+		if evt.Status == domain.DeploymentFailed {
+			emoji = "❌"
+			statusText = "failed"
+		}
+
+		msg = fmt.Sprintf(
+			"%s Deployment **%s** (%s) %s.",
+			emoji, appName, deploymentLink(evt.DeploymentID), statusText,
+		)
+
+	case domain.EventAlertFired:
+		msg = fmt.Sprintf(
+			"🚨 Alert **%s** fired: %s",
+			ruleRef(evt.RuleID, evt.RuleName), evt.Message,
+		)
+
+	case domain.EventAlertResolved:
+		msg = fmt.Sprintf(
+			"✅ Alert **%s** resolved.",
+			ruleRef(evt.RuleID, evt.RuleName),
+		)
+
 	default:
 		return
 	}
-
-	appName := n.appName(context.Background(), evt.ApplicationID)
-	emoji := "✅"
-	statusText := "succeeded"
-	if evt.Status == domain.DeploymentFailed {
-		emoji = "❌"
-		statusText = "failed"
-	}
-
-	msg := fmt.Sprintf(
-		"%s Deployment **%s** (%s) %s.",
-		emoji, appName, deploymentLink(evt.DeploymentID), statusText,
-	)
 
 	payload, err := json.Marshal(map[string]string{"content": msg})
 	if err != nil {
@@ -127,7 +144,7 @@ func (n *Notifier) Handle(event any) {
 	}
 
 	// Enqueue without blocking; if the queue is full, drop the oldest and
-	// keep the newest so the latest deploy state is what gets delivered.
+	// keep the newest so the latest state is what gets delivered.
 	select {
 	case n.events <- payload:
 	default:
@@ -225,4 +242,13 @@ func (n *Notifier) appName(ctx context.Context, appID int64) string {
 // install); the deployment ID is the canonical handle.
 func deploymentLink(deploymentID int64) string {
 	return fmt.Sprintf("deployment #%d", deploymentID)
+}
+
+// ruleRef renders a stable rule reference for alert notifications. A rule
+// name is preferred; fall back to the numeric id.
+func ruleRef(ruleID int64, ruleName string) string {
+	if ruleName != "" {
+		return ruleName
+	}
+	return fmt.Sprintf("rule #%d", ruleID)
 }
