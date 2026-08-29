@@ -100,15 +100,15 @@ func (r *AlertRuleRepository) List(ctx context.Context, opts domain.AlertRuleLis
 	baseQuery += " ORDER BY created_at DESC"
 
 	var total int64
-	if opts.IsPaginate {
-		countQuery := "SELECT COUNT(*) FROM alert_rules"
-		if len(conditions) > 0 {
-			countQuery += " WHERE " + strings.Join(conditions, " AND ")
-		}
-		if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("failed to count alert rules: %w", err)
-		}
+	countQuery := "SELECT COUNT(*) FROM alert_rules"
+	if len(conditions) > 0 {
+		countQuery += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count alert rules: %w", err)
+	}
 
+	if opts.IsPaginate {
 		offset := (opts.Page - 1) * opts.Limit
 		baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 		args = append(args, opts.Limit, offset)
@@ -433,15 +433,15 @@ func (r *AlertHistoryRepository) list(ctx context.Context, opts domain.AlertHist
 	baseQuery += " ORDER BY h.created_at DESC"
 
 	var total int64
-	if opts.IsPaginate {
-		countQuery := "SELECT COUNT(*) " + alertHistoryFrom[strings.Index(alertHistoryFrom, "FROM"):]
-		if len(conditions) > 0 {
-			countQuery += " WHERE " + strings.Join(conditions, " AND ")
-		}
-		if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("failed to count alert history: %w", err)
-		}
+	countQuery := "SELECT COUNT(*) " + alertHistoryFrom[strings.Index(alertHistoryFrom, "FROM"):]
+	if len(conditions) > 0 {
+		countQuery += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count alert history: %w", err)
+	}
 
+	if opts.IsPaginate {
 		offset := (opts.Page - 1) * opts.Limit
 		baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 		args = append(args, opts.Limit, offset)
