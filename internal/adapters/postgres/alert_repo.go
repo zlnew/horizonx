@@ -24,6 +24,24 @@ func NewAlertRuleRepository(db *pgxpool.Pool) *AlertRuleRepository {
 
 var _ domain.AlertRuleRepository = (*AlertRuleRepository)(nil)
 
+// strPtr returns nil for an empty string so nullable columns store NULL
+// instead of '' — offline/health rules legitimately have no operator,
+// metric_path or target_status, and the API sends "" for them.
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// strVal coalesces a NULL scan target back to the domain zero value "".
+func strVal(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 const alertRuleColumns = `
 	id,
 	name,
@@ -107,6 +125,7 @@ func (r *AlertRuleRepository) List(ctx context.Context, opts domain.AlertRuleLis
 	var rules []*domain.AlertRule
 	for rows.Next() {
 		var rule domain.AlertRule
+		var metricPath, operator, targetStatus *string
 		if err := rows.Scan(
 			&rule.ID,
 			&rule.Name,
@@ -114,10 +133,10 @@ func (r *AlertRuleRepository) List(ctx context.Context, opts domain.AlertRuleLis
 			&rule.ServerID,
 			&rule.AppID,
 			&rule.Source,
-			&rule.MetricPath,
-			&rule.Operator,
+			&metricPath,
+			&operator,
 			&rule.Threshold,
-			&rule.TargetStatus,
+			&targetStatus,
 			&rule.ForDuration,
 			&rule.Cooldown,
 			&rule.Severity,
@@ -128,6 +147,9 @@ func (r *AlertRuleRepository) List(ctx context.Context, opts domain.AlertRuleLis
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan alert rule: %w", err)
 		}
+		rule.MetricPath = strVal(metricPath)
+		rule.Operator = domain.AlertOperator(strVal(operator))
+		rule.TargetStatus = domain.ApplicationStatus(strVal(targetStatus))
 		rules = append(rules, &rule)
 	}
 
@@ -142,6 +164,7 @@ func (r *AlertRuleRepository) Get(ctx context.Context, ruleID int64) (*domain.Al
 	query := "SELECT " + alertRuleColumns + " FROM alert_rules WHERE id = $1 LIMIT 1"
 
 	var rule domain.AlertRule
+	var metricPath, operator, targetStatus *string
 	err := r.db.QueryRow(ctx, query, ruleID).Scan(
 		&rule.ID,
 		&rule.Name,
@@ -149,10 +172,10 @@ func (r *AlertRuleRepository) Get(ctx context.Context, ruleID int64) (*domain.Al
 		&rule.ServerID,
 		&rule.AppID,
 		&rule.Source,
-		&rule.MetricPath,
-		&rule.Operator,
+		&metricPath,
+		&operator,
 		&rule.Threshold,
-		&rule.TargetStatus,
+		&targetStatus,
 		&rule.ForDuration,
 		&rule.Cooldown,
 		&rule.Severity,
@@ -167,6 +190,9 @@ func (r *AlertRuleRepository) Get(ctx context.Context, ruleID int64) (*domain.Al
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alert rule: %w", err)
 	}
+	rule.MetricPath = strVal(metricPath)
+	rule.Operator = domain.AlertOperator(strVal(operator))
+	rule.TargetStatus = domain.ApplicationStatus(strVal(targetStatus))
 	return &rule, nil
 }
 
@@ -187,10 +213,10 @@ func (r *AlertRuleRepository) Create(ctx context.Context, rule *domain.AlertRule
 		rule.ServerID,
 		rule.AppID,
 		string(rule.Source),
-		rule.MetricPath,
-		string(rule.Operator),
+		strPtr(rule.MetricPath),
+		strPtr(string(rule.Operator)),
 		rule.Threshold,
-		string(rule.TargetStatus),
+		strPtr(string(rule.TargetStatus)),
 		rule.ForDuration,
 		rule.Cooldown,
 		string(rule.Severity),
@@ -228,10 +254,10 @@ func (r *AlertRuleRepository) Update(ctx context.Context, rule *domain.AlertRule
 		rule.ServerID,
 		rule.AppID,
 		string(rule.Source),
-		rule.MetricPath,
-		string(rule.Operator),
+		strPtr(rule.MetricPath),
+		strPtr(string(rule.Operator)),
 		rule.Threshold,
-		string(rule.TargetStatus),
+		strPtr(string(rule.TargetStatus)),
 		rule.ForDuration,
 		rule.Cooldown,
 		string(rule.Severity),
@@ -272,6 +298,7 @@ func (r *AlertRuleRepository) ListEnabled(ctx context.Context) ([]domain.AlertRu
 	var rules []domain.AlertRule
 	for rows.Next() {
 		var rule domain.AlertRule
+		var metricPath, operator, targetStatus *string
 		if err := rows.Scan(
 			&rule.ID,
 			&rule.Name,
@@ -279,10 +306,10 @@ func (r *AlertRuleRepository) ListEnabled(ctx context.Context) ([]domain.AlertRu
 			&rule.ServerID,
 			&rule.AppID,
 			&rule.Source,
-			&rule.MetricPath,
-			&rule.Operator,
+			&metricPath,
+			&operator,
 			&rule.Threshold,
-			&rule.TargetStatus,
+			&targetStatus,
 			&rule.ForDuration,
 			&rule.Cooldown,
 			&rule.Severity,
@@ -293,6 +320,9 @@ func (r *AlertRuleRepository) ListEnabled(ctx context.Context) ([]domain.AlertRu
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan enabled alert rule: %w", err)
 		}
+		rule.MetricPath = strVal(metricPath)
+		rule.Operator = domain.AlertOperator(strVal(operator))
+		rule.TargetStatus = domain.ApplicationStatus(strVal(targetStatus))
 		rules = append(rules, rule)
 	}
 

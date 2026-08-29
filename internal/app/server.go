@@ -145,6 +145,15 @@ func RunServer() error {
 	auditLogService := auditlog.NewService(auditLogRepo)
 	alertService := alert.NewService(alertRuleRepo, alertHistoryRepo)
 
+	// Rebuild role→permission grants on EVERY boot, not only on first-boot
+	// seeding. SyncPermissions is idempotent (upserts roles/permissions and
+	// rebuilds the role_has_permissions pivot in one transaction), so existing
+	// DBs pick up newly added permissions (e.g. alert_read/alert_write)
+	// without a fresh install or a dedicated migration.
+	if err := roleService.SyncPermissions(ctx); err != nil {
+		return fmt.Errorf("sync permissions: %w", err)
+	}
+
 	// Auto-seed the admin user (Laravel-style seeding, like auto-migrate).
 	// The .env (ADMIN_EMAIL / ADMIN_PASSWORD) seeds the admin on FIRST boot.
 	// If the user already exists we do NOT touch it — the password belongs
@@ -157,10 +166,7 @@ func RunServer() error {
 			return errors.New("auto-seed: ADMIN_PASSWORD is empty (set it in the instance .env, or run `horizonx install server`)")
 		}
 		if _, err := userRepo.GetByEmail(ctx, cfg.AdminEmail); errors.Is(err, domain.ErrUserNotFound) {
-			log.Info("auto-seeding roles + admin user", "email", cfg.AdminEmail)
-			if err := roleService.SyncPermissions(ctx); err != nil {
-				return fmt.Errorf("auto-seed: sync permissions: %w", err)
-			}
+			log.Info("auto-seeding admin user", "email", cfg.AdminEmail)
 			req := domain.UserSaveRequest{
 				Name:     "Admin",
 				Email:    cfg.AdminEmail,

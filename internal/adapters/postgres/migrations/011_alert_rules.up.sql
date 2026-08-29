@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS alert_rules (
     app_id        BIGINT NULL,
     source        TEXT NOT NULL CHECK (source IN ('metric', 'health', 'offline')),
     metric_path   TEXT NULL,
-    operator      TEXT NULL CHECK (operator IN ('>', '>=', '<', '<=')),
+    operator      TEXT NULL,
     threshold     DOUBLE PRECISION NULL,
     target_status TEXT NULL,
     for_duration  INT NOT NULL DEFAULT 0,
