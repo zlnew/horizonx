@@ -521,7 +521,7 @@ var latestDashboardRelease = func() (dashboardRelease, error) {
 
 // downloadFile fetches url into path (overwrites). Returns the bytes written.
 func downloadFile(url, path string) (int64, error) {
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(url)
 	if err != nil {
 		return 0, err
