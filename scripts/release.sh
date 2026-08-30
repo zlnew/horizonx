@@ -2,9 +2,9 @@
 # Build + publish a HorizonX CLI release.
 #
 # Usage:
-#   scripts/release.sh minor              # bump + build, verify, publish
+#   scripts/release.sh patch              # bump + build, verify, publish
 #   scripts/release.sh v0.3.5            # explicit version (same as before)
-#   scripts/release.sh minor --dry-run   # build + verify only, no publish
+#   scripts/release.sh patch --dry-run   # build + verify only, no publish
 #
 # Version semantics (semver 2.0.0, resolved from the latest git tag):
 #   major  = breaking change (incompatible agent/server protocol, config
@@ -16,8 +16,7 @@
 #   Explicit vX.Y.Z skips resolution and publishes exactly that version.
 #
 # Requires:
-#   - the horizonx-server dev container (Go toolchain) — name can be
-#     overridden with HX_BUILD_CONTAINER
+#   - docker (pulls golang:1.25-alpine on first run)
 #   - gh CLI authenticated for zlnew/horizonx
 #
 # Contracts (do NOT break these — install.sh + upgrade.go depend on them):
@@ -33,11 +32,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
 REPO_ROOT="$PWD"
 
-# The branch releases tag. Default main, but this repo's flow ships FROM
-# develop (PRs merge to develop; main is a stale mirror). Without an
-# explicit target, gh release create tags origin/main — the tags for
-# v0.5.0 landed on a pre-A-track commit because of exactly that (caught
-# 2026-08-08). Run releases from develop and say so.
+# The branch releases tag. Default current branch.
 RELEASE_BRANCH="${RELEASE_BRANCH:-$(git branch --show-current)}"
 echo "== release target branch: $RELEASE_BRANCH =="
 
@@ -81,13 +76,14 @@ esac
 [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "resolved version invalid: $VERSION" >&2; exit 2; }
 
 REPO="zlnew/horizonx"
-CONTAINER="${HX_BUILD_CONTAINER:-horizonx-server}"
 OUT="/tmp/hx-release-${VERSION}"
 TARGETS=("linux x86_64 amd64" "linux arm64 arm64" "darwin x86_64 amd64" "darwin arm64 arm64")
+BUILD_IMAGE="golang:1.25-alpine"
+BUILD_CONTAINER="hx-build-$$"
 
 # -- preflight ---------------------------------------------------------------
 echo "== preflight =="
-docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || { echo "dev container $CONTAINER not running (start with docker compose up -d)" >&2; exit 1; }
+command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
 command -v gh >/dev/null || { echo "gh CLI required" >&2; exit 1; }
 
 if [ -z "$DRY_RUN" ]; then
@@ -97,25 +93,38 @@ fi
 
 # -- build -------------------------------------------------------------------
 echo ""
-echo "== 1. cross-compile ${#TARGETS[@]} targets (in $CONTAINER) =="
+echo "== 1. cross-compile ${#TARGETS[@]} targets =="
 rm -rf "$OUT" && mkdir -p "$OUT"
-docker exec -w /app "$CONTAINER" sh -c '
+
+# Spin up a temporary build container, compile all targets, tear down.
+echo "  starting build container ($BUILD_IMAGE)…"
+docker run -d --name "$BUILD_CONTAINER" \
+  -v "$REPO_ROOT:/src" -w /src \
+  --entrypoint "" \
+  "$BUILD_IMAGE" sleep 3600 >/dev/null
+
+cleanup() { docker rm -f "$BUILD_CONTAINER" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+docker exec "$BUILD_CONTAINER" sh -c '
   set -e
+  apk add --no-cache git >/dev/null 2>&1 || true
+  git config --global --add safe.directory /src || true
   mkdir -p /tmp/hx-rel
-  rm -f /tmp/hx-rel/* 2>/dev/null || true
   for t in '"$(printf '%q ' "${TARGETS[@]}")"'; do
     set -- $t
     os=$1; arch=$2; goarch=$3
     echo "  -- ${os}/${arch}"
     CGO_ENABLED=0 GOOS=$os GOARCH=$goarch \
-      go build -trimpath -ldflags "-X horizonx/internal/version.Version='"$VERSION"'" \
+      go build -trimpath -ldflags "-s -w -X horizonx/internal/version.Version='"$VERSION"'" \
       -o "/tmp/hx-rel/horizonx-${os}-${arch}" ./cmd/horizonx
   done
 '
+
 for pair in "${TARGETS[@]}"; do
   set -- $pair
   os=$1; arch=$2
-  docker cp "$CONTAINER:/tmp/hx-rel/horizonx-${os}-${arch}" "$OUT/"
+  docker cp "$BUILD_CONTAINER:/tmp/hx-rel/horizonx-${os}-${arch}" "$OUT/"
 done
 
 # -- package -----------------------------------------------------------------
