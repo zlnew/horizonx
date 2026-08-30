@@ -22,7 +22,7 @@ import (
 const (
 	githubAPI   = "https://api.github.com/repos/zlnew/horizonx/releases/latest"
 	githubDL    = "https://github.com/zlnew/horizonx/releases/latest/download"
-	upgradeTime = 60 * time.Second
+	upgradeTime = 5 * time.Minute
 )
 
 // restartServiceFn is the indirection point for the unit restart, so tests
