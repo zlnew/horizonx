@@ -2,6 +2,7 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -63,11 +64,13 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	metricsReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermMetricsRead))
 
+	demoGuard := middleware.DemoGuard(cfg.DemoMode, "This action is disabled in public demo sandbox mode.")
+
 	serverReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermServerRead))
 	serverWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermServerWrite))
 
 	memberReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermMemberRead))
-	memberWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermMemberWrite))
+	memberWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermMemberWrite), demoGuard)
 
 	appReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppRead))
 	appWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAppWrite))
@@ -87,6 +90,20 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// HEALTH
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
+	})
+
+	// SYSTEM & RUNTIME CONFIG (public endpoint for client/dashboard features)
+	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"demo_mode": cfg.DemoMode,
+		})
+	})
+	mux.HandleFunc("GET /auth/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"demo_mode": cfg.DemoMode,
+		})
 	})
 
 	// P2-14: Prometheus scrape endpoint. Public (no auth) — exposes only
@@ -131,10 +148,10 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 
 	// SERVERS
 	mux.Handle("GET /servers", serverReadStack.ThenFunc(deps.Server.Index))
-	mux.Handle("POST /servers", serverWriteStack.ThenFunc(deps.Server.Store))
+	mux.Handle("POST /servers", serverWriteStack.Extend(demoGuard).ThenFunc(deps.Server.Store))
 	mux.Handle("PUT /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Update))
-	mux.Handle("DELETE /servers/{id}", serverWriteStack.ThenFunc(deps.Server.Destroy))
-	mux.Handle("POST /servers/{id}/rotate-secret", serverWriteStack.ThenFunc(deps.Server.RotateSecret))
+	mux.Handle("DELETE /servers/{id}", serverWriteStack.Extend(demoGuard).ThenFunc(deps.Server.Destroy))
+	mux.Handle("POST /servers/{id}/rotate-secret", serverWriteStack.Extend(demoGuard).ThenFunc(deps.Server.RotateSecret))
 	mux.Handle("POST /servers/{id}/ping", serverWriteStack.ThenFunc(deps.Server.Ping))
 
 	// SERVER METRICS
@@ -143,8 +160,8 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("GET /servers/{id}/metrics/net-speed-history", metricsReadStack.ThenFunc(deps.Metrics.NetSpeedHistory))
 
 	// ACCOUNT
-	mux.Handle("POST /account/profile", userStack.ThenFunc(deps.Account.Profile))
-	mux.Handle("POST /account/password", userStack.ThenFunc(deps.Account.Password))
+	mux.Handle("POST /account/profile", userStack.Extend(demoGuard).ThenFunc(deps.Account.Profile))
+	mux.Handle("POST /account/password", userStack.Extend(demoGuard).ThenFunc(deps.Account.Password))
 	mux.Handle("GET /account/sessions", userStack.ThenFunc(deps.Account.Sessions))
 	mux.Handle("DELETE /account/sessions/{id}", userStack.ThenFunc(deps.Account.RevokeSession))
 	mux.Handle("POST /account/sessions/revoke-others", userStack.ThenFunc(deps.Account.RevokeOtherSessions))
@@ -162,9 +179,9 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /applications/{id}/logs/tail", appReadStack.ThenFunc(deps.Application.TailLogs))
 	mux.Handle("POST /applications/{id}/logs/tail/stop", appReadStack.ThenFunc(deps.Application.StopTailLogs))
 	mux.Handle("POST /applications/{id}/logs/query", appReadStack.ThenFunc(deps.Application.QueryLogs))
-	mux.Handle("POST /applications", appWriteStack.ThenFunc(deps.Application.Store))
+	mux.Handle("POST /applications", appWriteStack.Extend(demoGuard).ThenFunc(deps.Application.Store))
 	mux.Handle("PUT /applications/{id}", appWriteStack.ThenFunc(deps.Application.Update))
-	mux.Handle("DELETE /applications/{id}", appWriteStack.ThenFunc(deps.Application.Destroy))
+	mux.Handle("DELETE /applications/{id}", appWriteStack.Extend(demoGuard).ThenFunc(deps.Application.Destroy))
 
 	// APPLICATION ACTIONS
 	mux.Handle("POST /applications/{id}/deploy", appWriteStack.ThenFunc(deps.Application.Deploy))

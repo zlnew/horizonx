@@ -18,9 +18,9 @@ func (c *Chain) Use(mw Middleware) *Chain {
 	return c
 }
 
-func (c *Chain) Extend(mw Middleware) *Chain {
+func (c *Chain) Extend(mws ...Middleware) *Chain {
 	newMiddlewares := append([]Middleware{}, c.middlewares...)
-	newMiddlewares = append(newMiddlewares, mw)
+	newMiddlewares = append(newMiddlewares, mws...)
 	return &Chain{middlewares: newMiddlewares}
 }
 

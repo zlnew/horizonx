@@ -58,6 +58,11 @@ type Config struct {
 	// box is directly exposed, where a spoofed XFF must not bypass the
 	// limiter.
 	TrustProxy bool
+
+	// DemoMode locks down destructive administrative actions (e.g. password
+	// changes, server deletion, user management, application deletion)
+	// for public sandbox demo instances.
+	DemoMode bool
 }
 
 func Load() *Config {
@@ -158,6 +163,12 @@ func Load() *Config {
 		trustProxy = raw == "1" || raw == "true" || raw == "yes"
 	}
 
+	// DEMO_MODE: locks down destructive mutations for public sandbox demo.
+	demoMode := false
+	if raw := strings.ToLower(os.Getenv("DEMO_MODE")); raw != "" {
+		demoMode = raw == "1" || raw == "true" || raw == "yes"
+	}
+
 	return &Config{
 		AppEnv: appEnv,
 
@@ -190,6 +201,7 @@ func Load() *Config {
 		RedisPassword: redisPassword,
 		RedisDB:       redisDB,
 		TrustProxy:    trustProxy,
+		DemoMode:      demoMode,
 	}
 }
 
