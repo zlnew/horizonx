@@ -125,6 +125,7 @@ func RunServer() error {
 	settingsRepo := postgres.NewSettingsRepository(dbPool)
 	alertRuleRepo := postgres.NewAlertRuleRepository(dbPool)
 	alertHistoryRepo := postgres.NewAlertHistoryRepository(dbPool)
+	retentionRepo := postgres.NewRetentionRepository(dbPool)
 
 	// Services
 	logService := logSvc.NewService(logRepo, bus)
@@ -327,6 +328,9 @@ func RunServer() error {
 		Server:      serverService,
 		Metrics:     metricsService,
 		Application: applicationService,
+		Retention:   retentionRepo,
+		JobTTL:      cfg.JobRetention,
+		LogTTL:      cfg.LogRetention,
 	})
 	wManager.Start(runtimeCtx)
 
