@@ -89,13 +89,12 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 		w.Write([]byte("OK"))
 	})
 
-	// P2-14: Prometheus scrape endpoint. Public (no auth) — exposes only
-	// operational counters, no sensitive data. Refresh gauges before serving.
+	// P2-14: Prometheus scrape endpoint. Serves already-computed gauge
+	// values — gauges refresh on a background interval inside the
+	// registry, never synchronously on scrape. Requires an authenticated
+	// user session with the metrics_read permission.
 	if deps.MetricsRegistry != nil {
-		mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			deps.MetricsRegistry.Refresh()
-			deps.MetricsRegistry.Handler().ServeHTTP(w, r)
-		}))
+		mux.Handle("GET /metrics", metricsReadStack.Then(deps.MetricsRegistry.Handler()))
 	}
 
 	// WEBSOCKET
