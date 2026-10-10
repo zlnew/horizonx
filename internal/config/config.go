@@ -30,6 +30,11 @@ type Config struct {
 	AgentServerID       uuid.UUID
 	AgentJobWorkerCount int
 
+	// Retention TTLs for the ever-growing jobs/logs tables (parsed from
+	// JOB_RETENTION_DAYS / LOG_RETENTION_DAYS, defaults 30 / 14).
+	JobRetention time.Duration
+	LogRetention time.Duration
+
 	// P2-15: optional webhook notified on deployment events.
 	// Discord-style: POSTed a JSON payload with a text content field.
 	WebhookURL string
@@ -122,6 +127,20 @@ func Load() *Config {
 		}
 	}
 
+	jobRetention := 30 * 24 * time.Hour
+	if raw := os.Getenv("JOB_RETENTION_DAYS"); raw != "" {
+		if days, err := strconv.Atoi(raw); err == nil && days > 0 {
+			jobRetention = time.Duration(days) * 24 * time.Hour
+		}
+	}
+
+	logRetention := 14 * 24 * time.Hour
+	if raw := os.Getenv("LOG_RETENTION_DAYS"); raw != "" {
+		if days, err := strconv.Atoi(raw); err == nil && days > 0 {
+			logRetention = time.Duration(days) * 24 * time.Hour
+		}
+	}
+
 	// P2-15: optional webhook (e.g. Discord) notified on deploy events.
 	webhookURL := getEnv("WEBHOOK_URL", "")
 
@@ -176,6 +195,9 @@ func Load() *Config {
 		AgentServerAPIToken: agentServerAPIToken,
 		AgentServerID:       agentServerID,
 		AgentJobWorkerCount: agentJobWorkerCount,
+
+		JobRetention: jobRetention,
+		LogRetention: logRetention,
 
 		WebhookURL: webhookURL,
 
