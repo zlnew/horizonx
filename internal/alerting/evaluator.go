@@ -3,13 +3,16 @@
 // channels). It is event-driven: no polling, no timers. Rules are re-read
 // from the repository per event, so edits and silences apply without restart.
 //
-// State tracking is per (rule, server, app) and in-memory:
+// State tracking is per (rule, server, app) and mostly in-memory:
 //   - breachStart: when the condition first breached, for for_duration debounce
 //   - firing: the alert_history id of the currently-firing alert (if any)
 //   - lastFire: when the rule last fired, for cooldown spacing
 //
-// A server restart resets this cache; a sustained breach simply re-evaluates
-// and re-arms on the next event (acceptable for a personal control plane).
+// firing and lastFire are rehydrated from alert_history at startup (see
+// rehydrate): rows still in state='firing' reseed both maps, so a restart
+// mid-breach neither inserts a duplicate firing row nor bypasses cooldown,
+// and a later clear resolves the original row. breachAt (debounce progress)
+// stays in-memory only; a restart simply restarts the for_duration window.
 package alerting
 
 import (
@@ -38,6 +41,13 @@ type HistoryWriter interface {
 	Resolve(ctx context.Context, historyID int64) error
 }
 
+// HistoryReader reads currently-active alert rows for startup rehydration.
+// Implemented by the postgres AlertHistoryRepository (ListActive). Kept
+// separate from HistoryWriter so the write interface stays narrow.
+type HistoryReader interface {
+	ListActive(ctx context.Context, opts domain.AlertHistoryListOptions) ([]*domain.AlertHistory, int64, error)
+}
+
 // alertKey uniquely identifies the alert group a rule fires for.
 type alertKey struct {
 	ruleID   int64
@@ -55,10 +65,11 @@ func (k alertKey) appIDPtr() *int64 {
 }
 
 type Evaluator struct {
-	bus      *event.Bus
-	log      logger.Logger
-	provider RuleProvider
-	history  HistoryWriter
+	bus           *event.Bus
+	log           logger.Logger
+	provider      RuleProvider
+	history       HistoryWriter
+	historyReader HistoryReader
 
 	// now is injectable for deterministic debounce/cooldown tests.
 	now func() time.Time
@@ -92,6 +103,13 @@ func (e *Evaluator) WithHistory(h HistoryWriter) *Evaluator {
 	return e
 }
 
+// WithHistoryReader wires the active-alert source used to rehydrate the
+// dedup cache at startup (optional; without it Start skips rehydration).
+func (e *Evaluator) WithHistoryReader(r HistoryReader) *Evaluator {
+	e.historyReader = r
+	return e
+}
+
 // withClock overrides the time source (tests only).
 func (e *Evaluator) withClock(f func() time.Time) *Evaluator {
 	e.now = f
@@ -103,6 +121,7 @@ func (e *Evaluator) withClock(f func() time.Time) *Evaluator {
 //   - server_status_changed   (domain.EventServerStatusChanged, online/offline)
 //   - app_healths             (domain.EventApplicationHealthReported, ~30s)
 func (e *Evaluator) Start() {
+	e.rehydrate()
 	e.bus.Subscribe("server_metrics_received", func(event any) {
 		if m, ok := event.(domain.Metrics); ok {
 			e.HandleMetrics(m)
@@ -118,6 +137,62 @@ func (e *Evaluator) Start() {
 			e.HandleHealth(evt)
 		}
 	})
+}
+
+// rehydrate reseeds the firing/lastFire dedup cache from alert_history rows
+// still in state='firing', so a restart mid-breach neither inserts a
+// duplicate firing row nor bypasses cooldown, and a later clear resolves the
+// original row. A read failure logs and continues with empty maps; it never
+// breaks boot or alerting.
+func (e *Evaluator) rehydrate() {
+	if e.historyReader == nil {
+		return
+	}
+	const rehydrateLimit = 1000
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, total, err := e.historyReader.ListActive(ctx, domain.AlertHistoryListOptions{
+		ListOptions: domain.ListOptions{Limit: rehydrateLimit},
+	})
+	if err != nil {
+		e.log.Error("alerting: failed to rehydrate active alerts", "error", err)
+		return
+	}
+	if total > int64(len(rows)) {
+		e.log.Warn("alerting: active alert list truncated during rehydrate", "returned", len(rows), "total", total)
+	}
+	byKey := make(map[alertKey][]*domain.AlertHistory)
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		var appID int64
+		hasApp := row.AppID != nil
+		if hasApp {
+			appID = *row.AppID
+		}
+		key := alertKey{ruleID: row.RuleID, serverID: row.ServerID, appID: appID, hasApp: hasApp}
+		byKey[key] = append(byKey[key], row)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for key, dupes := range byKey {
+		oldest := dupes[0]
+		for _, row := range dupes[1:] {
+			if row.ID < oldest.ID {
+				oldest = row
+			}
+		}
+		if len(dupes) > 1 {
+			e.log.Warn("alerting: duplicate active alerts for key, keeping oldest",
+				"rule_id", key.ruleID, "server_id", key.serverID, "app_id", key.appID, "has_app", key.hasApp,
+				"count", len(dupes), "kept_id", oldest.ID)
+		}
+		e.firing[key] = oldest.ID
+		if !oldest.FirstFiredAt.IsZero() {
+			e.lastFire[key] = oldest.FirstFiredAt
+		}
+	}
 }
 
 // HandleMetrics evaluates metric rules against a metrics broadcast.

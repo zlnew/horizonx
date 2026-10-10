@@ -220,6 +220,7 @@ func RunServer() error {
 	alerting.New(bus, log).
 		WithProvider(alertRuleRepo).
 		WithHistory(alertHistoryRepo).
+		WithHistoryReader(alertHistoryRepo).
 		Start()
 
 	// P3-19: audit log — record deploy/app/server events.
