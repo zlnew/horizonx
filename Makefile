@@ -71,6 +71,12 @@ check: vet test-unit build
 # 4858/4859 to be free (the local HorizonX dev stack occupies them).
 check-all: vet test build
 
+# test-integration runs the opt-in Postgres migration integration test.
+# Requires Docker and the postgres:16-alpine image. Intentionally NOT part
+# of check/check-all: it spins up a throwaway container (never personal-postgres).
+test-integration:
+	go test -tags=integration ./internal/adapters/postgres/... -count=1
+
 help:
 	@echo "Available targets:"
 	@echo "  build      - compile all binaries into $(BIN_DIR)/"
@@ -84,6 +90,7 @@ help:
 	@echo "  mocks      - mockery (requires installed binary)"
 	@echo "  check      - vet + test-unit + build (hermetic local gate)"
 	@echo "  check-all  - vet + test + build (CI parity; needs 4858/4859 free)"
+	@echo "  test-integration - migration integration test (Docker; NOT in check)"
 	@echo "  help       - print this message"
 
-.PHONY: build fmt fmt-check vet test test-unit race lint mocks check check-all help
+.PHONY: build fmt fmt-check vet test test-unit test-integration race lint mocks check check-all help
