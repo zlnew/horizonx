@@ -75,6 +75,10 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	alertReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAlertRead))
 	alertWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermAlertWrite))
 
+	logReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermLogRead))
+	jobReadStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermJobRead))
+	jobWriteStack := userStack.Extend(middleware.Permission(deps.RoleService, domain.PermJobWrite))
+
 	// P1-10: brute-force guard on the public login endpoint — 5 attempts per
 	// IP per minute, then HTTP 429. With TRUST_PROXY the key is the real
 	// client IP from X-Forwarded-For (Cloudflare tunnel); otherwise the
@@ -116,17 +120,17 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	mux.Handle("POST /agent/deployments/{id}/commit-info", agentStack.ThenFunc(deps.Deployment.UpdateCommitInfo))
 
 	// LOGS
-	mux.Handle("GET /logs", userStack.ThenFunc(deps.Log.Index))
+	mux.Handle("GET /logs", logReadStack.ThenFunc(deps.Log.Index))
 
 	// JOBS
-	mux.Handle("GET /jobs", userStack.ThenFunc(deps.Job.Index))
-	mux.Handle("GET /jobs/{id}", userStack.ThenFunc(deps.Job.Show))
+	mux.Handle("GET /jobs", jobReadStack.ThenFunc(deps.Job.Index))
+	mux.Handle("GET /jobs/{id}", jobReadStack.ThenFunc(deps.Job.Show))
 
 	// P2-17: queue depth summary (no pagination — tiny fixed-size response).
-	mux.Handle("GET /jobs/summary", userStack.ThenFunc(deps.Job.Summary))
+	mux.Handle("GET /jobs/summary", jobReadStack.ThenFunc(deps.Job.Summary))
 
 	// v0.3.13 Track C: re-queue a failed/expired job with its original payload.
-	mux.Handle("POST /jobs/{id}/retry", userStack.ThenFunc(deps.Job.Retry))
+	mux.Handle("POST /jobs/{id}/retry", jobWriteStack.ThenFunc(deps.Job.Retry))
 
 	// SERVERS
 	mux.Handle("GET /servers", serverReadStack.ThenFunc(deps.Server.Index))

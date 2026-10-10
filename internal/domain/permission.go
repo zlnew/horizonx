@@ -21,4 +21,8 @@ const (
 
 	PermAlertRead  PermissionConst = "alert_read"
 	PermAlertWrite PermissionConst = "alert_write"
+
+	PermLogRead  PermissionConst = "log_read"
+	PermJobRead  PermissionConst = "job_read"
+	PermJobWrite PermissionConst = "job_write"
 )
