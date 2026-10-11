@@ -227,6 +227,52 @@ func dashboardCacheDir(root string) string {
 // `install server` and `upgrade` so both commands apply the instance
 // identically: validate compose → up postgres/redis → build server from the
 // pinned release → dashboard best-effort → health poll → live banner.
+// versionManifestName is the file recording the releases installed together.
+const versionManifestName = "VERSIONS"
+
+// effectiveServerVersion is the server release the instance was built from,
+// which is not always the binary's own version: a dev build leaves HX_VERSION
+// unset, so the generated Dockerfile falls back to releases/latest.
+func effectiveServerVersion() string {
+	if strings.HasPrefix(version.Version, "v") {
+		return version.Version
+	}
+	return "latest"
+}
+
+// dashboardVersionFromTarball recovers the release tag from a dashboard image
+// tarball name, e.g. horizonx-dashboard-v0.7.1-image.tar.gz -> v0.7.1. Falls
+// back to the bare name so an operator-provided --tarball-dir file still gets
+// recorded rather than silently dropped.
+func dashboardVersionFromTarball(name string) string {
+	const prefix = "horizonx-dashboard-"
+	const suffix = "-image.tar.gz"
+	if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
+		if tag := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix); tag != "" {
+			return tag
+		}
+	}
+	return name
+}
+
+// writeVersionManifest records the server and dashboard releases installed
+// together. Deliberately best-effort: a failure to write it must never fail an
+// install that is otherwise healthy, so the caller warns instead.
+func writeVersionManifest(root, serverVersion, dashboardVersion string) error {
+	if dashboardVersion == "" {
+		dashboardVersion = "unknown (dashboard image not installed)"
+	}
+	body := fmt.Sprintf(`# Recorded by 'horizonx install server' (%s).
+# The server and the dashboard are released independently: the server is pinned
+# to the installer's own version, while the dashboard image follows its own
+# latest release. These are the versions installed together.
+server=%s
+dashboard=%s
+`, time.Now().UTC().Format(time.RFC3339), serverVersion, dashboardVersion)
+
+	return os.WriteFile(filepath.Join(root, versionManifestName), []byte(body), 0o644)
+}
+
 func applyInstance(l *InstanceLayout, opts InstallServerOptions) error {
 	host := opts.Host
 	if host == "" {
@@ -289,11 +335,13 @@ func applyInstance(l *InstanceLayout, opts InstallServerOptions) error {
 	//     a missing dashboard can never take down the control plane. The
 	//     tarball + SHA256SUMS are cached under /var/cache/horizonx (not in
 	//     the instance — they're transport artifacts, not runtime state).
+	dashboardVersion := ""
 	if tarball, err := fetchDashboardTarballFrom(dashboardCacheDir(l.Root), tarballDirOrDefault(opts.TarballDir)); err != nil {
 		fmt.Printf("  ⚠ dashboard image not available: %v\n", err)
 		fmt.Println("    The control plane is up; add the dashboard later:")
 		fmt.Println("      docker compose -f " + filepath.Join(l.Root, "docker-compose.yml") + " up -d dashboard")
 	} else {
+		dashboardVersion = dashboardVersionFromTarball(filepath.Base(tarball))
 		fmt.Printf("  loading dashboard image (%s)…\n", filepath.Base(tarball))
 		if err := loadDockerImage(tarball); err != nil {
 			fmt.Printf("  ⚠ dashboard image load failed: %v (dashboard will be skipped)\n", err)
@@ -302,6 +350,15 @@ func applyInstance(l *InstanceLayout, opts InstallServerOptions) error {
 		} else {
 			fmt.Println("  dashboard started")
 		}
+	}
+
+	// 4c. Record which pair was installed. The server is pinned to this
+	// binary's release while the dashboard image follows its own release train,
+	// so "which version is this instance" has two answers and nothing else ties
+	// them to one install. Without this file the combination in a bug report is
+	// unknowable after the fact.
+	if err := writeVersionManifest(l.Root, effectiveServerVersion(), dashboardVersion); err != nil {
+		fmt.Printf("  ⚠ could not record %s: %v\n", versionManifestName, err)
 	}
 
 	// 5. Verify — poll the control plane health endpoint.
