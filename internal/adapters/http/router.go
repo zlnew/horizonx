@@ -55,8 +55,8 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	}
 
 	userStack := middleware.New()
-	userStack.Use(middleware.JWT(cfg, deps.SessionStore))
-	userStack.Use(middleware.CSRF(cfg))
+	userStack.Use(middleware.JWT(cfg, deps.SessionStore, deps.Logger))
+	userStack.Use(middleware.CSRF(cfg, deps.Logger))
 
 	agentStack := middleware.New()
 	agentStack.Use(middleware.Agent(deps.ServerService, deps.Logger))
@@ -83,7 +83,7 @@ func NewRouter(cfg *config.Config, deps *RouterDeps) http.Handler {
 	// IP per minute, then HTTP 429. With TRUST_PROXY the key is the real
 	// client IP from X-Forwarded-For (Cloudflare tunnel); otherwise the
 	// tunnel's address.
-	loginLimiter := ratelimit.New(5, time.Minute)
+	loginLimiter := ratelimit.New(5, time.Minute, deps.Logger)
 	loginStack := middleware.New().Use(loginLimiter.Middleware(func(r *http.Request) string {
 		return ratelimit.RealClientIP(r, cfg.TrustProxy)
 	}))

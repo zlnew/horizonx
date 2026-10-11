@@ -87,7 +87,7 @@ func TestJWT_ValidSessionPasses(t *testing.T) {
 	}
 	token := makeToken(t, cfg, claims)
 
-	handler := JWT(cfg, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWT(cfg, store, stubMiddlewareLogger{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userCtx, ok := domain.GetUserContext(r.Context())
 		assert.True(t, ok)
 		assert.Equal(t, int64(7), userCtx.ID)
@@ -117,7 +117,7 @@ func TestJWT_RevokedSessionRejected(t *testing.T) {
 	}
 	token := makeToken(t, cfg, claims)
 
-	handler := JWT(cfg, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWT(cfg, store, stubMiddlewareLogger{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -145,7 +145,7 @@ func TestJWT_SessionUserMismatchRejected(t *testing.T) {
 	}
 	token := makeToken(t, cfg, claims)
 
-	handler := JWT(cfg, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWT(cfg, store, stubMiddlewareLogger{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -172,7 +172,7 @@ func TestJWT_NoSessionIDSkipsCheck(t *testing.T) {
 	}
 	token := makeToken(t, cfg, claims)
 
-	handler := JWT(cfg, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := JWT(cfg, store, stubMiddlewareLogger{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
