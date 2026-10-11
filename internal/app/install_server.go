@@ -600,10 +600,24 @@ func fetchDashboardTarball(dir string) (string, error) {
 	sumsPath := filepath.Join(dir, "SHA256SUMS")
 
 	// Reuse an existing tarball only when it passes the release checksum.
+	// The sums are verified through verifyFetchedSums so the signature is
+	// checked first whenever a release public key is configured — the cache
+	// path is just as reachable as the fresh-download path below.
 	if _, err := os.Stat(tarballPath); err == nil && rel.SHAURL != "" {
 		if _, err := downloadFile(rel.SHAURL, sumsPath); err == nil {
-			if sums, rerr := os.ReadFile(sumsPath); rerr == nil && verifySHA256SUMS(tarballPath, string(sums)) == nil {
-				return tarballPath, nil
+			if sums, rerr := os.ReadFile(sumsPath); rerr == nil {
+				verr := verifyFetchedSums(rel.SHAURL, sums)
+				if verr == nil && verifySHA256SUMS(tarballPath, string(sums)) == nil {
+					return tarballPath, nil
+				}
+				// A cached tarball whose sums fail the signature check must
+				// not be silently accepted OR silently re-downloaded as if
+				// unsigned: fail closed so a substituted sums file aborts.
+				// (A mere checksum mismatch with a VALID signature falls
+				// through to the fresh download below.)
+				if verr != nil && os.Getenv(envReleasePubkey) != "" {
+					return "", verr
+				}
 			}
 		}
 	}
@@ -620,11 +634,42 @@ func fetchDashboardTarball(dir string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if err := verifyFetchedSums(rel.SHAURL, sums); err != nil {
+			return "", err
+		}
 		if err := verifySHA256SUMS(tarballPath, string(sums)); err != nil {
 			return "", err
 		}
 	}
 	return tarballPath, nil
+}
+
+// verifyFetchedSums verifies the minisign signature for already-fetched
+// SHA256SUMS bytes, downloading SHA256SUMS.minisig from sigBaseURL+".minisig"
+// (the signature asset published next to the sums). With no
+// HORIZONX_RELEASE_PUBKEY configured it returns nil without fetching
+// anything, preserving today's unsigned behaviour. Single seam so both the
+// cached-tarball path and the fresh-download path in fetchDashboardTarball
+// fail closed identically.
+func verifyFetchedSums(sigBaseURL string, sums []byte) error {
+	if os.Getenv(envReleasePubkey) == "" {
+		return nil
+	}
+	sigFile, err := os.CreateTemp("", "horizonx-SHA256SUMS.minisig-*")
+	if err != nil {
+		return err
+	}
+	sigPath := sigFile.Name()
+	sigFile.Close()
+	if _, err := downloadFile(sigBaseURL+".minisig", sigPath); err != nil {
+		return fmt.Errorf("download release signature: %v", err)
+	}
+	defer os.Remove(sigPath)
+	sig, err := os.ReadFile(sigPath)
+	if err != nil {
+		return err
+	}
+	return VerifyReleaseSums(sums, sig)
 }
 
 // loadDockerImage runs `docker load -i tarball` (best-effort check via the
