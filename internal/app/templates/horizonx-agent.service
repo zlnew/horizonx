@@ -30,7 +30,13 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/horizonx /etc/horizonx
+# Only the apps workdir is writable. /etc/horizonx is deliberately NOT here:
+# it holds agent.env (this agent's API token) and, on single-box installs, the
+# server's .env (DATABASE_URL, JWT_SECRET, the encryption key). The agent only
+# reads its env at start — the installer writes it under sudo — so granting
+# write access would let a compromised agent rewrite its own credentials, or
+# the server's.
+ReadWritePaths=/var/lib/horizonx
 
 [Install]
 WantedBy=multi-user.target
