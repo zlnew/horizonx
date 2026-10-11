@@ -256,7 +256,7 @@ func RunServer() error {
 	accountHandler := http.NewAccountHandler(accountService, jsonDecoder, jsonWriter, validator)
 	userHandler := http.NewUserHandler(userService, authService, jsonDecoder, jsonWriter, validator)
 	jobHandler := http.NewJobHandler(jobService, jsonDecoder, jsonWriter, validator)
-	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
+	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator, metricsRegistry)
 	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
 	applicationHandler := http.NewApplicationHandler(applicationService, trackedLogs, jsonDecoder, jsonWriter, validator)
 	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)

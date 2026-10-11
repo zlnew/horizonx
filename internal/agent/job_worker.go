@@ -21,6 +21,8 @@ type JobWorker struct {
 	httpClient *HttpClient
 	executor   *executor.Executor
 
+	droppedMessagesFunc func() int64
+
 	// appLocks serializes jobs that touch the same application workdir
 	// (P1-7). Two deploys — or a deploy and a stop — for the same app must
 	// never run concurrently: they share a directory and docker project.
@@ -36,6 +38,44 @@ func NewJobWorker(cfg *config.Config, log logger.Logger, httpClient HttpClient, 
 		executor:   &executor,
 		appLocks:   newKeyedMutex(),
 	}
+}
+
+// SetDroppedMessagesFunc injects the agent's drop-counter getter. A nil
+// func is treated as "zero" and never panics.
+func (w *JobWorker) SetDroppedMessagesFunc(f func() int64) {
+	w.droppedMessagesFunc = f
+}
+
+func (w *JobWorker) droppedCount() int64 {
+	if w == nil || w.droppedMessagesFunc == nil {
+		return 0
+	}
+	return w.droppedMessagesFunc()
+}
+
+func (w *JobWorker) stampDroppedMessages(m *domain.Metrics) {
+	if m == nil {
+		return
+	}
+	m.DroppedMessages = w.droppedCount()
+}
+
+// subscribeMetrics registers the metrics forwarding handler. Extracted from
+// Start so a test can drive the bus and prove the drop count is actually
+// stamped onto the outgoing payload — without this seam, deleting the stamp
+// is a silent regression that no other test would catch.
+func (w *JobWorker) subscribeMetrics(ctx context.Context, bus *event.Bus) {
+	bus.Subscribe("metrics", func(event any) {
+		metrics, ok := event.(*domain.Metrics)
+		if !ok {
+			return
+		}
+
+		w.stampDroppedMessages(metrics)
+		if err := w.httpClient.SendMetrics(ctx, metrics); err != nil {
+			w.log.Error("failed to send metrics", "error", err)
+		}
+	})
 }
 
 func (w *JobWorker) Start(ctx context.Context) error {
@@ -206,16 +246,7 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 
 	bus := event.New()
 
-	bus.Subscribe("metrics", func(event any) {
-		metrics, ok := event.(*domain.Metrics)
-		if !ok {
-			return
-		}
-
-		if err := w.httpClient.SendMetrics(ctx, metrics); err != nil {
-			w.log.Error("failed to send metrics", "error", err)
-		}
-	})
+	w.subscribeMetrics(ctx, bus)
 
 	bus.Subscribe("app_healths", func(event any) {
 		reports, ok := event.([]domain.ApplicationHealth)

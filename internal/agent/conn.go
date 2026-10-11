@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"horizonx/internal/agent/logstream"
@@ -20,19 +21,27 @@ import (
 )
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
+	writeWait  = 10 * time.Second
+	pongWait   = 60 * time.Second
+	pingPeriod = (pongWait * 9) / 10
 	// Server→agent commands can carry log batches in A2 (hundreds of KB);
 	// the server's agentws socket allows 256KB inbound, match it here.
 	maxMessageSize = 262144
 )
+
+var ErrSendBufferFull = errors.New("agent send buffer full, message dropped")
+
+// dropLogEvery caps drop-warning spam: log the first drop, then at most
+// once per dropLogEvery further drops. The running total is always logged.
+const dropLogEvery = 100
 
 type Agent struct {
 	conn *websocket.Conn
 	send chan []byte
 	cfg  *config.Config
 	log  logger.Logger
+
+	droppedMessages atomic.Int64
 
 	// logstream owns `docker compose logs` streams (A2). Lazily created on
 	// the first logs_* command so existing agents need no new wiring.
@@ -237,8 +246,22 @@ func (a *Agent) handleCommand(ctx context.Context, cmd domain.AgentCommand) erro
 	return nil
 }
 
+// DroppedMessages reports how many agent→server messages were dropped
+// because the send buffer was full.
+func (a *Agent) DroppedMessages() int64 {
+	return a.droppedMessages.Load()
+}
+
+func (a *Agent) countDrop(event string) {
+	total := a.droppedMessages.Add(1)
+	if total == 1 || total%dropLogEvery == 0 {
+		a.log.Warn("send channel full, message dropped", "event", event, "dropped_total", total)
+	}
+}
+
 // SendMessage exposes the agent's send path to collaborators that need to
 // push agent→server messages (e.g. the logstream manager in A2).
+// It returns ErrSendBufferFull when the message was dropped.
 func (a *Agent) SendMessage(msg *domain.WsAgentMessage) error {
 	return a.sendMessage(msg)
 }
@@ -255,8 +278,8 @@ func (a *Agent) sendMessage(msg *domain.WsAgentMessage) error {
 	case a.send <- message:
 		return nil
 	default:
-		a.log.Warn("send channel full, message dropped", "event", msg.Event)
-		return nil
+		a.countDrop(msg.Event)
+		return ErrSendBufferFull
 	}
 }
 
@@ -328,6 +351,6 @@ func (a *Agent) sendServerOSInfo() {
 	case a.send <- message:
 		a.log.Debug("server OS info sent successfully")
 	default:
-		a.log.Warn("send channel full, OS info dropped")
+		a.countDrop("server_os_info")
 	}
 }

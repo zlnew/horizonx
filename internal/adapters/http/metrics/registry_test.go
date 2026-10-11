@@ -232,3 +232,24 @@ func TestBackgroundLoopStopsOnCancel(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	require.Equal(t, n, jobs.calls.Load(), "no refreshes after cancel")
 }
+
+func TestAgentDroppedMessagesGaugeIsSetAndExposed(t *testing.T) {
+	reg := NewRegistry(&fakeJobRepo{}, &fakeServerRepo{}, nil)
+	defer reg.Stop()
+
+	reg.SetAgentDroppedMessages("server-a", 5)
+	reg.SetAgentDroppedMessages("server-b", 12)
+
+	require.Equal(t, float64(5), reg.AgentDroppedMessagesValue("server-a"))
+	require.Equal(t, float64(12), reg.AgentDroppedMessagesValue("server-b"))
+
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	body, _ := io.ReadAll(rec.Result().Body)
+	out := string(body)
+	require.Contains(t, out, "horizonx_agent_dropped_messages")
+	require.Contains(t, out, `server_id="server-a"`)
+	require.Contains(t, out, `server_id="server-b"`)
+}
