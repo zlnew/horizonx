@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 
 	"horizonx/internal/adapters/http/response"
@@ -9,10 +8,6 @@ import (
 	"horizonx/internal/domain"
 	"horizonx/internal/logger"
 )
-
-type userContextKeyType struct{}
-
-var userContextKey = userContextKeyType{}
 
 func JWT(cfg *config.Config, sessions domain.SessionStore, log logger.Logger) func(http.Handler) http.Handler {
 	if log == nil {
@@ -59,13 +54,4 @@ func JWT(cfg *config.Config, sessions domain.SessionStore, log logger.Logger) fu
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func GetUser(ctx context.Context) (domain.UserContext, bool) {
-	user, ok := ctx.Value(userContextKey).(domain.UserContext)
-	if !ok {
-		return domain.UserContext{}, false
-	}
-
-	return user, true
 }
