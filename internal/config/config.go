@@ -2,6 +2,8 @@
 package config
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -220,4 +222,43 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// TrustProxyExposureWarning returns a warning when TRUST_PROXY is enabled while
+// the API binds a non-loopback address, because any client that can reach the
+// port can then forge X-Forwarded-For and defeat the login rate limiter and
+// session-IP capture. It returns "" when there is nothing to report.
+//
+// This warns rather than refusing to boot, and that is deliberate. The
+// documented topology binds all interfaces inside the container and publishes
+// it on loopback from the host (install maps 127.0.0.1:${HORIZONX_PORT}:3000),
+// so HTTP_ADDR is non-loopback in the supported install and a hard refusal
+// would reject it. The process cannot tell from the inside whether the host
+// publishes the port on loopback only, and the usual container heuristic is not
+// reliable across runtimes. A check that silently disables itself on exactly
+// the setups that need it is worse than a loud warning.
+func (c *Config) TrustProxyExposureWarning() string {
+	if c == nil || !c.TrustProxy {
+		return ""
+	}
+
+	host := c.Address
+	if h, _, err := net.SplitHostPort(c.Address); err == nil {
+		host = h
+	}
+
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return ""
+	}
+	if strings.EqualFold(host, "localhost") {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"TRUST_PROXY is enabled but HTTP_ADDR=%q is not a loopback address: "+
+			"any client able to reach this port can forge X-Forwarded-For and bypass "+
+			"login rate limiting and session-IP capture. Bind the API to 127.0.0.1 and "+
+			"front it with tailscale serve, or set TRUST_PROXY=false.",
+		c.Address,
+	)
 }

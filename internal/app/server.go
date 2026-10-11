@@ -68,6 +68,12 @@ func RunServer() error {
 		return errors.New("JWT_SECRET must be set to a strong random value (production refuses dev defaults)")
 	}
 
+	// S3: TRUST_PROXY trusts the first X-Forwarded-For, which is right behind
+	// tailscale serve and spoofable when the port is reachable directly.
+	if warn := cfg.TrustProxyExposureWarning(); warn != "" {
+		log.Warn(warn)
+	}
+
 	// Auto-migrate before serving (Laravel-style). Never serve on a stale
 	// schema; golang-migrate's advisory lock keeps concurrent boots safe.
 	if cfg.AutoMigrate {
