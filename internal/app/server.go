@@ -344,7 +344,7 @@ func RunServer() error {
 	})
 
 	// Worker Manager
-	wScheduler := workers.NewScheduler(cfg, log)
+	wScheduler := workers.NewScheduler(cfg, log, postgres.NewAdvisoryLocker(dbPool))
 	wManager := workers.NewManager(log, wScheduler, &workers.ManagerServices{
 		Job:         jobService,
 		Server:      serverService,
