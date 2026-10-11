@@ -33,6 +33,8 @@ type Registry struct {
 
 	agentDropped *prometheus.GaugeVec
 
+	workerFailures *prometheus.CounterVec
+
 	jobPending   prometheus.Gauge
 	jobRunning   prometheus.Gauge
 	jobSucceeded prometheus.Gauge
@@ -86,6 +88,10 @@ func NewRegistry(
 			Name: "horizonx_agent_dropped_messages",
 			Help: "WebSocket messages dropped by the agent because its send buffer was full.",
 		}, []string{"server_id"}),
+		workerFailures: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Name: "horizonx_worker_failures_total",
+			Help: "Worker runs that failed after exhausting retries, by worker name.",
+		}, []string{"worker"}),
 		jobRepo:    jobRepo,
 		serverRepo: serverRepo,
 		log:        log,
@@ -121,6 +127,28 @@ func (r *Registry) AgentDroppedMessagesValue(serverID string) float64 {
 		return 0
 	}
 	return m.GetGauge().GetValue()
+}
+
+// WorkerRunFailed increments the count of runs that failed after exhausting
+// retries, labelled by worker name.
+func (r *Registry) WorkerRunFailed(worker string) {
+	if r == nil || r.workerFailures == nil {
+		return
+	}
+	r.workerFailures.WithLabelValues(worker).Inc()
+}
+
+// WorkerFailuresValue returns the current counter value for one worker.
+// Test helper; returns 0 when unset.
+func (r *Registry) WorkerFailuresValue(worker string) float64 {
+	if r == nil || r.workerFailures == nil {
+		return 0
+	}
+	var m dto.Metric
+	if err := r.workerFailures.WithLabelValues(worker).Write(&m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
 }
 
 // ObserveRequest records an HTTP request against the counters.

@@ -34,6 +34,11 @@ import (
 // instanceDir is where the HorizonX instance lives (root compose + sub-projects).
 const instanceDir = "/opt/horizonx"
 
+// envTarballDir is the environment fallback for the --tarball-dir flag: a local
+// directory holding the dashboard image tarball + SHA256SUMS for offline
+// installs.
+const envTarballDir = "HX_TARBALL_DIR"
+
 // execCompose is the indirection point for docker compose invocations in the
 // install-server apply path, so tests can fake the daemon. Defaults to real
 // exec; tests override it. The variadic includes the compose subcommand
@@ -50,8 +55,9 @@ type InstallServerOptions struct {
 	AdminPass      string // admin password (prompted if empty; random if blank)
 	AllowedOrigins string // comma-separated browser origins allowed to open the user WebSocket (default: same-box dashboard URL)
 	GenerateOnly   bool
-	Yes            bool // non-interactive (no prompts; default email + random password)
-	ResetVolumes   bool // wipe existing instance volumes first (data loss!)
+	Yes            bool   // non-interactive (no prompts; default email + random password)
+	ResetVolumes   bool   // wipe existing instance volumes first (data loss!)
+	TarballDir     string // local dir holding the dashboard tarball + SHA256SUMS (offline installs); env HX_TARBALL_DIR
 }
 
 // RunInstallServer installs or upgrades the HorizonX instance.
@@ -283,7 +289,7 @@ func applyInstance(l *InstanceLayout, opts InstallServerOptions) error {
 	//     a missing dashboard can never take down the control plane. The
 	//     tarball + SHA256SUMS are cached under /var/cache/horizonx (not in
 	//     the instance — they're transport artifacts, not runtime state).
-	if tarball, err := fetchDashboardTarball(dashboardCacheDir(l.Root)); err != nil {
+	if tarball, err := fetchDashboardTarballFrom(dashboardCacheDir(l.Root), tarballDirOrDefault(opts.TarballDir)); err != nil {
 		fmt.Printf("  ⚠ dashboard image not available: %v\n", err)
 		fmt.Println("    The control plane is up; add the dashboard later:")
 		fmt.Println("      docker compose -f " + filepath.Join(l.Root, "docker-compose.yml") + " up -d dashboard")
@@ -395,6 +401,17 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
+// tarballDirOrDefault returns the configured dashboard artifact directory,
+// falling back to HX_TARBALL_DIR. The env fallback lives here (not only in the
+// flag parser) so callers that do not parse flags — the upgrade path calls
+// applyInstance directly — still honour the environment variable.
+func tarballDirOrDefault(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return os.Getenv(envTarballDir)
+}
+
 // preflightFn is the indirection point for the capability probe, so tests can
 // fake a box without docker. Defaults to the real probe.
 var preflightFn = RunPreflight
@@ -439,8 +456,12 @@ func InstallServerFlags(args []string) (InstallServerOptions, error) {
 	fs.BoolVar(&opts.GenerateOnly, "generate-only", false, "write files only, skip apply")
 	fs.BoolVar(&opts.Yes, "yes", false, "non-interactive")
 	fs.BoolVar(&opts.ResetVolumes, "reset-volumes", false, "wipe existing instance postgres/redis volumes first (DATA LOSS)")
+	fs.StringVar(&opts.TarballDir, "tarball-dir", "", "local directory holding the dashboard image tarball + SHA256SUMS (offline installs); env HX_TARBALL_DIR")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
+	}
+	if opts.TarballDir == "" {
+		opts.TarballDir = os.Getenv(envTarballDir)
 	}
 	return opts, nil
 }
@@ -574,21 +595,66 @@ func verifySHA256SUMS(tarballPath, sumsText string) error {
 	return nil
 }
 
-// fetchDashboardTarball returns a verified dashboard image tarball in dir,
-// downloading it from the latest dashboard release when needed. Resolution:
+// dashboardPick names the tarball source chosen by resolveDashboardTarball.
+type dashboardPick struct {
+	Path        string // an existing tarball to load ("" => download from the resolved release)
+	VerifyLocal bool   // Path is operator-provided and must be verified before use
+}
+
+// resolveDashboardTarball decides which dashboard tarball source to use. The
+// release lookup is passed as a thunk so a complete operator-provided
+// --tarball-dir is used WITHOUT ever contacting the release API. Preference:
+//  1. tarballDir (--tarball-dir / HX_TARBALL_DIR): operator-provided offline
+//     artifacts, returned with VerifyLocal set so the caller checks them.
+//  2. release lookup succeeded: no existing path; the caller reuses the cache
+//     or downloads from the returned release.
+//  3. release lookup failed: any tarball already in cacheDir, best-effort.
+//     This pre-dates the signature gate and is intentionally left unverified
+//     (the dashboard is best-effort and never blocks the control plane).
+//
+// Pure apart from filesystem globs, so the ordering is testable without Docker
+// or network.
+func resolveDashboardTarball(tarballDir, cacheDir string, release func() (dashboardRelease, error)) (dashboardPick, dashboardRelease, error) {
+	if tarballDir != "" {
+		if t := findDashboardTarball(tarballDir); t != "" {
+			return dashboardPick{Path: t, VerifyLocal: true}, dashboardRelease{}, nil
+		}
+	}
+	rel, err := release()
+	if err != nil {
+		return dashboardPick{Path: findDashboardTarball(cacheDir)}, rel, err
+	}
+	return dashboardPick{}, rel, nil
+}
+
+// fetchDashboardTarball is the historical single-directory entry point
+// (--tarball-dir unset).
+func fetchDashboardTarball(dir string) (string, error) {
+	return fetchDashboardTarballFrom(dir, "")
+}
+
+// fetchDashboardTarballFrom returns a verified dashboard image tarball in dir.
+// tarballDir (--tarball-dir / HX_TARBALL_DIR, may be empty) is an
+// operator-provided directory consulted first, so an offline install with the
+// artifacts on disk never needs GitHub. A tarball taken from tarballDir is
+// always verified — checksum plus release signature — before use; see
+// verifyLocalDashboardTarball. Without a tarballDir the behaviour is unchanged:
 //  1. If dir already has a tarball AND it matches the release SHA256SUMS,
 //     reuse it (idempotent re-run — no re-download).
 //  2. Otherwise download the latest release tarball + SHA256SUMS into dir,
 //     verify, and return it.
-//  3. If the release API is unreachable, fall back to any local tarball
-//     (unverified — caller treats dashboard as best-effort).
-func fetchDashboardTarball(dir string) (string, error) {
-	rel, err := latestDashboardRelease()
-	if err != nil {
-		if local := findDashboardTarball(dir); local != "" {
-			return local, nil
-		}
-		return "", fmt.Errorf("cannot resolve latest dashboard release: %v", err)
+//  3. If the release API is unreachable, fall back to any local tarball in dir
+//     (unverified — pre-existing best-effort behaviour).
+func fetchDashboardTarballFrom(dir, tarballDir string) (string, error) {
+	pick, rel, lookupErr := resolveDashboardTarball(tarballDir, dir, latestDashboardRelease)
+	if pick.VerifyLocal {
+		return verifyLocalDashboardTarball(pick.Path)
+	}
+	if pick.Path != "" {
+		return pick.Path, nil
+	}
+	if lookupErr != nil {
+		return "", fmt.Errorf("cannot resolve latest dashboard release: %v", lookupErr)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -642,6 +708,45 @@ func fetchDashboardTarball(dir string) (string, error) {
 		}
 	}
 	return tarballPath, nil
+}
+
+// verifyLocalDashboardTarball validates a tarball taken from an
+// operator-provided directory (--tarball-dir / HX_TARBALL_DIR) before it is
+// loaded. The directory must carry a SHA256SUMS whose entry matches the
+// tarball, and when HORIZONX_RELEASE_PUBKEY is set the sums must also carry a
+// valid SHA256SUMS.minisig. An operator-controlled directory is therefore never
+// a way to skip the release signature check: a tampered local tarball fails
+// exactly like a tampered download.
+func verifyLocalDashboardTarball(tarball string) (string, error) {
+	dir := filepath.Dir(tarball)
+	sums, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
+	if err != nil {
+		return "", fmt.Errorf("--tarball-dir %s contains %s but no SHA256SUMS: %w", dir, filepath.Base(tarball), err)
+	}
+	if err := verifyLocalSums(dir, sums); err != nil {
+		return "", err
+	}
+	if err := verifySHA256SUMS(tarball, string(sums)); err != nil {
+		return "", err
+	}
+	return tarball, nil
+}
+
+// verifyLocalSums is the local-directory counterpart of verifyFetchedSums: it
+// runs the same fail-closed release-signature gate over sums, reading
+// SHA256SUMS.minisig from dir instead of downloading it. With no release
+// public key configured it returns nil (today's unsigned behaviour); with a key
+// set a missing or invalid signature aborts. This is the check that stops
+// --tarball-dir from bypassing signature verification.
+func verifyLocalSums(dir string, sums []byte) error {
+	if os.Getenv(envReleasePubkey) == "" {
+		return nil
+	}
+	sig, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS.minisig"))
+	if err != nil {
+		return fmt.Errorf("release signature required (%s is set) but SHA256SUMS.minisig is unavailable in %s: %w", envReleasePubkey, dir, err)
+	}
+	return VerifyReleaseSums(sums, sig)
 }
 
 // verifyFetchedSums verifies the minisign signature for already-fetched

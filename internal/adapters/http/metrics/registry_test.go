@@ -253,3 +253,35 @@ func TestAgentDroppedMessagesGaugeIsSetAndExposed(t *testing.T) {
 	require.Contains(t, out, `server_id="server-a"`)
 	require.Contains(t, out, `server_id="server-b"`)
 }
+
+func TestWorkerFailuresCounterIncrementsPerLabel(t *testing.T) {
+	reg := NewRegistry(&fakeJobRepo{}, &fakeServerRepo{}, nil)
+	defer reg.Stop()
+
+	reg.WorkerRunFailed("metrics_collect")
+	reg.WorkerRunFailed("metrics_collect")
+	reg.WorkerRunFailed("job_reaper")
+
+	require.Equal(t, float64(2), reg.WorkerFailuresValue("metrics_collect"))
+	require.Equal(t, float64(1), reg.WorkerFailuresValue("job_reaper"))
+
+	reg.WorkerRunFailed("metrics_collect")
+	require.Equal(t, float64(3), reg.WorkerFailuresValue("metrics_collect"),
+		"repeat calls must accumulate the counter, not set it")
+
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	body, _ := io.ReadAll(rec.Result().Body)
+	out := string(body)
+	require.Contains(t, out, "horizonx_worker_failures_total")
+	require.Contains(t, out, `worker="metrics_collect"`)
+	require.Contains(t, out, `worker="job_reaper"`)
+}
+
+func TestWorkerFailuresCounterNilRegistryIsSafe(t *testing.T) {
+	var reg *Registry
+	reg.WorkerRunFailed("metrics_collect")
+	require.Equal(t, float64(0), reg.WorkerFailuresValue("metrics_collect"))
+}
