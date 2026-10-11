@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"aead.dev/minisign"
 )
 
 // setExecCompose swaps the compose executor for the duration of a test.
@@ -490,5 +492,110 @@ func TestHasInstanceVolumesProjectPrefixed(t *testing.T) {
 
 	if !hasInstanceVolumes("/tmp/test") {
 		t.Error("hasInstanceVolumes should detect project-prefixed horizonx volumes")
+	}
+}
+
+// minisign test helpers (hermetic: pure-Go key generation + signing, no binary).
+func minisign_GenerateKeyForTest(t *testing.T) (string, []byte, error) {
+	t.Helper()
+	pub, _, err := minisign.GenerateKey(nil)
+	if err != nil {
+		return "", nil, err
+	}
+	return pub.String(), nil, nil
+}
+
+func minisign_SignForTest(t *testing.T, sums []byte) (string, []byte) {
+	t.Helper()
+	pub, priv, err := minisign.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	return pub.String(), minisign.Sign(priv, sums)
+}
+
+func TestFetchDashboardTarballFailsClosedWithoutSignature(t *testing.T) {
+	// Fail-closed: with a release public key configured, the dashboard
+	// fetch must abort when SHA256SUMS.minisig is missing — on BOTH the
+	// fresh-download path and the cached-tarball path.
+	content := []byte("fake dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	tarballName := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + tarballName:
+			_, _ = w.Write(content)
+		case "/SHA256SUMS":
+			fmt.Fprintf(w, "%s  %s\n", sum, tarballName)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{
+			Tag:        "v0.3.0",
+			TarballURL: srv.URL + "/" + tarballName,
+			SHAURL:     srv.URL + "/SHA256SUMS",
+		}, nil
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	pub, _, err := minisign_GenerateKeyForTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envReleasePubkey, pub)
+
+	if _, err := fetchDashboardTarball(t.TempDir()); err == nil {
+		t.Fatal("expected fresh-download path to fail closed without a signature, got nil")
+	}
+
+	// Cached path: pre-place a tarball matching the (unsigned) sums.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, tarballName), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fetchDashboardTarball(dir); err == nil {
+		t.Fatal("expected cached path to fail closed without a signature, got nil")
+	}
+}
+
+func TestFetchDashboardTarballVerifiesSignatureWhenKeySet(t *testing.T) {
+	// Happy path with a key configured: signed sums verify on download.
+	content := []byte("fake dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	tarballName := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	sums := []byte(fmt.Sprintf("%s  %s\n", sum, tarballName))
+	pub, sig := minisign_SignForTest(t, sums)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + tarballName:
+			_, _ = w.Write(content)
+		case "/SHA256SUMS":
+			_, _ = w.Write(sums)
+		case "/SHA256SUMS.minisig":
+			_, _ = w.Write(sig)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{
+			Tag:        "v0.3.0",
+			TarballURL: srv.URL + "/" + tarballName,
+			SHAURL:     srv.URL + "/SHA256SUMS",
+		}, nil
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	t.Setenv(envReleasePubkey, pub)
+	if _, err := fetchDashboardTarball(t.TempDir()); err != nil {
+		t.Fatalf("fetchDashboardTarball with valid signature: %v", err)
 	}
 }

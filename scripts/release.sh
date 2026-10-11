@@ -163,6 +163,15 @@ cd "$OUT"
 sha256sum horizonx-*.tar.gz > SHA256SUMS
 sha256sum -c SHA256SUMS | tail -4
 
+# Sign SHA256SUMS with minisign. Fail closed: a release without a signature
+# would silently ship unsigned, which is exactly the trust gap this fixes —
+# so abort unless the operator holds the secret key. The key password is
+# prompted on a TTY, acceptable because releases are cut locally by hand
+# (release.sh is not run by CI — CI is non-functional on this repo).
+MINISIGN_SECRET_KEY="${MINISIGN_SECRET_KEY:-$HOME/.minisign/horizonx.key}"
+[ -f "$MINISIGN_SECRET_KEY" ] || { echo "error: minisign secret key not found at $MINISIGN_SECRET_KEY — generate one with 'minisign -G -p horizonx.pub -s horizonx.key' and retry. Refusing to publish unsigned." >&2; exit 1; }
+minisign -S -s "$MINISIGN_SECRET_KEY" -m SHA256SUMS
+
 for pair in "${TARGETS[@]}"; do
   set -- $pair
   os=$1; arch=$2
@@ -217,6 +226,7 @@ for pair in "${TARGETS[@]}"; do
   ASSETS+=("$OUT/horizonx-${os}-${arch}.tar.gz")
 done
 ASSETS+=("$OUT/SHA256SUMS")
+ASSETS+=("$OUT/SHA256SUMS.minisig")
 
 gh release create "$VERSION" --repo "$REPO" --title "$VERSION" --notes-file "$BODY" --target "$RELEASE_BRANCH" "${ASSETS[@]}"
 rm -f "$BODY"
