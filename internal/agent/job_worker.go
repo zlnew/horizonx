@@ -190,6 +190,23 @@ var jobTimeouts = map[domain.JobType]time.Duration{
 
 const defaultJobTimeout = 5 * time.Minute
 
+// MaxJobTimeout is the longest single job the agent will allow to run before
+// giving up. The server's job reaper must outlast it, because both clocks
+// start from the same event — the agent writing StartedAt — so a reaper that
+// fires first marks a job failed while the agent is still working on it.
+//
+// Exported only so that invariant can be asserted from internal/workers, where
+// the reaper's threshold lives; see TestReapAfterOutlastsAgentJobTimeouts.
+func MaxJobTimeout() time.Duration {
+	max := defaultJobTimeout
+	for _, d := range jobTimeouts {
+		if d > max {
+			max = d
+		}
+	}
+	return max
+}
+
 func jobTimeout(t domain.JobType) time.Duration {
 	if d, ok := jobTimeouts[t]; ok {
 		return d
