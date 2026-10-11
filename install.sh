@@ -19,7 +19,12 @@ set -euo pipefail
 
 REPO="${HORIZONX_REPO:-zlnew/horizonx}"
 PREFIX="${HORIZONX_PREFIX:-/usr/local}"
-GITHUB="https://github.com/${REPO}"
+# Release artifacts are served from GITHUB. HX_ARTIFACT_BASE overrides the host
+# for internal mirrors; the trailing-slash strip keeps the URL joins below to
+# exactly one slash. LATEST_URL stays on api.github.com: it is a tag lookup,
+# not an artifact download.
+GITHUB="${HX_ARTIFACT_BASE:-https://github.com/${REPO}}"
+GITHUB="${GITHUB%/}"
 
 log()  { printf '\033[0;36m[*]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[0;32m[+]\033[0m %s\n' "$*"; }
