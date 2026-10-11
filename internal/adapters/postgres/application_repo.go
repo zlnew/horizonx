@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -18,13 +19,21 @@ import (
 type ApplicationRepository struct {
 	db *pgxpool.Pool
 
-	// encKey is the AES-256 key used for environment-variable values at rest
-	// (P1-11). Empty means legacy mode: store plaintext, don't decrypt.
+	// encKey is the primary AES-256 key used for environment-variable values at rest
+	// (P1-11 / S5). Empty means legacy mode: store plaintext, don't decrypt.
 	encKey []byte
+
+	// legacyEncKey is the optional previous AES-256 key (e.g. derived from JWT_SECRET)
+	// used for decrypting existing rows on read when encKey is ENV_ENCRYPTION_KEY.
+	legacyEncKey []byte
 }
 
-func NewApplicationRepository(db *pgxpool.Pool, encKey []byte) domain.ApplicationRepository {
-	return &ApplicationRepository{db: db, encKey: encKey}
+func NewApplicationRepository(db *pgxpool.Pool, encKey []byte, legacyEncKey []byte) domain.ApplicationRepository {
+	return &ApplicationRepository{
+		db:           db,
+		encKey:       encKey,
+		legacyEncKey: legacyEncKey,
+	}
 }
 
 func (r *ApplicationRepository) List(ctx context.Context, opts domain.ApplicationListOptions) ([]*domain.Application, int64, error) {
@@ -346,12 +355,34 @@ func (r *ApplicationRepository) encryptEnvValue(value string) (string, error) {
 	return security.Encrypt(value, r.encKey)
 }
 
-// decryptEnvValue reverses encryptEnvValue. Legacy plaintext rows pass through.
-func (r *ApplicationRepository) decryptEnvValue(value string, encrypted bool) (string, error) {
+// decryptEnvValue reverses encryptEnvValue using DecryptWithFallback.
+// Legacy plaintext rows pass through. Returns plaintext and whether legacy key was used.
+func (r *ApplicationRepository) decryptEnvValue(value string, encrypted bool) (string, bool, error) {
 	if !encrypted || len(r.encKey) == 0 {
-		return value, nil
+		return value, false, nil
 	}
-	return security.Decrypt(value, r.encKey)
+	return security.DecryptWithFallback(value, r.encKey, r.legacyEncKey)
+}
+
+// reencryptRow rewrites an environment variable row under the primary key.
+// If the re-encryption write fails, log a warning and still return the plaintext.
+// The read already succeeded; failing the user's request because a background
+// hygiene write failed would be a worse bug than the one being fixed.
+func (r *ApplicationRepository) reencryptRow(ctx context.Context, id int64, plaintext string) {
+	encValue, err := security.Encrypt(plaintext, r.encKey)
+	if err != nil {
+		log.Printf("failed to re-encrypt env var ID %d under primary key: %v", id, err)
+		return
+	}
+
+	query := `
+		UPDATE environment_variables
+		SET value = $1, value_encrypted = TRUE, updated_at = $2
+		WHERE id = $3
+	`
+	if _, err := r.db.Exec(ctx, query, encValue, time.Now().UTC(), id); err != nil {
+		log.Printf("failed to persist re-encrypted env var ID %d: %v", id, err)
+	}
 }
 
 func (r *ApplicationRepository) ListEnvVars(ctx context.Context, appID int64) ([]domain.EnvironmentVariable, error) {
@@ -367,6 +398,12 @@ func (r *ApplicationRepository) ListEnvVars(ctx context.Context, appID int64) ([
 		return nil, fmt.Errorf("failed to query env vars: %w", err)
 	}
 	defer rows.Close()
+
+	type reencryptTarget struct {
+		id        int64
+		plaintext string
+	}
+	var reencryptQueue []reencryptTarget
 
 	var envVars []domain.EnvironmentVariable
 	for rows.Next() {
@@ -385,12 +422,23 @@ func (r *ApplicationRepository) ListEnvVars(ctx context.Context, appID int64) ([
 			return nil, fmt.Errorf("failed to scan env var: %w", err)
 		}
 
-		decrypted, err := r.decryptEnvValue(env.Value, env.ValueEncrypted)
+		decrypted, usedLegacy, err := r.decryptEnvValue(env.Value, env.ValueEncrypted)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt env var %q: %w", env.Key, err)
 		}
 		env.Value = decrypted
+		if usedLegacy {
+			reencryptQueue = append(reencryptQueue, reencryptTarget{id: env.ID, plaintext: decrypted})
+		}
 		envVars = append(envVars, env)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate env vars: %w", err)
+	}
+
+	for _, item := range reencryptQueue {
+		r.reencryptRow(ctx, item.id, item.plaintext)
 	}
 
 	return envVars, nil

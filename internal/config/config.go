@@ -19,12 +19,13 @@ type Config struct {
 	LogLevel  string
 	LogFormat string
 
-	TimeZone       *time.Location
-	Address        string
-	AllowedOrigins []string
-	DatabaseURL    string
-	JWTSecret      string
-	JWTExpiry      time.Duration
+	TimeZone         *time.Location
+	Address          string
+	AllowedOrigins   []string
+	DatabaseURL      string
+	JWTSecret        string
+	JWTExpiry        time.Duration
+	EnvEncryptionKey string
 
 	AgentTargetAPIURL   string
 	AgentTargetWsURL    string
@@ -109,6 +110,9 @@ func Load() *Config {
 		}
 	}
 
+	// Environment variable encryption key (P1-11 / S5)
+	envEncryptionKey := getEnv("ENV_ENCRYPTION_KEY", "")
+
 	// AGENT Target URL
 	agentTargetAPIURL := getEnv("HORIZONX_API_URL", "http://localhost:3000")
 	agentTargetWsURL := getEnv("HORIZONX_WS_URL", "ws://localhost:3000/ws/agent")
@@ -185,12 +189,13 @@ func Load() *Config {
 		LogLevel:  logLevel,
 		LogFormat: logFormat,
 
-		TimeZone:       timeZone,
-		Address:        addr,
-		AllowedOrigins: origins,
-		DatabaseURL:    databaseURL,
-		JWTSecret:      jwtSecret,
-		JWTExpiry:      jwtExpiry,
+		TimeZone:         timeZone,
+		Address:          addr,
+		AllowedOrigins:   origins,
+		DatabaseURL:      databaseURL,
+		JWTSecret:        jwtSecret,
+		JWTExpiry:        jwtExpiry,
+		EnvEncryptionKey: envEncryptionKey,
 
 		AgentTargetAPIURL:   agentTargetAPIURL,
 		AgentTargetWsURL:    agentTargetWsURL,
