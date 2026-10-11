@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"horizonx/internal/agent/logstream"
@@ -20,19 +21,33 @@ import (
 )
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
+	writeWait  = 10 * time.Second
+	pongWait   = 60 * time.Second
+	pingPeriod = (pongWait * 9) / 10
 	// Server→agent commands can carry log batches in A2 (hundreds of KB);
 	// the server's agentws socket allows 256KB inbound, match it here.
 	maxMessageSize = 262144
 )
 
+var ErrSendBufferFull = errors.New("agent send buffer full, message dropped")
+
+// dropLogEvery caps drop-warning spam: log the first drop, then at most
+// once per dropLogEvery further drops. The running total is always logged.
+const dropLogEvery = 100
+
 type Agent struct {
 	conn *websocket.Conn
 	send chan []byte
-	cfg  *config.Config
-	log  logger.Logger
+	// commands is a bounded FIFO drained by exactly one worker
+	// (runCommands). A single consumer preserves the order of
+	// logs_tail_start, logs_tail_stop and logs_query against the same
+	// streams: running them concurrently would let a stop overtake its
+	// start, or a query land against a stream that has not started yet.
+	commands chan domain.AgentCommand
+	cfg      *config.Config
+	log      logger.Logger
+
+	droppedMessages atomic.Int64
 
 	// logstream owns `docker compose logs` streams (A2). Lazily created on
 	// the first logs_* command so existing agents need no new wiring.
@@ -46,9 +61,10 @@ var ErrUnauthorized = errors.New("connection failed: unauthorized")
 // in the app wiring, and its send callback needs this agent).
 func NewAgent(cfg *config.Config, log logger.Logger) *Agent {
 	return &Agent{
-		send: make(chan []byte, 256),
-		cfg:  cfg,
-		log:  log,
+		send:     make(chan []byte, 256),
+		commands: make(chan domain.AgentCommand, 64),
+		cfg:      cfg,
+		log:      log,
 	}
 }
 
@@ -108,6 +124,7 @@ func (a *Agent) dialUp(ctx context.Context) error {
 
 	g.Go(func() error { return a.readPump(gctx) })
 	g.Go(func() error { return a.writePump(gctx) })
+	g.Go(func() error { return a.runCommands(gctx) })
 
 	go func() {
 		<-gctx.Done()
@@ -171,9 +188,44 @@ func (a *Agent) readPump(ctx context.Context) error {
 			case <-ctx.Done():
 				return nil
 			default:
-				if err := a.handleCommand(ctx, cmd); err != nil {
+				if err := a.dispatchCommand(ctx, cmd); err != nil {
 					a.log.Error("command failed", "type", cmd.Type, "error", err)
 				}
+			}
+		}
+	}
+}
+
+// dispatchCommand keeps ping on the caller's goroutine (it is trivial and
+// sendMessage is non-blocking) and enqueues every other command for the
+// single runCommands worker, so a slow logs_* handler can never stall the
+// read loop's ReadMessage/pong processing.
+func (a *Agent) dispatchCommand(ctx context.Context, cmd domain.AgentCommand) error {
+	if cmd.Type == "ping" {
+		return a.handleCommand(ctx, cmd)
+	}
+	select {
+	case a.commands <- cmd:
+		return nil
+	default:
+		// The queue is full: drop rather than block the read loop.
+		// A dropped control command such as logs_tail_stop can leave a
+		// log stream running until the agent restarts.
+		a.log.Error("command queue full, command dropped", "type", cmd.Type)
+		return nil
+	}
+}
+
+// runCommands drains the command queue sequentially on a single goroutine
+// (see the commands field comment for why exactly one worker is required).
+func (a *Agent) runCommands(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case cmd := <-a.commands:
+			if err := a.handleCommand(ctx, cmd); err != nil {
+				a.log.Error("command failed", "type", cmd.Type, "error", err)
 			}
 		}
 	}
@@ -237,8 +289,22 @@ func (a *Agent) handleCommand(ctx context.Context, cmd domain.AgentCommand) erro
 	return nil
 }
 
+// DroppedMessages reports how many agent→server messages were dropped
+// because the send buffer was full.
+func (a *Agent) DroppedMessages() int64 {
+	return a.droppedMessages.Load()
+}
+
+func (a *Agent) countDrop(event string) {
+	total := a.droppedMessages.Add(1)
+	if total == 1 || total%dropLogEvery == 0 {
+		a.log.Warn("send channel full, message dropped", "event", event, "dropped_total", total)
+	}
+}
+
 // SendMessage exposes the agent's send path to collaborators that need to
 // push agent→server messages (e.g. the logstream manager in A2).
+// It returns ErrSendBufferFull when the message was dropped.
 func (a *Agent) SendMessage(msg *domain.WsAgentMessage) error {
 	return a.sendMessage(msg)
 }
@@ -255,8 +321,8 @@ func (a *Agent) sendMessage(msg *domain.WsAgentMessage) error {
 	case a.send <- message:
 		return nil
 	default:
-		a.log.Warn("send channel full, message dropped", "event", msg.Event)
-		return nil
+		a.countDrop(msg.Event)
+		return ErrSendBufferFull
 	}
 }
 
@@ -328,6 +394,6 @@ func (a *Agent) sendServerOSInfo() {
 	case a.send <- message:
 		a.log.Debug("server OS info sent successfully")
 	default:
-		a.log.Warn("send channel full, OS info dropped")
+		a.countDrop("server_os_info")
 	}
 }

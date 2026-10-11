@@ -220,6 +220,7 @@ func RunServer() error {
 	alerting.New(bus, log).
 		WithProvider(alertRuleRepo).
 		WithHistory(alertHistoryRepo).
+		WithHistoryReader(alertHistoryRepo).
 		Start()
 
 	// P3-19: audit log — record deploy/app/server events.
@@ -255,7 +256,7 @@ func RunServer() error {
 	accountHandler := http.NewAccountHandler(accountService, jsonDecoder, jsonWriter, validator)
 	userHandler := http.NewUserHandler(userService, authService, jsonDecoder, jsonWriter, validator)
 	jobHandler := http.NewJobHandler(jobService, jsonDecoder, jsonWriter, validator)
-	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
+	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator, metricsRegistry)
 	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
 	applicationHandler := http.NewApplicationHandler(applicationService, trackedLogs, jsonDecoder, jsonWriter, validator)
 	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)

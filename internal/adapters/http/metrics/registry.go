@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // RefreshInterval is how often the registry re-reads the queue/server
@@ -29,6 +30,8 @@ type Registry struct {
 
 	httpRequests *prometheus.CounterVec
 	httpDuration *prometheus.HistogramVec
+
+	agentDropped *prometheus.GaugeVec
 
 	jobPending   prometheus.Gauge
 	jobRunning   prometheus.Gauge
@@ -79,9 +82,13 @@ func NewRegistry(
 		jobFailed:    promauto.With(reg).NewGauge(prometheus.GaugeOpts{Name: "horizonx_jobs_failed", Help: "Jobs that failed."}),
 		jobTotal:     promauto.With(reg).NewGauge(prometheus.GaugeOpts{Name: "horizonx_jobs_total", Help: "Total jobs in the system."}),
 		serverOnline: promauto.With(reg).NewGauge(prometheus.GaugeOpts{Name: "horizonx_servers_online", Help: "Number of online agent servers."}),
-		jobRepo:      jobRepo,
-		serverRepo:   serverRepo,
-		log:          log,
+		agentDropped: promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+			Name: "horizonx_agent_dropped_messages",
+			Help: "WebSocket messages dropped by the agent because its send buffer was full.",
+		}, []string{"server_id"}),
+		jobRepo:    jobRepo,
+		serverRepo: serverRepo,
+		log:        log,
 	}
 
 	// Self-scheduling background refresh so no bootstrap/startup wiring is
@@ -92,6 +99,28 @@ func NewRegistry(
 	r.stopLoop = cancel
 	go r.loop(ctx, RefreshInterval)
 	return r
+}
+
+// SetAgentDroppedMessages sets the cumulative send-buffer drop count
+// reported by one agent, labelled by its server ID.
+func (r *Registry) SetAgentDroppedMessages(serverID string, v float64) {
+	if r == nil || r.agentDropped == nil {
+		return
+	}
+	r.agentDropped.WithLabelValues(serverID).Set(v)
+}
+
+// AgentDroppedMessagesValue returns the current gauge value for one
+// server ID. Test helper; returns 0 when unset.
+func (r *Registry) AgentDroppedMessagesValue(serverID string) float64 {
+	if r == nil || r.agentDropped == nil {
+		return 0
+	}
+	var m dto.Metric
+	if err := r.agentDropped.WithLabelValues(serverID).Write(&m); err != nil {
+		return 0
+	}
+	return m.GetGauge().GetValue()
 }
 
 // ObserveRequest records an HTTP request against the counters.
