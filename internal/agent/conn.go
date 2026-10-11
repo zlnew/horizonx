@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -27,7 +28,55 @@ const (
 	// Server→agent commands can carry log batches in A2 (hundreds of KB);
 	// the server's agentws socket allows 256KB inbound, match it here.
 	maxMessageSize = 262144
+
+	// reconnectBackoffBase preserves today's first-retry delay; later
+	// attempts double from here up to reconnectBackoffCap with full jitter.
+	reconnectBackoffBase = 5 * time.Second
+	reconnectBackoffCap  = 2 * time.Minute
+	// healthySessionDuration is the uptime that proves the server is healthy,
+	// resetting the backoff counter. Short-lived flapping sessions keep the
+	// counter climbing instead of resetting it.
+	healthySessionDuration = 30 * time.Second
 )
+
+// reconnectDelay returns the wait before the next reconnect attempt, using
+// exponential backoff capped at reconnectBackoffCap with full jitter
+// (uniform in [0, computed)). attempt is 0-based: attempt 0 waits within the
+// base interval. The randomness is injected so callers can test
+// deterministically; production passes rand.Int64N. A negative attempt is
+// treated as 0.
+func reconnectDelay(attempt int, randIntN func(int64) int64) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+
+	computed := reconnectBackoffBase
+	for i := 0; i < attempt; i++ {
+		computed *= 2
+		if computed >= reconnectBackoffCap {
+			computed = reconnectBackoffCap
+			break
+		}
+	}
+	if computed > reconnectBackoffCap {
+		computed = reconnectBackoffCap
+	}
+
+	return time.Duration(randIntN(int64(computed)))
+}
+
+// nextAttempt advances the consecutive-failure counter, but only after a
+// session that failed to stay up for healthySessionDuration. Reset is keyed
+// on session uptime rather than err == nil because a server that accepts the
+// websocket and immediately closes it would otherwise reset the counter on
+// every attempt and the agent would hammer it at the base interval forever.
+// Only a session that stayed up counts as proof the server is healthy.
+func nextAttempt(attempt int, sessionDuration time.Duration) int {
+	if sessionDuration >= healthySessionDuration {
+		return 0
+	}
+	return attempt + 1
+}
 
 var ErrSendBufferFull = errors.New("agent send buffer full, message dropped")
 
@@ -76,12 +125,12 @@ func (a *Agent) SetLogStream(m *logstream.Manager) {
 
 func (a *Agent) Start(ctx context.Context) error {
 	a.send = make(chan []byte, 256)
-	reconnectInterval := 5 * time.Second
 	attempt := 0
 
 	for {
 		a.log.Info("starting agent...", "attempt", attempt+1)
 
+		sessionStart := time.Now()
 		err := a.dialUp(ctx)
 		if err != nil {
 			if errors.Is(err, ErrUnauthorized) {
@@ -91,14 +140,19 @@ func (a *Agent) Start(ctx context.Context) error {
 			a.log.Warn("connection lost or failed, will retry", "error", err)
 		}
 
-		attempt++
+		// Compute the wait from the failures so far, then advance the counter.
+		// That order is load-bearing: advancing first would pass attempt=1 to
+		// the first retry and silently double reconnectBackoffBase, which is
+		// supposed to preserve the delay this loop used before backoff.
+		delay := reconnectDelay(attempt, rand.Int64N)
+		attempt = nextAttempt(attempt, time.Since(sessionStart))
 		a.log.Debug("waiting before next reconnection attempt")
 
 		select {
 		case <-ctx.Done():
 			a.log.Info("agent stopped")
 			return nil
-		case <-time.After(reconnectInterval):
+		case <-time.After(delay):
 		}
 	}
 }

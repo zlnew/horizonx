@@ -212,3 +212,78 @@ func TestJobWorkerStampDroppedMessagesNilSafe(t *testing.T) {
 	require.Equal(t, int64(0), w.droppedCount())
 	require.NotPanics(t, func() { w.stampDroppedMessages(nil) })
 }
+
+func TestReconnectDelayBackoffGrowsAndIsCapped(t *testing.T) {
+	// Highest in-range draw: randIntN(n) == n-1.
+	top := func(n int64) int64 { return n - 1 }
+
+	base := int64(reconnectBackoffBase)
+	capN := int64(reconnectBackoffCap)
+
+	want := []time.Duration{
+		5*time.Second - 1,   // attempt 0: base
+		10*time.Second - 1,  // attempt 1
+		20*time.Second - 1,  // attempt 2
+		40*time.Second - 1,  // attempt 3
+		80*time.Second - 1,  // attempt 4
+		120*time.Second - 1, // attempt 5: 160s clamped to the 2m cap
+		120*time.Second - 1, // attempt 6
+		120*time.Second - 1, // attempt 7
+		120*time.Second - 1, // attempt 8
+	}
+
+	var prev time.Duration
+	for attempt, expected := range want {
+		got := reconnectDelay(attempt, top)
+		require.Equal(t, expected, got, "attempt %d", attempt)
+		require.LessOrEqual(t, prev, got, "attempt %d must not decrease", attempt)
+		require.LessOrEqual(t, got, time.Duration(capN-1), "attempt %d must stay capped", attempt)
+		prev = got
+	}
+
+	// A very large attempt must saturate at the cap, not overflow.
+	for _, attempt := range []int{9, 16, 64, 1024} {
+		got := reconnectDelay(attempt, top)
+		require.Equal(t, time.Duration(capN-1), got, "attempt %d", attempt)
+	}
+
+	// A negative attempt is treated as 0 (base interval).
+	require.Equal(t, time.Duration(base-1), reconnectDelay(-1, top))
+}
+
+func TestReconnectDelayFullJitterSpansRange(t *testing.T) {
+	low := func(int64) int64 { return 0 }
+	top := func(n int64) int64 { return n - 1 }
+
+	for attempt := 0; attempt <= 8; attempt++ {
+		gotLow := reconnectDelay(attempt, low)
+		require.Equal(t, time.Duration(0), gotLow, "attempt %d low end", attempt)
+
+		gotHigh := reconnectDelay(attempt, top)
+		require.Less(t, gotHigh, reconnectBackoffCap, "attempt %d must stay below cap", attempt)
+
+		// The high end must be strictly below the computed delay (half-open
+		// interval [0, computed)), never equal to or over the cap.
+		computed := reconnectBackoffBase
+		for i := 0; i < attempt; i++ {
+			computed *= 2
+			if computed >= reconnectBackoffCap {
+				computed = reconnectBackoffCap
+				break
+			}
+		}
+		require.Equal(t, computed-1, gotHigh, "attempt %d high end", attempt)
+	}
+
+	// Even a saturated attempt draws below the cap.
+	for _, attempt := range []int{16, 64} {
+		require.Less(t, reconnectDelay(attempt, top), reconnectBackoffCap, "attempt %d", attempt)
+	}
+}
+
+func TestNextAttemptResetsOnlyOnHealthySession(t *testing.T) {
+	require.Equal(t, 3, nextAttempt(2, 29*time.Second), "flapping session keeps backing off")
+	require.Equal(t, 0, nextAttempt(2, healthySessionDuration), "healthy session resets")
+	require.Equal(t, 1, nextAttempt(0, 0), "first failure advances the counter")
+	require.Equal(t, 0, nextAttempt(5, time.Hour), "a longer session also resets")
+}
