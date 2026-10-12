@@ -21,6 +21,10 @@ type ManagerServices struct {
 	Server      domain.ServerService
 	Metrics     domain.MetricsService
 	Application domain.ApplicationService
+
+	Retention domain.RetentionRepository
+	JobTTL    time.Duration
+	LogTTL    time.Duration
 }
 
 type Worker interface {
@@ -51,6 +55,13 @@ func (m *Manager) Start(ctx context.Context) {
 		server:  m.services.Server,
 		log:     m.log,
 	})
+
+	m.scheduler.RunDaily(ctx, DailySchedule{Hour: 2, Minute: 0}, NewRetentionWorker(
+		m.services.Retention,
+		m.services.JobTTL,
+		m.services.LogTTL,
+		m.log,
+	))
 
 	m.scheduler.RunByDuration(ctx, 5*time.Minute, &ApplicationHealthCheckWorker{
 		app: m.services.Application,

@@ -48,6 +48,7 @@ type fakeHistory struct {
 	nextID   int64
 	created  []*domain.AlertHistory
 	resolved []int64
+	listErr  error
 }
 
 func (f *fakeHistory) Create(_ context.Context, alert *domain.AlertHistory) (*domain.AlertHistory, error) {
@@ -70,6 +71,21 @@ func (f *fakeHistory) Resolve(_ context.Context, historyID int64) error {
 		}
 	}
 	return nil
+}
+
+func (f *fakeHistory) ListActive(_ context.Context, opts domain.AlertHistoryListOptions) ([]*domain.AlertHistory, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, 0, f.listErr
+	}
+	var out []*domain.AlertHistory
+	for _, a := range f.created {
+		if a.State == domain.AlertStateFiring {
+			out = append(out, a)
+		}
+	}
+	return out, int64(len(out)), nil
 }
 
 func (f *fakeHistory) firing() []*domain.AlertHistory {
@@ -135,6 +151,7 @@ func newTestEvaluator(t *testing.T, clock *time.Time, provider *fakeRuleProvider
 	e := New(bus, discardLogger{}).
 		WithProvider(provider).
 		WithHistory(history).
+		WithHistoryReader(history).
 		withClock(func() time.Time { return *clock })
 
 	e.Start()
@@ -421,4 +438,123 @@ func TestSilencedRuleSkipsFire(t *testing.T) {
 	*clock = (*clock).Add(2 * time.Hour)
 	bus.Publish("server_metrics_received", metricWithCPU(sid, 96))
 	require.Equal(t, 1, rec.firedCount(), "expired silence must allow firing")
+}
+
+// ---- restart rehydration (C1) ----
+
+// restartEvaluator simulates a process restart: a brand-new Evaluator over
+// the same persisted history re-runs Start, which must rehydrate.
+func restartEvaluator(t *testing.T, clock *time.Time, provider *fakeRuleProvider, history *fakeHistory) (*event.Bus, *eventRecorder) {
+	t.Helper()
+	bus := event.New()
+	New(bus, discardLogger{}).
+		WithProvider(provider).
+		WithHistory(history).
+		WithHistoryReader(history).
+		withClock(func() time.Time { return *clock }).
+		Start()
+	rec := &eventRecorder{}
+	rec.register(bus)
+	return bus, rec
+}
+
+func TestRestartMidBreachDoesNotRefire(t *testing.T) {
+	now := time.Now().UTC()
+	clock := &now
+	provider := &fakeRuleProvider{}
+	provider.set([]domain.AlertRule{baseMetricRule()})
+	history := &fakeHistory{}
+	_, bus := newTestEvaluator(t, clock, provider, history)
+	rec := &eventRecorder{}
+	rec.register(bus)
+
+	sid := uuid.New()
+	bus.Publish("server_metrics_received", metricWithCPU(sid, 95))
+	require.Equal(t, 1, rec.firedCount())
+	require.Equal(t, 1, history.countCreated())
+
+	// Restart with the breach still active.
+	bus2, rec2 := restartEvaluator(t, clock, provider, history)
+	bus2.Publish("server_metrics_received", metricWithCPU(sid, 95))
+	assert.Equal(t, 1, history.countCreated(), "restart must not insert a second firing row")
+	assert.Equal(t, 0, rec2.firedCount(), "restart must not publish a second alert_fired")
+}
+
+func TestRestartMidBreachResolvesOriginalRow(t *testing.T) {
+	now := time.Now().UTC()
+	clock := &now
+	provider := &fakeRuleProvider{}
+	provider.set([]domain.AlertRule{baseMetricRule()})
+	history := &fakeHistory{}
+	_, bus := newTestEvaluator(t, clock, provider, history)
+	rec := &eventRecorder{}
+	rec.register(bus)
+
+	sid := uuid.New()
+	bus.Publish("server_metrics_received", metricWithCPU(sid, 95))
+	require.Equal(t, 1, rec.firedCount())
+	require.Len(t, history.created, 1)
+	originalID := history.created[0].ID
+	require.NotZero(t, originalID)
+
+	// Restart, then clear the condition.
+	bus2, rec2 := restartEvaluator(t, clock, provider, history)
+	bus2.Publish("server_metrics_received", metricWithCPU(sid, 50))
+	require.Len(t, history.resolved, 1, "restarted evaluator must resolve the original row")
+	assert.Equal(t, originalID, history.resolved[0])
+	assert.Equal(t, 1, rec2.resolvedCount(), "expected one alert_resolved")
+}
+
+func TestRehydrationRestoresCooldown(t *testing.T) {
+	now := time.Now().UTC()
+	clock := &now
+	rule := baseMetricRule()
+	rule.Cooldown = 300
+	provider := &fakeRuleProvider{}
+	provider.set([]domain.AlertRule{rule})
+	history := &fakeHistory{}
+	_, bus := newTestEvaluator(t, clock, provider, history)
+	rec := &eventRecorder{}
+	rec.register(bus)
+
+	sid := uuid.New()
+	bus.Publish("server_metrics_received", metricWithCPU(sid, 95))
+	require.Equal(t, 1, rec.firedCount())
+	require.Equal(t, 1, history.countCreated())
+
+	// Restart mid-breach, then clear: the original row resolves.
+	bus2, rec2 := restartEvaluator(t, clock, provider, history)
+	bus2.Publish("server_metrics_received", metricWithCPU(sid, 50))
+	require.Equal(t, 1, rec2.resolvedCount())
+
+	// Immediate re-breach inside the 300s cooldown window must not fire.
+	*clock = (*clock).Add(10 * time.Second)
+	bus2.Publish("server_metrics_received", metricWithCPU(sid, 95))
+	assert.Equal(t, 1, history.countCreated(), "cooldown must survive restart: no second row")
+	assert.Equal(t, 0, rec2.firedCount(), "cooldown must survive restart: no second alert_fired")
+}
+
+func TestRehydrateReadFailureIsNonFatal(t *testing.T) {
+	now := time.Now().UTC()
+	clock := &now
+	provider := &fakeRuleProvider{}
+	provider.set([]domain.AlertRule{baseMetricRule()})
+	history := &fakeHistory{listErr: assert.AnError}
+
+	bus := event.New()
+	e := New(bus, discardLogger{}).
+		WithProvider(provider).
+		WithHistory(history).
+		WithHistoryReader(history).
+		withClock(func() time.Time { return *clock })
+	require.NotPanics(t, func() { e.Start() }, "rehydrate failure must not break boot")
+	rec := &eventRecorder{}
+	rec.register(bus)
+
+	// Evaluator still processes a first-time breach after the failed rehydrate.
+	history.listErr = nil
+	sid := uuid.New()
+	bus.Publish("server_metrics_received", metricWithCPU(sid, 95))
+	assert.Equal(t, 1, rec.firedCount(), "evaluator must still fire after failed rehydrate")
+	assert.Equal(t, 1, history.countCreated())
 }

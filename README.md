@@ -108,6 +108,42 @@ The flow is *preflight → generate → validate → apply → verify*:
 5. **Verify** polls `GET /health` on 4858 until the control plane answers, then
    prints the URLs + first-login info.
 
+#### Mirrors, local artifacts, and offline installs
+
+Every artifact is fetched from public GitHub by default. Three knobs change where
+they come from:
+
+- **`HX_ARTIFACT_BASE`** — base URL for release downloads (default
+  `https://github.com/zlnew/horizonx`; a trailing slash is fine and stripped).
+  It covers the **server tarball**: the generated `server/Dockerfile` runs
+  `curl "$HX_ARTIFACT_BASE/releases/.../horizonx-linux-$ARCH.tar.gz"` at `docker
+  build` time, and `install.sh` downloads the CLI binary from the same base. Set
+  it in your shell or in `/opt/horizonx/.env`. It does **not** change where the
+  dashboard image comes from.
+- **`--tarball-dir <dir>`** (env **`HX_TARBALL_DIR`**) — a local directory
+  holding the dashboard image tarball (`horizonx-dashboard-*-image.tar.gz`) and
+  its `SHA256SUMS` (plus `SHA256SUMS.minisig` when `HORIZONX_RELEASE_PUBKEY` is
+  set). It is consulted **before** the release API, so an install with the
+  artifacts on disk never contacts GitHub for the dashboard. The tarball is
+  always checksum-verified — and signature-verified when a release public key is
+  configured — before it is loaded; a tampered local file fails closed exactly
+  like a tampered download. The env var is also honoured by `horizonx upgrade`,
+  which reuses the same apply path.
+- **`--generate-only`** — write the instance tree and stop before any privileged
+  step (no docker calls), printing the next commands. This is the manual
+  fallback when neither GitHub nor a mirror is reachable:
+
+  ```bash
+  horizonx install server --generate-only
+  cd /opt/horizonx && docker compose up -d
+  ```
+
+What is *not* covered: a fully offline `install server` still needs either
+GitHub reachability or a mirror for the server tarball, because that download
+happens inside `docker build` (the Dockerfile's `curl`). `--tarball-dir` supplies
+only the dashboard image locally. Use `--generate-only` to produce the tree and
+build/edit it by hand when no reachable source exists.
+
 **First boot auto-seeds the admin user** (`AUTO_SEED=true` in the instance
 `.env`) — email + password are prompted during install (or passed with
 `--admin` / `--admin-password`, random when blank) and printed at the end.
@@ -229,9 +265,20 @@ bin/horizonx server         # run the control plane
 # Legacy split binaries (still supported)
 make build                  # bin/server, bin/agent, bin/migrate, bin/seed
 
-# Tests
-go test ./...
+# Checks — the two targets differ in one way that matters
+make check                  # vet + test-unit + build: the everyday target
+make check-all              # vet + test + build: also runs internal/app
 ```
+
+`make check` excludes `internal/app`, whose tests assert that ports 4858/4859 are
+free. Those fail whenever the local dev stack is running, which is exactly why the
+everyday target skips them. Run `make check-all` with the stack stopped when you
+touch that package. `make help` lists every target.
+
+**GitHub Actions is billing-disabled on this repository**, so the workflows do not
+run and a red check here carries no signal. The workflow steps deliberately call
+these same Makefile targets, so they cannot drift from what you run locally — but
+`make check` on this box is the real gate.
 
 The dashboard is developed in [horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard) (`npm install && npm run dev`).
 

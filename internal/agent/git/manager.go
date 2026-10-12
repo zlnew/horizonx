@@ -3,6 +3,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,20 @@ import (
 
 	"horizonx/internal/agent/command"
 )
+
+func validateBranch(branch string) error {
+	if branch == "" {
+		return fmt.Errorf("branch cannot be empty")
+	}
+	if strings.HasPrefix(branch, "-") {
+		return fmt.Errorf("invalid branch %q: branch cannot start with '-'", branch)
+	}
+	return nil
+}
+
+func buildCloneArgs(branch, remoteURL, workDir string) []string {
+	return []string{"clone", "--branch", branch, "--depth", "1", "--", remoteURL, workDir}
+}
 
 type Manager struct{}
 
@@ -26,13 +41,21 @@ func (m *Manager) CloneOrPull(ctx context.Context, workDir string, remoteURL, br
 }
 
 func (m *Manager) Clone(ctx context.Context, workDir string, remoteURL, branch string, handlers ...command.StreamHandler) (string, error) {
-	args := []string{"clone", "--branch", branch, "--depth", "1", remoteURL, workDir}
+	if err := validateBranch(branch); err != nil {
+		return "", err
+	}
+
+	args := buildCloneArgs(branch, remoteURL, workDir)
 
 	cmd := command.NewCommand(workDir, "git", args...)
 	return cmd.Run(ctx, handlers...)
 }
 
 func (m *Manager) Pull(ctx context.Context, workDir string, branch string, handlers ...command.StreamHandler) (string, error) {
+	if err := validateBranch(branch); err != nil {
+		return "", err
+	}
+
 	// P1-8: clean pull — force-checkout the branch and hard-reset to the
 	// remote tip. A dirty tree or a divergent local branch must never block a
 	// deploy or leave local junk in the build dir. Deployments are fully

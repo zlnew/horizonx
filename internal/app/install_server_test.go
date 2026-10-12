@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"aead.dev/minisign"
 )
 
 // setExecCompose swaps the compose executor for the duration of a test.
@@ -490,5 +492,362 @@ func TestHasInstanceVolumesProjectPrefixed(t *testing.T) {
 
 	if !hasInstanceVolumes("/tmp/test") {
 		t.Error("hasInstanceVolumes should detect project-prefixed horizonx volumes")
+	}
+}
+
+// minisign test helpers (hermetic: pure-Go key generation + signing, no binary).
+func minisign_GenerateKeyForTest(t *testing.T) (string, []byte, error) {
+	t.Helper()
+	pub, _, err := minisign.GenerateKey(nil)
+	if err != nil {
+		return "", nil, err
+	}
+	return pub.String(), nil, nil
+}
+
+func minisign_SignForTest(t *testing.T, sums []byte) (string, []byte) {
+	t.Helper()
+	pub, priv, err := minisign.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	return pub.String(), minisign.Sign(priv, sums)
+}
+
+func TestFetchDashboardTarballFailsClosedWithoutSignature(t *testing.T) {
+	// Fail-closed: with a release public key configured, the dashboard
+	// fetch must abort when SHA256SUMS.minisig is missing — on BOTH the
+	// fresh-download path and the cached-tarball path.
+	content := []byte("fake dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	tarballName := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + tarballName:
+			_, _ = w.Write(content)
+		case "/SHA256SUMS":
+			fmt.Fprintf(w, "%s  %s\n", sum, tarballName)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{
+			Tag:        "v0.3.0",
+			TarballURL: srv.URL + "/" + tarballName,
+			SHAURL:     srv.URL + "/SHA256SUMS",
+		}, nil
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	pub, _, err := minisign_GenerateKeyForTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envReleasePubkey, pub)
+
+	if _, err := fetchDashboardTarball(t.TempDir()); err == nil {
+		t.Fatal("expected fresh-download path to fail closed without a signature, got nil")
+	}
+
+	// Cached path: pre-place a tarball matching the (unsigned) sums.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, tarballName), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fetchDashboardTarball(dir); err == nil {
+		t.Fatal("expected cached path to fail closed without a signature, got nil")
+	}
+}
+
+func TestFetchDashboardTarballVerifiesSignatureWhenKeySet(t *testing.T) {
+	// Happy path with a key configured: signed sums verify on download.
+	content := []byte("fake dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	tarballName := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	sums := []byte(fmt.Sprintf("%s  %s\n", sum, tarballName))
+	pub, sig := minisign_SignForTest(t, sums)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + tarballName:
+			_, _ = w.Write(content)
+		case "/SHA256SUMS":
+			_, _ = w.Write(sums)
+		case "/SHA256SUMS.minisig":
+			_, _ = w.Write(sig)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		return dashboardRelease{
+			Tag:        "v0.3.0",
+			TarballURL: srv.URL + "/" + tarballName,
+			SHAURL:     srv.URL + "/SHA256SUMS",
+		}, nil
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	t.Setenv(envReleasePubkey, pub)
+	if _, err := fetchDashboardTarball(t.TempDir()); err != nil {
+		t.Fatalf("fetchDashboardTarball with valid signature: %v", err)
+	}
+}
+
+// writeLocalDashboardArtifacts writes a dashboard tarball and optional
+// SHA256SUMS / SHA256SUMS.minisig into dir, returning the tarball path.
+func writeLocalDashboardArtifacts(t *testing.T, dir string, content, sums, sig []byte) string {
+	t.Helper()
+	name := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	if err := os.WriteFile(filepath.Join(dir, name), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if sums != nil {
+		if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS"), sums, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sig != nil {
+		if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS.minisig"), sig, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return filepath.Join(dir, name)
+}
+
+func TestArtifactBaseResolution(t *testing.T) {
+	// Unset -> the historical GitHub default, and the produced URL keeps exactly
+	// one slash before releases/.
+	t.Setenv(envArtifactBase, "")
+	if got := artifactBaseFromEnv(); got != defaultArtifactBase {
+		t.Errorf("unset artifactBaseFromEnv() = %q, want %q", got, defaultArtifactBase)
+	}
+	wantDefault := "https://github.com/zlnew/horizonx/releases/download/v1.2.3/horizonx-linux-x86_64.tar.gz"
+	if got := releaseArtifactURL(artifactBaseFromEnv(), "v1.2.3", "horizonx-linux-x86_64.tar.gz"); got != wantDefault {
+		t.Errorf("default release URL = %q, want %q", got, wantDefault)
+	}
+
+	// Set -> used verbatim.
+	t.Setenv(envArtifactBase, "https://mirror.example.com")
+	if got := artifactBaseFromEnv(); got != "https://mirror.example.com" {
+		t.Errorf("set artifactBaseFromEnv() = %q, want the mirror verbatim", got)
+	}
+	wantMirror := "https://mirror.example.com/releases/latest/download/SHA256SUMS"
+	if got := releaseArtifactURL(artifactBaseFromEnv(), "latest", "SHA256SUMS"); got != wantMirror {
+		t.Errorf("mirror latest URL = %q, want %q", got, wantMirror)
+	}
+
+	// Trailing slash normalised: exactly one slash before releases/.
+	t.Setenv(envArtifactBase, "https://mirror.example.com/")
+	if got := artifactBaseFromEnv(); got != "https://mirror.example.com" {
+		t.Errorf("trailing-slash artifactBaseFromEnv() = %q, want %q", got, "https://mirror.example.com")
+	}
+	gotURL := releaseArtifactURL(artifactBaseFromEnv(), "v1.2.3", "x")
+	wantURL := "https://mirror.example.com/releases/download/v1.2.3/x"
+	if gotURL != wantURL {
+		t.Errorf("trailing-slash URL = %q, want %q", gotURL, wantURL)
+	}
+	if strings.Contains(gotURL, "//releases") {
+		t.Errorf("doubled slash before releases/: %q", gotURL)
+	}
+}
+
+func TestServerDockerfileUsesArtifactBase(t *testing.T) {
+	// Unset must reproduce the historical default: the ARG default and the
+	// compose pass-through both resolve to the GitHub repo URL, and the curl
+	// lines build their URLs from that ARG instead of a hard-coded host.
+	if !strings.Contains(instanceServerDockerfile, "ARG HX_ARTIFACT_BASE="+defaultArtifactBase) {
+		t.Errorf("generated Dockerfile missing the artifact-base ARG default:\n%s", instanceServerDockerfile)
+	}
+	if !strings.Contains(instanceServerDockerfile, `ARTIFACT_BASE="${HX_ARTIFACT_BASE%/}"`) {
+		t.Error("generated Dockerfile does not strip a trailing slash from HX_ARTIFACT_BASE")
+	}
+	if !strings.Contains(instanceServerDockerfile, `curl -fsSL $ARTIFACT_BASE/$BASE/horizonx-linux-$ARCH.tar.gz`) {
+		t.Error("generated Dockerfile does not build the tarball URL from $ARTIFACT_BASE")
+	}
+	if !strings.Contains(instanceServerDockerfile, `curl -fsSL $ARTIFACT_BASE/$BASE/SHA256SUMS`) {
+		t.Error("generated Dockerfile does not build the SHA256SUMS URL from $ARTIFACT_BASE")
+	}
+	if strings.Contains(instanceServerDockerfile, "curl -fsSL https://github.com/zlnew/horizonx/$BASE") {
+		t.Error("generated Dockerfile still hard-codes the GitHub host in a curl line")
+	}
+	if !strings.Contains(instanceComposeServer, "HX_ARTIFACT_BASE: ${HX_ARTIFACT_BASE:-"+defaultArtifactBase+"}") {
+		t.Error("server compose does not pass HX_ARTIFACT_BASE through to the build")
+	}
+}
+
+func TestGeneratedDockerfileIndependentOfArtifactBaseEnv(t *testing.T) {
+	// "Unset preserves today's behaviour byte-for-byte": the generated server
+	// Dockerfile must be identical whether HX_ARTIFACT_BASE is set or not. Only
+	// the build arg passed by compose changes at run time, never the file.
+	generate := func(base string) string {
+		t.Helper()
+		t.Setenv(envArtifactBase, base)
+		l, err := GenerateInstanceWithAdmin(t.TempDir(), "127.0.0.1", "admin@horizonx.local", "pw", nil)
+		if err != nil {
+			t.Fatalf("GenerateInstanceWithAdmin: %v", err)
+		}
+		b, err := os.ReadFile(l.ServerDockerfile)
+		if err != nil {
+			t.Fatalf("read generated Dockerfile: %v", err)
+		}
+		return string(b)
+	}
+	unset := generate("")
+	set := generate("https://mirror.example.com")
+	if unset != set {
+		t.Errorf("generated Dockerfile bytes changed with HX_ARTIFACT_BASE:\nunset: %q\nset:   %q", unset, set)
+	}
+	if !strings.Contains(unset, "ARG HX_ARTIFACT_BASE="+defaultArtifactBase) {
+		t.Errorf("unset generated Dockerfile does not carry the GitHub default:\n%s", unset)
+	}
+}
+
+func TestTarballDirOrDefault(t *testing.T) {
+	// An explicit flag wins; an empty one falls back to HX_TARBALL_DIR. This is
+	// what lets the upgrade path (which never parses the flag) honour the env.
+	t.Setenv(envTarballDir, "/tmp/from-env")
+	if got := tarballDirOrDefault(""); got != "/tmp/from-env" {
+		t.Errorf("tarballDirOrDefault(\"\") = %q, want the env value", got)
+	}
+	if got := tarballDirOrDefault("/tmp/from-flag"); got != "/tmp/from-flag" {
+		t.Errorf("tarballDirOrDefault(flag) = %q, want the flag value", got)
+	}
+	t.Setenv(envTarballDir, "")
+	if got := tarballDirOrDefault(""); got != "" {
+		t.Errorf("tarballDirOrDefault with nothing set = %q, want empty", got)
+	}
+}
+
+func TestTarballDirPreferredWithoutReleaseAPI(t *testing.T) {
+	tarballDir := t.TempDir()
+	cacheDir := t.TempDir()
+	content := []byte("local dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	name := "horizonx-dashboard-v9.9.9-image.tar.gz"
+	if err := os.WriteFile(filepath.Join(tarballDir, name), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tarballDir, "SHA256SUMS"), []byte(fmt.Sprintf("%s  %s\n", sum, name)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	apiCalled := false
+	oldRel := latestDashboardRelease
+	latestDashboardRelease = func() (dashboardRelease, error) {
+		apiCalled = true
+		return dashboardRelease{}, errors.New("release API down")
+	}
+	defer func() { latestDashboardRelease = oldRel }()
+
+	got, err := fetchDashboardTarballFrom(cacheDir, tarballDir)
+	if err != nil {
+		t.Fatalf("--tarball-dir install should succeed offline: %v", err)
+	}
+	if got != filepath.Join(tarballDir, name) {
+		t.Errorf("got %q, want the local %q", got, filepath.Join(tarballDir, name))
+	}
+	if apiCalled {
+		t.Error("release API was contacted despite a complete --tarball-dir; local artifacts must be used without GitHub")
+	}
+}
+
+func TestResolveDashboardTarballPrefersLocalDir(t *testing.T) {
+	tarballDir := t.TempDir()
+	name := "horizonx-dashboard-v9.9.9-image.tar.gz"
+	if err := os.WriteFile(filepath.Join(tarballDir, name), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pick, _, err := resolveDashboardTarball(tarballDir, t.TempDir(), func() (dashboardRelease, error) {
+		t.Error("release lookup must not run when --tarball-dir holds a tarball")
+		return dashboardRelease{}, errors.New("unreachable")
+	})
+	if err != nil {
+		t.Fatalf("resolveDashboardTarball: %v", err)
+	}
+	if !pick.VerifyLocal || pick.Path != filepath.Join(tarballDir, name) {
+		t.Errorf("pick = %+v, want a verified local path", pick)
+	}
+
+	// No local tarball + failed lookup => the pre-existing best-effort cache
+	// fallback, unverified.
+	cacheDir := t.TempDir()
+	cacheName := "horizonx-dashboard-old.tar.gz"
+	if err := os.WriteFile(filepath.Join(cacheDir, cacheName), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pick, _, err = resolveDashboardTarball("", cacheDir, func() (dashboardRelease, error) {
+		return dashboardRelease{}, errors.New("api down")
+	})
+	if err == nil {
+		t.Error("expected the release lookup error to be returned")
+	}
+	if pick.VerifyLocal || pick.Path != filepath.Join(cacheDir, cacheName) {
+		t.Errorf("fallback pick = %+v, want the unverified cache path", pick)
+	}
+}
+
+func TestTarballDirTamperedTarballFailsClosed(t *testing.T) {
+	// A tampered tarball plus a matching, attacker-supplied SHA256SUMS (the
+	// checksum is self-consistent). With a real release public key configured
+	// only the signature gate can reject it — which is exactly what must
+	// happen: --tarball-dir must not bypass signature verification.
+	tarballDir := t.TempDir()
+	content := []byte("tampered dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	sums := []byte(fmt.Sprintf("%s  horizonx-dashboard-v0.3.0-image.tar.gz\n", sum))
+	writeLocalDashboardArtifacts(t, tarballDir, content, sums, nil)
+
+	pub, _, err := minisign_GenerateKeyForTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envReleasePubkey, pub)
+
+	if _, err := fetchDashboardTarballFrom(t.TempDir(), tarballDir); err == nil {
+		t.Fatal("tampered --tarball-dir tarball accepted: local dir bypassed signature verification")
+	}
+}
+
+func TestTarballDirSignedLocalTarballAccepted(t *testing.T) {
+	content := []byte("local dashboard image")
+	sum := fmt.Sprintf("%x", sha256.Sum256(content))
+	name := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	sums := []byte(fmt.Sprintf("%s  %s\n", sum, name))
+	pub, sig := minisign_SignForTest(t, sums)
+
+	dir := t.TempDir()
+	writeLocalDashboardArtifacts(t, dir, content, sums, sig)
+	t.Setenv(envReleasePubkey, pub)
+
+	got, err := fetchDashboardTarballFrom(t.TempDir(), dir)
+	if err != nil {
+		t.Fatalf("signed local tarball should be accepted: %v", err)
+	}
+	if got != filepath.Join(dir, name) {
+		t.Errorf("got %q, want %q", got, filepath.Join(dir, name))
+	}
+}
+
+func TestTarballDirChecksumMismatchRejected(t *testing.T) {
+	// Validly signed sums that list a hash which does NOT match the tarball must
+	// still be rejected — the checksum step is not implied by the signature step.
+	content := []byte("dashboard image")
+	name := "horizonx-dashboard-v0.3.0-image.tar.gz"
+	sums := []byte(fmt.Sprintf("%s  %s\n", strings.Repeat("0", 64), name))
+	pub, sig := minisign_SignForTest(t, sums)
+
+	dir := t.TempDir()
+	writeLocalDashboardArtifacts(t, dir, content, sums, sig)
+	t.Setenv(envReleasePubkey, pub)
+
+	if _, err := fetchDashboardTarballFrom(t.TempDir(), dir); err == nil {
+		t.Fatal("expected a local tarball failing the checksum to be rejected")
 	}
 }

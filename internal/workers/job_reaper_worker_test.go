@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"horizonx/internal/agent"
 	"horizonx/internal/domain"
 
 	"github.com/google/uuid"
@@ -90,3 +91,32 @@ func (noopLog) Debug(string, ...any) {}
 func (noopLog) Info(string, ...any)  {}
 func (noopLog) Warn(string, ...any)  {}
 func (noopLog) Error(string, ...any) {}
+
+// TestReapAfterOutlastsAgentJobTimeouts guards a cross-package invariant that
+// nothing else connects: reapAfter lives here, the agent's job timeouts live in
+// internal/agent, and the two constants are only correct relative to each
+// other. Both clocks start from the same event — the agent writing StartedAt —
+// so a job type added later that runs longer than reapAfter makes the reaper
+// mark live jobs failed while the agent is still working on them.
+//
+// The spec filed this as the opposite problem ("a window where a job is reaped
+// while the agent may still be working") and proposed aligning the two
+// timeouts, which would have removed the existing margin rather than protected
+// it. The guard is the part of that finding worth keeping.
+func TestReapAfterOutlastsAgentJobTimeouts(t *testing.T) {
+	longest := agent.MaxJobTimeout()
+
+	if reapAfter <= longest {
+		t.Fatalf("reapAfter (%s) must exceed the longest agent job timeout (%s), "+
+			"otherwise a job the agent is still running gets reaped; raise reapAfter "+
+			"or lower the job timeout", reapAfter, longest)
+	}
+
+	// The 2x margin is deliberate, not incidental: the agent gives up at
+	// `longest`, but it still has to notice that, report it over the websocket,
+	// and have the server persist it before the reaper would race it.
+	if want := 2 * longest; reapAfter < want {
+		t.Errorf("margin too thin: reapAfter = %s, want at least %s (2x the longest "+
+			"agent job timeout of %s)", reapAfter, want, longest)
+	}
+}

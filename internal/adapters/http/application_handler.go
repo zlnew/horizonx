@@ -339,7 +339,7 @@ func (h *ApplicationHandler) TailLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errs := h.validator.Validate(&req); len(errs) > 0 {
-		h.writer.Write(w, http.StatusUnprocessableEntity, &response.Response{Message: errs["error"]})
+		h.writer.WriteValidationError(w, errs)
 		return
 	}
 
@@ -377,7 +377,7 @@ func (h *ApplicationHandler) StopTailLogs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if errs := h.validator.Validate(&req); len(errs) > 0 {
-		h.writer.Write(w, http.StatusUnprocessableEntity, &response.Response{Message: errs["error"]})
+		h.writer.WriteValidationError(w, errs)
 		return
 	}
 
@@ -415,7 +415,7 @@ func (h *ApplicationHandler) QueryLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errs := h.validator.Validate(&req); len(errs) > 0 {
-		h.writer.Write(w, http.StatusUnprocessableEntity, &response.Response{Message: errs["error"]})
+		h.writer.WriteValidationError(w, errs)
 		return
 	}
 

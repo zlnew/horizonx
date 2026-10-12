@@ -21,6 +21,8 @@ type JobWorker struct {
 	httpClient *HttpClient
 	executor   *executor.Executor
 
+	droppedMessagesFunc func() int64
+
 	// appLocks serializes jobs that touch the same application workdir
 	// (P1-7). Two deploys — or a deploy and a stop — for the same app must
 	// never run concurrently: they share a directory and docker project.
@@ -36,6 +38,54 @@ func NewJobWorker(cfg *config.Config, log logger.Logger, httpClient HttpClient, 
 		executor:   &executor,
 		appLocks:   newKeyedMutex(),
 	}
+}
+
+// SetDroppedMessagesFunc injects the agent's drop-counter getter. A nil
+// func is treated as "zero" and never panics.
+func (w *JobWorker) SetDroppedMessagesFunc(f func() int64) {
+	w.droppedMessagesFunc = f
+}
+
+func (w *JobWorker) droppedCount() int64 {
+	if w == nil || w.droppedMessagesFunc == nil {
+		return 0
+	}
+	return w.droppedMessagesFunc()
+}
+
+func (w *JobWorker) stampDroppedMessages(m *domain.Metrics) {
+	if m == nil {
+		return
+	}
+	m.DroppedMessages = w.droppedCount()
+}
+
+// subscribeMetrics registers the metrics forwarding handler. Extracted from
+// Start so a test can drive the bus and prove the drop count is actually
+// stamped onto the outgoing payload — without this seam, deleting the stamp
+// is a silent regression that no other test would catch.
+func (w *JobWorker) subscribeMetrics(bus *event.Bus, metricsCh chan *domain.Metrics) {
+	bus.Subscribe("metrics", func(event any) {
+		metrics, ok := event.(*domain.Metrics)
+		if !ok {
+			return
+		}
+
+		// Stamp synchronously: it only reads the atomic drop counter and must
+		// be reflected on the payload the moment the bus is driven.
+		w.stampDroppedMessages(metrics)
+
+		// Publishing on the executor's emit path must never block on the
+		// network, so the HTTP send is drained on its own goroutine. Under
+		// backpressure, dropping a metrics sample is the right trade against
+		// stalling a job — consistent with the agent's dropped-message
+		// accounting.
+		select {
+		case metricsCh <- metrics:
+		default:
+			w.log.Warn("metrics channel full, dropping event")
+		}
+	})
 }
 
 func (w *JobWorker) Start(ctx context.Context) error {
@@ -150,6 +200,23 @@ var jobTimeouts = map[domain.JobType]time.Duration{
 
 const defaultJobTimeout = 5 * time.Minute
 
+// MaxJobTimeout is the longest single job the agent will allow to run before
+// giving up. The server's job reaper must outlast it, because both clocks
+// start from the same event — the agent writing StartedAt — so a reaper that
+// fires first marks a job failed while the agent is still working on it.
+//
+// Exported only so that invariant can be asserted from internal/workers, where
+// the reaper's threshold lives; see TestReapAfterOutlastsAgentJobTimeouts.
+func MaxJobTimeout() time.Duration {
+	max := defaultJobTimeout
+	for _, d := range jobTimeouts {
+		if d > max {
+			max = d
+		}
+	}
+	return max
+}
+
 func jobTimeout(t domain.JobType) time.Duration {
 	if d, ok := jobTimeouts[t]; ok {
 		return d
@@ -163,9 +230,11 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 
 	logCh := make(chan domain.EventLogEmitted, 500)
 	commitCh := make(chan domain.EventCommitInfoEmitted, 1)
+	metricsCh := make(chan *domain.Metrics, 500)
+	appHealthCh := make(chan []domain.ApplicationHealth, 500)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(4)
 
 	sendCtx := context.WithoutCancel(ctx)
 	go func() {
@@ -204,18 +273,27 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 		}
 	}()
 
+	go func() {
+		defer wg.Done()
+		for metrics := range metricsCh {
+			if err := w.httpClient.SendMetrics(sendCtx, metrics); err != nil {
+				w.log.Error("failed to send metrics", "error", err)
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for reports := range appHealthCh {
+			if err := w.httpClient.SendAppHealthReports(sendCtx, reports); err != nil {
+				w.log.Error("failed to send application health reports", "error", err)
+			}
+		}
+	}()
+
 	bus := event.New()
 
-	bus.Subscribe("metrics", func(event any) {
-		metrics, ok := event.(*domain.Metrics)
-		if !ok {
-			return
-		}
-
-		if err := w.httpClient.SendMetrics(ctx, metrics); err != nil {
-			w.log.Error("failed to send metrics", "error", err)
-		}
-	})
+	w.subscribeMetrics(bus, metricsCh)
 
 	bus.Subscribe("app_healths", func(event any) {
 		reports, ok := event.([]domain.ApplicationHealth)
@@ -223,8 +301,10 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 			return
 		}
 
-		if err := w.httpClient.SendAppHealthReports(ctx, reports); err != nil {
-			w.log.Error("failed to send application health reports", "error", err)
+		select {
+		case appHealthCh <- reports:
+		default:
+			w.log.Warn("application health channel full, dropping event")
 		}
 	})
 
@@ -271,6 +351,8 @@ func (w *JobWorker) execute(ctx context.Context, job domain.Job) error {
 
 	close(logCh)
 	close(commitCh)
+	close(metricsCh)
+	close(appHealthCh)
 
 	wg.Wait()
 

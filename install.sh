@@ -19,7 +19,12 @@ set -euo pipefail
 
 REPO="${HORIZONX_REPO:-zlnew/horizonx}"
 PREFIX="${HORIZONX_PREFIX:-/usr/local}"
-GITHUB="https://github.com/${REPO}"
+# Release artifacts are served from GITHUB. HX_ARTIFACT_BASE overrides the host
+# for internal mirrors; the trailing-slash strip keeps the URL joins below to
+# exactly one slash. LATEST_URL stays on api.github.com: it is a tag lookup,
+# not an artifact download.
+GITHUB="${HX_ARTIFACT_BASE:-https://github.com/${REPO}}"
+GITHUB="${GITHUB%/}"
 
 log()  { printf '\033[0;36m[*]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[0;32m[+]\033[0m %s\n' "$*"; }
@@ -60,6 +65,25 @@ trap 'rm -rf "$TMP"' EXIT
 log "downloading ${ASSET}…"
 curl -fsSL "${GITHUB}/releases/latest/download/${ASSET}" -o "$TMP/horizonx.tar.gz"
 curl -fsSL "${GITHUB}/releases/latest/download/SHA256SUMS" -o "$TMP/SHA256SUMS"
+
+# Release signature (minisign over SHA256SUMS). Opt-in via
+# HORIZONX_RELEASE_PUBKEY holding the public key text. When set, the
+# signature is REQUIRED and verified BEFORE trusting any checksum below.
+if [ -n "${HORIZONX_RELEASE_PUBKEY:-}" ]; then
+  command -v minisign >/dev/null 2>&1 || die "HORIZONX_RELEASE_PUBKEY is set but minisign is not on PATH — install minisign to verify the release signature"
+  curl -fsSL "${GITHUB}/releases/latest/download/SHA256SUMS.minisig" -o "$TMP/SHA256SUMS.minisig" || die "HORIZONX_RELEASE_PUBKEY is set but SHA256SUMS.minisig could not be downloaded — aborting"
+  # minisign -p needs a key FILE, so reconstruct one from the key text:
+  # full two-line .pub format the binary accepts. Accept either the bare
+  # base64 key line or the whole contents of a .pub file — the key line is
+  # always the last non-empty one, and the Go verifier takes both, so the two
+  # consumers must not disagree about what this variable contains.
+  {
+    printf 'untrusted comment: horizonx release key\n'
+    printf '%s\n' "$HORIZONX_RELEASE_PUBKEY" | grep -v '^[[:space:]]*$' | tail -n1
+  } > "$TMP/release.pub"
+  minisign -V -p "$TMP/release.pub" -m "$TMP/SHA256SUMS" -x "$TMP/SHA256SUMS.minisig" || die "release signature verification failed for SHA256SUMS — aborting"
+  ok "release signature verified"
+fi
 
 EXPECTED="$(awk -v a="$ASSET" '$2 == a {print $1}' "$TMP/SHA256SUMS")"
 [ -n "${EXPECTED:-}" ] || die "no checksum found for ${ASSET} in SHA256SUMS"
