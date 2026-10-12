@@ -265,9 +265,20 @@ bin/horizonx server         # run the control plane
 # Legacy split binaries (still supported)
 make build                  # bin/server, bin/agent, bin/migrate, bin/seed
 
-# Tests
-go test ./...
+# Checks — the two targets differ in one way that matters
+make check                  # vet + test-unit + build: the everyday target
+make check-all              # vet + test + build: also runs internal/app
 ```
+
+`make check` excludes `internal/app`, whose tests assert that ports 4858/4859 are
+free. Those fail whenever the local dev stack is running, which is exactly why the
+everyday target skips them. Run `make check-all` with the stack stopped when you
+touch that package. `make help` lists every target.
+
+**GitHub Actions is billing-disabled on this repository**, so the workflows do not
+run and a red check here carries no signal. The workflow steps deliberately call
+these same Makefile targets, so they cannot drift from what you run locally — but
+`make check` on this box is the real gate.
 
 The dashboard is developed in [horizonx-dashboard](https://github.com/zlnew/horizonx-dashboard) (`npm install && npm run dev`).
 
