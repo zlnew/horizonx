@@ -21,7 +21,49 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// defaultArtifactBase is the release-artifact base URL used when
+// HX_ARTIFACT_BASE is unset: the public GitHub repo whose releases carry the
+// server tarball. Every install path (the generated Dockerfile, install.sh)
+// defaults to it, so an unset variable preserves the historical behaviour.
+const defaultArtifactBase = "https://github.com/zlnew/horizonx"
+
+// envArtifactBase overrides defaultArtifactBase for installs served from an
+// internal mirror or artifact proxy.
+const envArtifactBase = "HX_ARTIFACT_BASE"
+
+// artifactBaseFromEnv returns the configured artifact base URL, normalised so
+// joins yield exactly one slash before "releases/": surrounding whitespace and
+// any trailing slashes are removed. Unset/empty falls back to
+// defaultArtifactBase.
+func artifactBaseFromEnv() string {
+	base := strings.TrimSpace(os.Getenv(envArtifactBase))
+	if base == "" {
+		base = defaultArtifactBase
+	}
+	return strings.TrimRight(base, "/")
+}
+
+// releaseBasePath mirrors the generated Dockerfile's BASE selection: a
+// "latest" (or empty) version resolves the latest release, anything else a
+// pinned download directory.
+func releaseBasePath(version string) string {
+	if version == "" || version == "latest" {
+		return "releases/latest/download"
+	}
+	return "releases/download/" + version
+}
+
+// releaseArtifactURL builds the URL the generated Dockerfile curls for a
+// release asset: <base>/<release path>/<asset> with exactly one slash at each
+// join. It is the Go model of the Dockerfile's `$ARTIFACT_BASE/$BASE/<asset>`
+// line, so TestArtifactBaseResolution can assert the exact strings without a
+// Docker build.
+func releaseArtifactURL(base, version, asset string) string {
+	return strings.TrimRight(base, "/") + "/" + releaseBasePath(version) + "/" + asset
+}
 
 // InstanceLayout describes the files GenerateInstance writes.
 type InstanceLayout struct {
@@ -174,6 +216,7 @@ services:
       dockerfile: Dockerfile
       args:
         HX_VERSION: ${HX_VERSION:-latest}
+        HX_ARTIFACT_BASE: ${HX_ARTIFACT_BASE:-` + defaultArtifactBase + `}
     image: ${APP_IMAGE:-horizonx:latest}
     env_file: ../.env
     ports:
@@ -212,6 +255,10 @@ const instanceServerDockerfile = `# HorizonX server image — built by the insta
 # kept the FIRST build's binary forever (the stale-image bug, 2026-08-04).
 # With a pinned version the layer cache misses each release -> fresh download.
 ARG HX_VERSION=latest
+# HX_ARTIFACT_BASE is the base URL for release artifacts. Default: the public
+# GitHub repo whose releases carry the server tarball. Point it at an internal
+# mirror for air-gapped installs; the "/releases/..." path below is unchanged.
+ARG HX_ARTIFACT_BASE=` + defaultArtifactBase + `
 FROM alpine:3.20
 # Docker scoping: an ARG before FROM is only in scope for FROM lines. The
 # build-arg value (passed by compose) is invisible to RUN steps unless the
@@ -221,6 +268,10 @@ FROM alpine:3.20
 # creatokuserver v0.5.0: upgrade left the old binary in the image; a manual
 # no-cache rebuild was the tell).
 ARG HX_VERSION
+# The same FROM-scoping re-declaration for HX_ARTIFACT_BASE (see above). The
+# trailing-slash strip in the RUN below keeps joins single-slash even when the
+# operator configures the base with a trailing slash.
+ARG HX_ARTIFACT_BASE
 RUN apk add --no-cache ca-certificates curl
 # Detect the build arch from uname (release tarballs use x86_64/arm64 —
 # BuildKit's automatic TARGETARCH arg is unreliable across builders).
@@ -235,8 +286,9 @@ RUN ARCH=$(uname -m); \
     else \
       BASE="releases/download/$HX_VERSION"; \
     fi; \
-    curl -fsSL https://github.com/zlnew/horizonx/$BASE/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
- && curl -fsSL https://github.com/zlnew/horizonx/$BASE/SHA256SUMS -o /tmp/SHA256SUMS \
+    ARTIFACT_BASE="${HX_ARTIFACT_BASE%/}"; \
+    curl -fsSL $ARTIFACT_BASE/$BASE/horizonx-linux-$ARCH.tar.gz -o /tmp/horizonx-linux-$ARCH.tar.gz \
+ && curl -fsSL $ARTIFACT_BASE/$BASE/SHA256SUMS -o /tmp/SHA256SUMS \
  && cd /tmp && grep "horizonx-linux-$ARCH.tar.gz" SHA256SUMS | sha256sum -c - \
  && tar -xzf /tmp/horizonx-linux-$ARCH.tar.gz -C /usr/local/bin horizonx \
  && rm /tmp/horizonx-linux-$ARCH.tar.gz /tmp/SHA256SUMS

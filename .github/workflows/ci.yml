@@ -17,12 +17,26 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: go vet
-        run: go vet ./...
+      # CI is billing-disabled on this repo, so these steps are dormant. They
+      # deliberately call the same Makefile targets the local checks use, so the
+      # two cannot drift. The hand-written commands they replace already had:
+      # they built three binaries where `make build` builds five, so `migrate`
+      # and `seed` were never compiled here at all.
+      #
+      # `make test` is the full suite and matches what this job ran before.
+      # `make test-unit` is the local everyday target and deliberately excludes
+      # internal/app, whose assertions need ports 4858/4859 free — the wrong
+      # target for a runner, where they genuinely are free.
+      #
+      # One deliberate difference from the previous steps: they also asserted
+      # CGO_ENABLED=0. That is not in `make build`, so it is not asserted here
+      # either; if the static build matters it belongs in the Makefile, where
+      # both paths would get it, rather than in one of the two.
+      - name: make vet
+        run: make vet
 
-      - name: go test
-        run: go test ./... -count=1
+      - name: make test
+        run: make test
 
-      - name: Build binaries
-        run: |
-          CGO_ENABLED=0 go build ./cmd/horizonx ./cmd/server ./cmd/agent
+      - name: make build
+        run: make build

@@ -68,6 +68,19 @@ func RunServer() error {
 		return errors.New("JWT_SECRET must be set to a strong random value (production refuses dev defaults)")
 	}
 
+	// S3: TRUST_PROXY trusts the first X-Forwarded-For, which is right behind
+	// tailscale serve and spoofable when the port is reachable directly.
+	if warn := cfg.TrustProxyExposureWarning(); warn != "" {
+		log.Warn(warn)
+	}
+
+	// S5: ENV_ENCRYPTION_KEY decouples environment-variable encryption from JWT_SECRET.
+	// When unset, warn the operator that secrets are still keyed by JWT_SECRET and rotating
+	// it will orphan them.
+	if cfg.EnvEncryptionKey == "" {
+		log.Warn("ENV_ENCRYPTION_KEY is unset: environment-variable secrets are encrypted with a key derived from JWT_SECRET. Rotating JWT_SECRET will orphan stored secrets. Set ENV_ENCRYPTION_KEY to decouple them.")
+	}
+
 	// Auto-migrate before serving (Laravel-style). Never serve on a stale
 	// schema; golang-migrate's advisory lock keeps concurrent boots safe.
 	if cfg.AutoMigrate {
@@ -117,14 +130,23 @@ func RunServer() error {
 	userRepo := postgres.NewUserRepository(dbPool)
 	jobRepo := postgres.NewJobRepository(dbPool)
 	metricsRepo := postgres.NewMetricsRepository(dbPool)
-	// P1-11: env var values are encrypted at rest with a key derived from
-	// JWT_SECRET (AES-256-GCM). No second secret to manage.
-	applicationRepo := postgres.NewApplicationRepository(dbPool, security.KeyFromSecret(cfg.JWTSecret))
+	// S5: env var values are encrypted at rest with ENV_ENCRYPTION_KEY (primary).
+	// If unset, fallback to JWT_SECRET (primary) with no legacy key.
+	// If set, ENV_ENCRYPTION_KEY is primary and JWT_SECRET is legacy key for read migration.
+	var primaryEncKey, legacyEncKey []byte
+	if cfg.EnvEncryptionKey != "" {
+		primaryEncKey = security.KeyFromSecret(cfg.EnvEncryptionKey)
+		legacyEncKey = security.KeyFromSecret(cfg.JWTSecret)
+	} else {
+		primaryEncKey = security.KeyFromSecret(cfg.JWTSecret)
+	}
+	applicationRepo := postgres.NewApplicationRepository(dbPool, primaryEncKey, legacyEncKey)
 	deploymentRepo := postgres.NewDeploymentRepository(dbPool)
 	auditLogRepo := postgres.NewAuditLogRepository(dbPool)
 	settingsRepo := postgres.NewSettingsRepository(dbPool)
 	alertRuleRepo := postgres.NewAlertRuleRepository(dbPool)
 	alertHistoryRepo := postgres.NewAlertHistoryRepository(dbPool)
+	retentionRepo := postgres.NewRetentionRepository(dbPool)
 
 	// Services
 	logService := logSvc.NewService(logRepo, bus)
@@ -219,6 +241,7 @@ func RunServer() error {
 	alerting.New(bus, log).
 		WithProvider(alertRuleRepo).
 		WithHistory(alertHistoryRepo).
+		WithHistoryReader(alertHistoryRepo).
 		Start()
 
 	// P3-19: audit log — record deploy/app/server events.
@@ -254,7 +277,7 @@ func RunServer() error {
 	accountHandler := http.NewAccountHandler(accountService, jsonDecoder, jsonWriter, validator)
 	userHandler := http.NewUserHandler(userService, authService, jsonDecoder, jsonWriter, validator)
 	jobHandler := http.NewJobHandler(jobService, jsonDecoder, jsonWriter, validator)
-	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator)
+	metricsHandler := http.NewMetricsHandler(metricsService, jsonDecoder, jsonWriter, validator, metricsRegistry)
 	deploymentHandler := http.NewDeploymentHandler(deploymentService, jsonDecoder, jsonWriter, validator)
 	applicationHandler := http.NewApplicationHandler(applicationService, trackedLogs, jsonDecoder, jsonWriter, validator)
 	auditLogHandler := http.NewAuditLogHandler(auditLogService, jsonDecoder, jsonWriter, validator)
@@ -321,12 +344,15 @@ func RunServer() error {
 	})
 
 	// Worker Manager
-	wScheduler := workers.NewScheduler(cfg, log)
+	wScheduler := workers.NewScheduler(cfg, log, postgres.NewAdvisoryLocker(dbPool), metricsRegistry)
 	wManager := workers.NewManager(log, wScheduler, &workers.ManagerServices{
 		Job:         jobService,
 		Server:      serverService,
 		Metrics:     metricsService,
 		Application: applicationService,
+		Retention:   retentionRepo,
+		JobTTL:      cfg.JobRetention,
+		LogTTL:      cfg.LogRetention,
 	})
 	wManager.Start(runtimeCtx)
 

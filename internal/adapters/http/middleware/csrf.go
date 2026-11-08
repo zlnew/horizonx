@@ -7,10 +7,16 @@ import (
 	"net/http"
 	"time"
 
+	"horizonx/internal/adapters/http/response"
 	"horizonx/internal/config"
+	"horizonx/internal/logger"
 )
 
-func CSRF(cfg *config.Config) func(http.Handler) http.Handler {
+func CSRF(cfg *config.Config, log logger.Logger) func(http.Handler) http.Handler {
+	if log == nil {
+		log = discardLogger{}
+	}
+	jw := response.NewJSONWriter(log)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
@@ -23,18 +29,18 @@ func CSRF(cfg *config.Config) func(http.Handler) http.Handler {
 
 			cookie, err := r.Cookie("horizonx_csrf_token")
 			if err != nil {
-				http.Error(w, "Missing CSRF cookie", http.StatusForbidden)
+				jw.Write(w, http.StatusForbidden, &response.Response{Message: "Missing CSRF cookie"})
 				return
 			}
 
 			tokenHeader := r.Header.Get("X-CSRF-Token")
 			if tokenHeader == "" {
-				http.Error(w, "Missing CSRF token header", http.StatusForbidden)
+				jw.Write(w, http.StatusForbidden, &response.Response{Message: "Missing CSRF token header"})
 				return
 			}
 
 			if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(tokenHeader)) != 1 {
-				http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+				jw.Write(w, http.StatusForbidden, &response.Response{Message: "Invalid CSRF token"})
 				return
 			}
 

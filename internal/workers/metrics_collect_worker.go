@@ -3,7 +3,6 @@ package workers
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"horizonx/internal/domain"
 	"horizonx/internal/logger"
@@ -46,58 +45,42 @@ func (w *MetricsCollectWorker) Run(ctx context.Context) error {
 	jobType := domain.JobTypeMetricsCollect
 
 	for _, srv := range servers.Data {
+		// Only an open (queued or running) job blocks a new one. A finished job
+		// is history and must never be resurrected: re-queueing the finished row
+		// wiped started_at/finished_at (so the reaper could never reap it) and
+		// re-ran the same job every tick forever. Creating a job only when none
+		// is open leaves one row per tick for the retention worker's TTL to bound.
 		jobs, err := w.job.List(ctx, domain.JobListOptions{
 			ListOptions: domain.ListOptions{
 				Limit: 1,
 			},
 			ServerID: &srv.ID,
 			Type:     string(domain.JobTypeMetricsCollect),
+			Statuses: []string{string(domain.JobQueued), string(domain.JobRunning)},
 		})
 		if err != nil {
 			w.log.Error("failed to list existing jobs", "job_type", jobType, "server_id", srv.ID.String())
 			continue
 		}
 
-		// Create new job
-		if len(jobs.Data) == 0 {
-			data := &domain.Job{
-				TraceID:  uuid.New(),
-				ServerID: srv.ID,
-				Type:     domain.JobTypeMetricsCollect,
-			}
-
-			createdJob, err := w.job.Create(ctx, data)
-			if err != nil {
-				w.log.Error("failed to create job", "job_type", jobType, "server_id", srv.ID.String())
-				continue
-			}
-
-			w.log.Debug("job created", "job_id", createdJob.ID, "job_type", createdJob.Type)
+		// An open job for this server/type will already run; nothing to do.
+		if len(jobs.Data) > 0 {
 			continue
 		}
 
-		// Retry existing job
-		if len(jobs.Data) > 0 {
-			job := jobs.Data[0]
-
-			if job.Status == domain.JobQueued {
-				continue
-			}
-
-			queuedAt := time.Now().UTC()
-			data := &domain.Job{
-				Status:   domain.JobQueued,
-				QueuedAt: &queuedAt,
-			}
-
-			updatedJob, err := w.job.Retry(ctx, job.ID, data)
-			if err != nil {
-				w.log.Error("failed to retry job", "job_type", jobType, "server_id", srv.ID.String())
-				continue
-			}
-
-			w.log.Debug("job retried", "job_id", updatedJob.ID, "job_type", updatedJob.Type)
+		data := &domain.Job{
+			TraceID:  uuid.New(),
+			ServerID: srv.ID,
+			Type:     domain.JobTypeMetricsCollect,
 		}
+
+		createdJob, err := w.job.Create(ctx, data)
+		if err != nil {
+			w.log.Error("failed to create job", "job_type", jobType, "server_id", srv.ID.String())
+			continue
+		}
+
+		w.log.Debug("job created", "job_id", createdJob.ID, "job_type", createdJob.Type)
 	}
 
 	return nil

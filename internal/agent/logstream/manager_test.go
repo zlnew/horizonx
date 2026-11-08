@@ -192,3 +192,82 @@ func TestBatcherTimeFlush(t *testing.T) {
 		return len(*msgs) == 1
 	}, 2*time.Second, 20*time.Millisecond, "time flush should emit within ~250ms")
 }
+
+func TestStartTail_ServiceArgSeparated(t *testing.T) {
+	send, _, _ := collectSend()
+	m := NewManager(uuid.New(), "/tmp/apps", fakeDocker{}, noopLogger{}, send)
+
+	var capturedArgs []string
+	var mu sync.Mutex
+	m.runCompose = func(ctx context.Context, workDir string, args []string, s *stream) error {
+		mu.Lock()
+		capturedArgs = append([]string{}, args...)
+		mu.Unlock()
+		return nil
+	}
+
+	_, err := m.StartTail(domain.LogsTailStartPayload{
+		StreamID:      "test-service-dash",
+		ApplicationID: 1,
+		DirName:       "app",
+		Service:       "-weird-service",
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(capturedArgs) > 0
+	}, 2*time.Second, 20*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Contains(t, capturedArgs, "--")
+	// Verify `--` is immediately before `-weird-service`
+	for i, arg := range capturedArgs {
+		if arg == "--" {
+			require.True(t, i+1 < len(capturedArgs))
+			assert.Equal(t, "-weird-service", capturedArgs[i+1])
+			break
+		}
+	}
+}
+
+func TestQuery_ServiceArgSeparated(t *testing.T) {
+	send, _, _ := collectSend()
+	m := NewManager(uuid.New(), "/tmp/apps", fakeDocker{}, noopLogger{}, send)
+
+	var capturedArgs []string
+	var mu sync.Mutex
+	m.runCompose = func(ctx context.Context, workDir string, args []string, s *stream) error {
+		mu.Lock()
+		capturedArgs = append([]string{}, args...)
+		mu.Unlock()
+		return nil
+	}
+
+	_, err := m.Query(domain.LogsQueryPayload{
+		ApplicationID: 1,
+		DirName:       "app",
+		Service:       "-weird-service",
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(capturedArgs) > 0
+	}, 2*time.Second, 20*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Contains(t, capturedArgs, "--")
+	// Verify `--` is immediately before `-weird-service`
+	for i, arg := range capturedArgs {
+		if arg == "--" {
+			require.True(t, i+1 < len(capturedArgs))
+			assert.Equal(t, "-weird-service", capturedArgs[i+1])
+			break
+		}
+	}
+}

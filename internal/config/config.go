@@ -2,6 +2,8 @@
 package config
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -17,18 +19,24 @@ type Config struct {
 	LogLevel  string
 	LogFormat string
 
-	TimeZone       *time.Location
-	Address        string
-	AllowedOrigins []string
-	DatabaseURL    string
-	JWTSecret      string
-	JWTExpiry      time.Duration
+	TimeZone         *time.Location
+	Address          string
+	AllowedOrigins   []string
+	DatabaseURL      string
+	JWTSecret        string
+	JWTExpiry        time.Duration
+	EnvEncryptionKey string
 
 	AgentTargetAPIURL   string
 	AgentTargetWsURL    string
 	AgentServerAPIToken string
 	AgentServerID       uuid.UUID
 	AgentJobWorkerCount int
+
+	// Retention TTLs for the ever-growing jobs/logs tables (parsed from
+	// JOB_RETENTION_DAYS / LOG_RETENTION_DAYS, defaults 30 / 14).
+	JobRetention time.Duration
+	LogRetention time.Duration
 
 	// P2-15: optional webhook notified on deployment events.
 	// Discord-style: POSTed a JSON payload with a text content field.
@@ -102,6 +110,9 @@ func Load() *Config {
 		}
 	}
 
+	// Environment variable encryption key (P1-11 / S5)
+	envEncryptionKey := getEnv("ENV_ENCRYPTION_KEY", "")
+
 	// AGENT Target URL
 	agentTargetAPIURL := getEnv("HORIZONX_API_URL", "http://localhost:3000")
 	agentTargetWsURL := getEnv("HORIZONX_WS_URL", "ws://localhost:3000/ws/agent")
@@ -119,6 +130,20 @@ func Load() *Config {
 	if raw := os.Getenv("AGENT_JOB_WORKER_COUNT"); raw != "" {
 		if count, err := strconv.Atoi(raw); err == nil {
 			agentJobWorkerCount = count
+		}
+	}
+
+	jobRetention := 30 * 24 * time.Hour
+	if raw := os.Getenv("JOB_RETENTION_DAYS"); raw != "" {
+		if days, err := strconv.Atoi(raw); err == nil && days > 0 {
+			jobRetention = time.Duration(days) * 24 * time.Hour
+		}
+	}
+
+	logRetention := 14 * 24 * time.Hour
+	if raw := os.Getenv("LOG_RETENTION_DAYS"); raw != "" {
+		if days, err := strconv.Atoi(raw); err == nil && days > 0 {
+			logRetention = time.Duration(days) * 24 * time.Hour
 		}
 	}
 
@@ -164,18 +189,22 @@ func Load() *Config {
 		LogLevel:  logLevel,
 		LogFormat: logFormat,
 
-		TimeZone:       timeZone,
-		Address:        addr,
-		AllowedOrigins: origins,
-		DatabaseURL:    databaseURL,
-		JWTSecret:      jwtSecret,
-		JWTExpiry:      jwtExpiry,
+		TimeZone:         timeZone,
+		Address:          addr,
+		AllowedOrigins:   origins,
+		DatabaseURL:      databaseURL,
+		JWTSecret:        jwtSecret,
+		JWTExpiry:        jwtExpiry,
+		EnvEncryptionKey: envEncryptionKey,
 
 		AgentTargetAPIURL:   agentTargetAPIURL,
 		AgentTargetWsURL:    agentTargetWsURL,
 		AgentServerAPIToken: agentServerAPIToken,
 		AgentServerID:       agentServerID,
 		AgentJobWorkerCount: agentJobWorkerCount,
+
+		JobRetention: jobRetention,
+		LogRetention: logRetention,
 
 		WebhookURL: webhookURL,
 
@@ -198,4 +227,43 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// TrustProxyExposureWarning returns a warning when TRUST_PROXY is enabled while
+// the API binds a non-loopback address, because any client that can reach the
+// port can then forge X-Forwarded-For and defeat the login rate limiter and
+// session-IP capture. It returns "" when there is nothing to report.
+//
+// This warns rather than refusing to boot, and that is deliberate. The
+// documented topology binds all interfaces inside the container and publishes
+// it on loopback from the host (install maps 127.0.0.1:${HORIZONX_PORT}:3000),
+// so HTTP_ADDR is non-loopback in the supported install and a hard refusal
+// would reject it. The process cannot tell from the inside whether the host
+// publishes the port on loopback only, and the usual container heuristic is not
+// reliable across runtimes. A check that silently disables itself on exactly
+// the setups that need it is worse than a loud warning.
+func (c *Config) TrustProxyExposureWarning() string {
+	if c == nil || !c.TrustProxy {
+		return ""
+	}
+
+	host := c.Address
+	if h, _, err := net.SplitHostPort(c.Address); err == nil {
+		host = h
+	}
+
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return ""
+	}
+	if strings.EqualFold(host, "localhost") {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"TRUST_PROXY is enabled but HTTP_ADDR=%q is not a loopback address: "+
+			"any client able to reach this port can forge X-Forwarded-For and bypass "+
+			"login rate limiting and session-IP capture. Bind the API to 127.0.0.1 and "+
+			"front it with tailscale serve, or set TRUST_PROXY=false.",
+		c.Address,
+	)
 }

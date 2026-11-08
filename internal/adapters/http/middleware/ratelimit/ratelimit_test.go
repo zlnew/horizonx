@@ -9,7 +9,7 @@ import (
 
 // P1-10: requests within the limit pass, requests over it get 429.
 func TestLimiterBlocksOverLimit(t *testing.T) {
-	l := New(3, time.Minute)
+	l := New(3, time.Minute, nil)
 
 	for i := 0; i < 3; i++ {
 		if !l.Allow("1.2.3.4") {
@@ -23,7 +23,7 @@ func TestLimiterBlocksOverLimit(t *testing.T) {
 
 // P1-10: different clients are independent.
 func TestLimiterIsPerClient(t *testing.T) {
-	l := New(2, time.Minute)
+	l := New(2, time.Minute, nil)
 
 	l.Allow("1.2.3.4")
 	l.Allow("1.2.3.4")
@@ -35,7 +35,7 @@ func TestLimiterIsPerClient(t *testing.T) {
 
 // P1-10: the window slides — old hits expire.
 func TestLimiterWindowSlides(t *testing.T) {
-	l := New(1, 50*time.Millisecond)
+	l := New(1, 50*time.Millisecond, nil)
 
 	if !l.Allow("1.2.3.4") {
 		t.Fatal("first request should be allowed")
@@ -53,7 +53,7 @@ func TestLimiterWindowSlides(t *testing.T) {
 
 // P1-10: middleware returns 429 with the configured limit.
 func TestMiddlewareReturns429(t *testing.T) {
-	l := New(2, time.Minute)
+	l := New(2, time.Minute, nil)
 
 	handler := l.Middleware(func(r *http.Request) string { return ClientIP(r) })(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

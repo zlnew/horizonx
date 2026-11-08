@@ -20,14 +20,15 @@ type ServerMetrics struct {
 }
 
 type Metrics struct {
-	ServerID      uuid.UUID     `json:"server_id"`
-	CPU           CPUMetric     `json:"cpu"`
-	GPU           []GPUMetric   `json:"gpu"`
-	Memory        MemoryMetric  `json:"memory"`
-	Disk          []DiskMetric  `json:"disk"`
-	Network       NetworkMetric `json:"network"`
-	UptimeSeconds float64       `json:"uptime_seconds"`
-	RecordedAt    time.Time     `json:"recorded_at"`
+	ServerID        uuid.UUID     `json:"server_id"`
+	DroppedMessages int64         `json:"dropped_messages"`
+	CPU             CPUMetric     `json:"cpu"`
+	GPU             []GPUMetric   `json:"gpu"`
+	Memory          MemoryMetric  `json:"memory"`
+	Disk            []DiskMetric  `json:"disk"`
+	Network         NetworkMetric `json:"network"`
+	UptimeSeconds   float64       `json:"uptime_seconds"`
+	RecordedAt      time.Time     `json:"recorded_at"`
 }
 
 type Signal struct {

@@ -73,6 +73,7 @@ func RunAgent() error {
 	exec := executor.NewExecutor(appsWorkDir, appLog, collector.Latest)
 	worker := agent.NewJobWorker(cfg, appLog, *httpClient, *exec)
 	conn := agent.NewAgent(cfg, appLog)
+	worker.SetDroppedMessagesFunc(conn.DroppedMessages)
 
 	// Container-log streams (A2): the manager needs the agent's send path
 	// and the executor's apps workdir + compose-file resolution.

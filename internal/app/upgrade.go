@@ -105,6 +105,14 @@ func RunUpgrade() error {
 		}
 		defer os.Remove(sums)
 
+		// Fail closed when a release public key is configured: verify the
+		// signature over SHA256SUMS before trusting any checksum it
+		// contains. VerifyReleaseSums fetches nothing itself; with no key
+		// set it is a no-op so legacy installs keep working untouched.
+		if err := verifyReleaseSignature(checksumURL, sums); err != nil {
+			return err
+		}
+
 		want, err := checksumFor(sums, asset)
 		if err != nil {
 			return err
@@ -319,6 +327,31 @@ func download(url, name string) (string, error) {
 	}
 	tmp.Close()
 	return tmp.Name(), nil
+}
+
+// verifyReleaseSignature fetches the minisign signature published next to
+// sumsURL (SHA256SUMS.minisig at the same base URL) and verifies it over
+// the downloaded sums file. With no HORIZONX_RELEASE_PUBKEY configured it
+// returns nil without fetching anything. Any failure with a key configured
+// — missing/unreachable signature file or a bad signature — is fatal.
+func verifyReleaseSignature(sumsURL, sumsPath string) error {
+	if os.Getenv(envReleasePubkey) == "" {
+		return nil
+	}
+	sigPath, err := downloadFn(sumsURL+".minisig", "SHA256SUMS.minisig")
+	if err != nil {
+		return fmt.Errorf("download release signature: %w", err)
+	}
+	defer os.Remove(sigPath)
+	sums, err := os.ReadFile(sumsPath)
+	if err != nil {
+		return err
+	}
+	sig, err := os.ReadFile(sigPath)
+	if err != nil {
+		return err
+	}
+	return VerifyReleaseSums(sums, sig)
 }
 
 func checksumFor(sumsPath, asset string) (string, error) {

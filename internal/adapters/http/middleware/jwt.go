@@ -1,29 +1,30 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 
+	"horizonx/internal/adapters/http/response"
 	"horizonx/internal/config"
 	"horizonx/internal/domain"
+	"horizonx/internal/logger"
 )
 
-type userContextKeyType struct{}
-
-var userContextKey = userContextKeyType{}
-
-func JWT(cfg *config.Config, sessions domain.SessionStore) func(http.Handler) http.Handler {
+func JWT(cfg *config.Config, sessions domain.SessionStore, log logger.Logger) func(http.Handler) http.Handler {
+	if log == nil {
+		log = discardLogger{}
+	}
+	jw := response.NewJSONWriter(log)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cookie, err := r.Cookie("horizonx_access_token")
 			if err != nil {
-				http.Error(w, "Unauthorized: No token found", http.StatusUnauthorized)
+				jw.Write(w, http.StatusUnauthorized, &response.Response{Message: "Unauthorized: No token found"})
 				return
 			}
 
 			claims, err := domain.ValidateToken(cookie.Value, cfg.JWTSecret)
 			if err != nil {
-				http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+				jw.Write(w, http.StatusUnauthorized, &response.Response{Message: "Unauthorized: Invalid token"})
 				return
 			}
 
@@ -33,12 +34,12 @@ func JWT(cfg *config.Config, sessions domain.SessionStore) func(http.Handler) ht
 			if sessions != nil && claims.SessionID != "" {
 				sess, err := sessions.Get(r.Context(), claims.SessionID)
 				if err != nil || sess == nil {
-					http.Error(w, "Unauthorized: Session revoked", http.StatusUnauthorized)
+					jw.Write(w, http.StatusUnauthorized, &response.Response{Message: "Unauthorized: Session revoked"})
 					return
 				}
 				// Defensive: the session must belong to the token's user.
 				if sess.UserID != claims.UserID {
-					http.Error(w, "Unauthorized: Session mismatch", http.StatusUnauthorized)
+					jw.Write(w, http.StatusUnauthorized, &response.Response{Message: "Unauthorized: Session mismatch"})
 					return
 				}
 			}
@@ -53,13 +54,4 @@ func JWT(cfg *config.Config, sessions domain.SessionStore) func(http.Handler) ht
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func GetUser(ctx context.Context) (domain.UserContext, bool) {
-	user, ok := ctx.Value(userContextKey).(domain.UserContext)
-	if !ok {
-		return domain.UserContext{}, false
-	}
-
-	return user, true
 }

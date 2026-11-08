@@ -116,7 +116,7 @@ func (m *Manager) StartTail(req domain.LogsTailStartPayload) (string, error) {
 	go func() {
 		args := []string{"logs", "--follow", "--timestamps", "--tail", fmt.Sprintf("%d", backlog)}
 		if req.Service != "" {
-			args = append(args, req.Service)
+			args = append(args, "--", req.Service)
 		}
 		err := m.runCompose(ctx, req.DirName, args, s)
 		s.finish(err)
@@ -167,7 +167,7 @@ func (m *Manager) Query(req domain.LogsQueryPayload) (string, error) {
 			args = append(args, "--until", *req.Until)
 		}
 		if req.Service != "" {
-			args = append(args, req.Service)
+			args = append(args, "--", req.Service)
 		}
 		err := m.runCompose(ctx, req.DirName, args, s)
 		s.finish(err)

@@ -15,9 +15,17 @@ import (
 type MetricsHandler struct {
 	svc domain.MetricsService
 
+	registry MetricsRegistry
+
 	decoder   request.RequestDecoder
 	writer    response.ResponseWriter
 	validator validator.Validator
+}
+
+// MetricsRegistry is the subset of the Prometheus registry the metrics
+// handler needs. Satisfied by *metrics.Registry; nil-safe in use.
+type MetricsRegistry interface {
+	SetAgentDroppedMessages(serverID string, v float64)
 }
 
 func NewMetricsHandler(
@@ -25,9 +33,11 @@ func NewMetricsHandler(
 	d request.RequestDecoder,
 	w response.ResponseWriter,
 	v validator.Validator,
+	reg MetricsRegistry,
 ) *MetricsHandler {
 	return &MetricsHandler{
 		svc:       svc,
+		registry:  reg,
 		decoder:   d,
 		writer:    w,
 		validator: v,
@@ -51,6 +61,10 @@ func (h *MetricsHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 			Message: "failed to process metrics",
 		})
 		return
+	}
+
+	if h.registry != nil {
+		h.registry.SetAgentDroppedMessages(metrics.ServerID.String(), float64(metrics.DroppedMessages))
 	}
 
 	h.writer.Write(w, http.StatusCreated, &response.Response{

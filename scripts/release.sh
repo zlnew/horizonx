@@ -29,6 +29,21 @@
 #   3. Every release ships SHA256SUMS alongside the tarballs.
 set -euo pipefail
 
+# -- GitHub identity guard (fail-closed) -----------------------------------------
+# This machine's gh config holds two accounts (zlnew + maulanaaprizqy) with
+# exactly one active at a time. Publishing under the wrong account fails or
+# misattributes the release, so abort before anything else unless the active
+# account is the expected one.
+command -v gh >/dev/null || { echo "gh CLI required" >&2; exit 1; }
+EXPECTED_GH_USER="${EXPECTED_GH_USER:-zlnew}"
+if ! GH_USER="$(gh api user --jq .login 2>/dev/null)"; then
+  echo "error: could not determine active GitHub account (gh api user failed); expected '${EXPECTED_GH_USER}'. Refusing to publish." >&2
+  exit 1
+fi
+GH_USER="$(printf '%s' "$GH_USER" | tr -d '[:space:]')"
+[ -n "$GH_USER" ] || { echo "error: could not determine active GitHub account (empty login); expected '${EXPECTED_GH_USER}'. Refusing to publish." >&2; exit 1; }
+[ "$GH_USER" = "$EXPECTED_GH_USER" ] || { echo "error: active GitHub account is '${GH_USER}', expected '${EXPECTED_GH_USER}'. Run 'gh auth switch -u ${EXPECTED_GH_USER}' and retry. Refusing to publish." >&2; exit 1; }
+
 cd "$(dirname "$0")/.."   # repo root
 REPO_ROOT="$PWD"
 
@@ -84,7 +99,6 @@ BUILD_CONTAINER="hx-build-$$"
 # -- preflight ---------------------------------------------------------------
 echo "== preflight =="
 command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
-command -v gh >/dev/null || { echo "gh CLI required" >&2; exit 1; }
 
 if [ -z "$DRY_RUN" ]; then
   EXISTS=$(gh release view "$VERSION" --repo "$REPO" --json tagName --jq .tagName 2>/dev/null || true)
@@ -149,6 +163,15 @@ cd "$OUT"
 sha256sum horizonx-*.tar.gz > SHA256SUMS
 sha256sum -c SHA256SUMS | tail -4
 
+# Sign SHA256SUMS with minisign. Fail closed: a release without a signature
+# would silently ship unsigned, which is exactly the trust gap this fixes —
+# so abort unless the operator holds the secret key. The key password is
+# prompted on a TTY, acceptable because releases are cut locally by hand
+# (release.sh is not run by CI — CI is non-functional on this repo).
+MINISIGN_SECRET_KEY="${MINISIGN_SECRET_KEY:-$HOME/.minisign/horizonx.key}"
+[ -f "$MINISIGN_SECRET_KEY" ] || { echo "error: minisign secret key not found at $MINISIGN_SECRET_KEY — generate one with 'minisign -G -p horizonx.pub -s horizonx.key' and retry. Refusing to publish unsigned." >&2; exit 1; }
+minisign -S -s "$MINISIGN_SECRET_KEY" -m SHA256SUMS
+
 for pair in "${TARGETS[@]}"; do
   set -- $pair
   os=$1; arch=$2
@@ -203,6 +226,7 @@ for pair in "${TARGETS[@]}"; do
   ASSETS+=("$OUT/horizonx-${os}-${arch}.tar.gz")
 done
 ASSETS+=("$OUT/SHA256SUMS")
+ASSETS+=("$OUT/SHA256SUMS.minisig")
 
 gh release create "$VERSION" --repo "$REPO" --title "$VERSION" --notes-file "$BODY" --target "$RELEASE_BRANCH" "${ASSETS[@]}"
 rm -f "$BODY"

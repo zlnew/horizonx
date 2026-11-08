@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"aead.dev/minisign"
 )
 
 func TestExtractBinaryPlainName(t *testing.T) {
@@ -277,6 +279,9 @@ func TestUpgradeReexecsAfterSwap(t *testing.T) {
 		if name == "SHA256SUMS" {
 			return sumsPath, nil
 		}
+		if name == "SHA256SUMS.minisig" {
+			return "", fmt.Errorf("no signature in legacy test fixture")
+		}
 		return tarball, nil
 	}
 	defer func() { downloadFn = oldDownload }()
@@ -292,6 +297,9 @@ func TestUpgradeReexecsAfterSwap(t *testing.T) {
 		return nil // simulate exec returning (test seam)
 	}
 	defer func() { execSelfFn = oldExec }()
+	// RunUpgrade's self-update path calls os.Setenv(envComponentsOnly,"1")
+	// which would leak into later tests via the real process env.
+	defer os.Unsetenv(envComponentsOnly)
 
 	// The component pass must NOT run in the OLD process — if it does, the
 	// swap didn't hand off control. Track compose calls as a proxy.
@@ -534,4 +542,115 @@ func TestNeedsSudoNonRoot(t *testing.T) {
 		t.Skip("running as root")
 	}
 	_ = needsSudo("/usr/local/bin")
+}
+
+// minisign_Sign is a thin hermetic helper: it generates a keypair in-process
+// and signs sums with pure-Go minisign (no binary), returning the public
+// key text for HORIZONX_RELEASE_PUBKEY.
+func minisign_Sign(t *testing.T, sums []byte) (string, []byte) {
+	t.Helper()
+	pub, priv, err := minisign.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	return pub.String(), minisign.Sign(priv, sums)
+}
+
+func TestUpgradeFailsClosedWithoutSignature(t *testing.T) {
+	// Fail-closed: with a release public key configured, the self-update
+	// must abort when SHA256SUMS.minisig cannot be fetched — checksums from
+	// an unverified sums file must never be trusted.
+	restore := fakeUpgradeNetworkTag(t, "v9.9.9")
+	defer restore()
+
+	tarball := makeTarball(t, map[string][]byte{"horizonx": []byte("#!/bin/sh\necho hi\n")})
+	defer os.Remove(tarball)
+	tarballBytes, err := os.ReadFile(tarball)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := fmt.Sprintf("%x", sha256.Sum256(tarballBytes))
+	sumsPath := filepath.Join(t.TempDir(), "SHA256SUMS")
+	sums := []byte(sum + "  horizonx-linux-x86_64.tar.gz\n")
+	if err := os.WriteFile(sumsPath, sums, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldDownload := downloadFn
+	downloadFn = func(url, name string) (string, error) {
+		if name == "SHA256SUMS" {
+			return sumsPath, nil
+		}
+		if name == "SHA256SUMS.minisig" {
+			return "", fmt.Errorf("download SHA256SUMS.minisig: HTTP 404")
+		}
+		return tarball, nil
+	}
+	defer func() { downloadFn = oldDownload }()
+
+	pub, _, err := minisign.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	t.Setenv(envReleasePubkey, pub.String())
+
+	// Guard against env leakage: RunUpgrade's self-update path calls
+	// os.Setenv(envComponentsOnly) which would persist into later tests.
+	t.Cleanup(func() { os.Unsetenv(envComponentsOnly) })
+
+	if err := RunUpgrade(); err == nil {
+		t.Fatal("expected RunUpgrade to fail closed without a signature, got nil")
+	}
+}
+
+func TestUpgradeVerifiesSignatureWhenKeySet(t *testing.T) {
+	// Happy path with a key configured: signed sums verify, swap proceeds.
+	restore := fakeUpgradeNetworkTag(t, "v9.9.9")
+	defer restore()
+
+	tarball := makeTarball(t, map[string][]byte{"horizonx": []byte("#!/bin/sh\necho hi\n")})
+	defer os.Remove(tarball)
+	tarballBytes, err := os.ReadFile(tarball)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := fmt.Sprintf("%x", sha256.Sum256(tarballBytes))
+	sums := []byte(sum + "  horizonx-linux-x86_64.tar.gz\n")
+	sumsPath := filepath.Join(t.TempDir(), "SHA256SUMS")
+	if err := os.WriteFile(sumsPath, sums, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pub, sig := minisign_Sign(t, sums)
+	sigPath := filepath.Join(t.TempDir(), "SHA256SUMS.minisig")
+	if err := os.WriteFile(sigPath, sig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldDownload := downloadFn
+	downloadFn = func(url, name string) (string, error) {
+		switch name {
+		case "SHA256SUMS":
+			return sumsPath, nil
+		case "SHA256SUMS.minisig":
+			return sigPath, nil
+		}
+		return tarball, nil
+	}
+	defer func() { downloadFn = oldDownload }()
+
+	oldReplace := replaceBinaryFn
+	replaceBinaryFn = func(newBin, exe string) error { return nil }
+	defer func() { replaceBinaryFn = oldReplace }()
+
+	oldExec := execSelfFn
+	execSelfFn = func(exe string, args, env []string) error { return nil }
+	defer func() { execSelfFn = oldExec }()
+
+	restoreCompose := setExecCompose(func(args ...string) (string, error) { return "", nil })
+	defer restoreCompose()
+
+	t.Setenv(envReleasePubkey, pub)
+	if err := RunUpgrade(); err != nil {
+		t.Fatalf("RunUpgrade with valid signature: %v", err)
+	}
 }

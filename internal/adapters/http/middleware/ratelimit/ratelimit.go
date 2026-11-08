@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"horizonx/internal/adapters/http/response"
+	"horizonx/internal/logger"
 )
 
 // Limiter enforces a per-key rate: at most limit requests in any window.
@@ -16,13 +19,28 @@ type Limiter struct {
 	window time.Duration
 	limit  int
 	hits   map[string][]time.Time
+	jw     response.ResponseWriter
 }
 
-func New(limit int, window time.Duration) *Limiter {
+// discardLogger keeps the envelope writer nil-safe when no logger is
+// threaded in. Kept unexported here (not in response) so ratelimit stays
+// dependency-light: response only needs the logger interface.
+type discardLogger struct{}
+
+func (discardLogger) Debug(msg string, args ...any) {}
+func (discardLogger) Info(msg string, args ...any)  {}
+func (discardLogger) Warn(msg string, args ...any)  {}
+func (discardLogger) Error(msg string, args ...any) {}
+
+func New(limit int, window time.Duration, log logger.Logger) *Limiter {
+	if log == nil {
+		log = discardLogger{}
+	}
 	return &Limiter{
 		window: window,
 		limit:  limit,
 		hits:   make(map[string][]time.Time),
+		jw:     response.NewJSONWriter(log),
 	}
 }
 
@@ -93,7 +111,7 @@ func (l *Limiter) Middleware(keyFunc func(r *http.Request) string) func(http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := keyFunc(r)
 			if !l.Allow(key) {
-				http.Error(w, "too many requests", http.StatusTooManyRequests)
+				l.jw.Write(w, http.StatusTooManyRequests, &response.Response{Message: "too many requests"})
 				return
 			}
 			next.ServeHTTP(w, r)

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"horizonx/internal/agent/logstream"
@@ -20,19 +22,81 @@ import (
 )
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
+	writeWait  = 10 * time.Second
+	pongWait   = 60 * time.Second
+	pingPeriod = (pongWait * 9) / 10
 	// Server→agent commands can carry log batches in A2 (hundreds of KB);
 	// the server's agentws socket allows 256KB inbound, match it here.
 	maxMessageSize = 262144
+
+	// reconnectBackoffBase preserves today's first-retry delay; later
+	// attempts double from here up to reconnectBackoffCap with full jitter.
+	reconnectBackoffBase = 5 * time.Second
+	reconnectBackoffCap  = 2 * time.Minute
+	// healthySessionDuration is the uptime that proves the server is healthy,
+	// resetting the backoff counter. Short-lived flapping sessions keep the
+	// counter climbing instead of resetting it.
+	healthySessionDuration = 30 * time.Second
 )
+
+// reconnectDelay returns the wait before the next reconnect attempt, using
+// exponential backoff capped at reconnectBackoffCap with full jitter
+// (uniform in [0, computed)). attempt is 0-based: attempt 0 waits within the
+// base interval. The randomness is injected so callers can test
+// deterministically; production passes rand.Int64N. A negative attempt is
+// treated as 0.
+func reconnectDelay(attempt int, randIntN func(int64) int64) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+
+	computed := reconnectBackoffBase
+	for i := 0; i < attempt; i++ {
+		computed *= 2
+		if computed >= reconnectBackoffCap {
+			computed = reconnectBackoffCap
+			break
+		}
+	}
+	if computed > reconnectBackoffCap {
+		computed = reconnectBackoffCap
+	}
+
+	return time.Duration(randIntN(int64(computed)))
+}
+
+// nextAttempt advances the consecutive-failure counter, but only after a
+// session that failed to stay up for healthySessionDuration. Reset is keyed
+// on session uptime rather than err == nil because a server that accepts the
+// websocket and immediately closes it would otherwise reset the counter on
+// every attempt and the agent would hammer it at the base interval forever.
+// Only a session that stayed up counts as proof the server is healthy.
+func nextAttempt(attempt int, sessionDuration time.Duration) int {
+	if sessionDuration >= healthySessionDuration {
+		return 0
+	}
+	return attempt + 1
+}
+
+var ErrSendBufferFull = errors.New("agent send buffer full, message dropped")
+
+// dropLogEvery caps drop-warning spam: log the first drop, then at most
+// once per dropLogEvery further drops. The running total is always logged.
+const dropLogEvery = 100
 
 type Agent struct {
 	conn *websocket.Conn
 	send chan []byte
-	cfg  *config.Config
-	log  logger.Logger
+	// commands is a bounded FIFO drained by exactly one worker
+	// (runCommands). A single consumer preserves the order of
+	// logs_tail_start, logs_tail_stop and logs_query against the same
+	// streams: running them concurrently would let a stop overtake its
+	// start, or a query land against a stream that has not started yet.
+	commands chan domain.AgentCommand
+	cfg      *config.Config
+	log      logger.Logger
+
+	droppedMessages atomic.Int64
 
 	// logstream owns `docker compose logs` streams (A2). Lazily created on
 	// the first logs_* command so existing agents need no new wiring.
@@ -46,9 +110,10 @@ var ErrUnauthorized = errors.New("connection failed: unauthorized")
 // in the app wiring, and its send callback needs this agent).
 func NewAgent(cfg *config.Config, log logger.Logger) *Agent {
 	return &Agent{
-		send: make(chan []byte, 256),
-		cfg:  cfg,
-		log:  log,
+		send:     make(chan []byte, 256),
+		commands: make(chan domain.AgentCommand, 64),
+		cfg:      cfg,
+		log:      log,
 	}
 }
 
@@ -60,12 +125,12 @@ func (a *Agent) SetLogStream(m *logstream.Manager) {
 
 func (a *Agent) Start(ctx context.Context) error {
 	a.send = make(chan []byte, 256)
-	reconnectInterval := 5 * time.Second
 	attempt := 0
 
 	for {
 		a.log.Info("starting agent...", "attempt", attempt+1)
 
+		sessionStart := time.Now()
 		err := a.dialUp(ctx)
 		if err != nil {
 			if errors.Is(err, ErrUnauthorized) {
@@ -75,14 +140,19 @@ func (a *Agent) Start(ctx context.Context) error {
 			a.log.Warn("connection lost or failed, will retry", "error", err)
 		}
 
-		attempt++
+		// Compute the wait from the failures so far, then advance the counter.
+		// That order is load-bearing: advancing first would pass attempt=1 to
+		// the first retry and silently double reconnectBackoffBase, which is
+		// supposed to preserve the delay this loop used before backoff.
+		delay := reconnectDelay(attempt, rand.Int64N)
+		attempt = nextAttempt(attempt, time.Since(sessionStart))
 		a.log.Debug("waiting before next reconnection attempt")
 
 		select {
 		case <-ctx.Done():
 			a.log.Info("agent stopped")
 			return nil
-		case <-time.After(reconnectInterval):
+		case <-time.After(delay):
 		}
 	}
 }
@@ -108,6 +178,7 @@ func (a *Agent) dialUp(ctx context.Context) error {
 
 	g.Go(func() error { return a.readPump(gctx) })
 	g.Go(func() error { return a.writePump(gctx) })
+	g.Go(func() error { return a.runCommands(gctx) })
 
 	go func() {
 		<-gctx.Done()
@@ -171,9 +242,44 @@ func (a *Agent) readPump(ctx context.Context) error {
 			case <-ctx.Done():
 				return nil
 			default:
-				if err := a.handleCommand(ctx, cmd); err != nil {
+				if err := a.dispatchCommand(ctx, cmd); err != nil {
 					a.log.Error("command failed", "type", cmd.Type, "error", err)
 				}
+			}
+		}
+	}
+}
+
+// dispatchCommand keeps ping on the caller's goroutine (it is trivial and
+// sendMessage is non-blocking) and enqueues every other command for the
+// single runCommands worker, so a slow logs_* handler can never stall the
+// read loop's ReadMessage/pong processing.
+func (a *Agent) dispatchCommand(ctx context.Context, cmd domain.AgentCommand) error {
+	if cmd.Type == "ping" {
+		return a.handleCommand(ctx, cmd)
+	}
+	select {
+	case a.commands <- cmd:
+		return nil
+	default:
+		// The queue is full: drop rather than block the read loop.
+		// A dropped control command such as logs_tail_stop can leave a
+		// log stream running until the agent restarts.
+		a.log.Error("command queue full, command dropped", "type", cmd.Type)
+		return nil
+	}
+}
+
+// runCommands drains the command queue sequentially on a single goroutine
+// (see the commands field comment for why exactly one worker is required).
+func (a *Agent) runCommands(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case cmd := <-a.commands:
+			if err := a.handleCommand(ctx, cmd); err != nil {
+				a.log.Error("command failed", "type", cmd.Type, "error", err)
 			}
 		}
 	}
@@ -237,8 +343,22 @@ func (a *Agent) handleCommand(ctx context.Context, cmd domain.AgentCommand) erro
 	return nil
 }
 
+// DroppedMessages reports how many agent→server messages were dropped
+// because the send buffer was full.
+func (a *Agent) DroppedMessages() int64 {
+	return a.droppedMessages.Load()
+}
+
+func (a *Agent) countDrop(event string) {
+	total := a.droppedMessages.Add(1)
+	if total == 1 || total%dropLogEvery == 0 {
+		a.log.Warn("send channel full, message dropped", "event", event, "dropped_total", total)
+	}
+}
+
 // SendMessage exposes the agent's send path to collaborators that need to
 // push agent→server messages (e.g. the logstream manager in A2).
+// It returns ErrSendBufferFull when the message was dropped.
 func (a *Agent) SendMessage(msg *domain.WsAgentMessage) error {
 	return a.sendMessage(msg)
 }
@@ -255,8 +375,8 @@ func (a *Agent) sendMessage(msg *domain.WsAgentMessage) error {
 	case a.send <- message:
 		return nil
 	default:
-		a.log.Warn("send channel full, message dropped", "event", msg.Event)
-		return nil
+		a.countDrop(msg.Event)
+		return ErrSendBufferFull
 	}
 }
 
@@ -328,6 +448,6 @@ func (a *Agent) sendServerOSInfo() {
 	case a.send <- message:
 		a.log.Debug("server OS info sent successfully")
 	default:
-		a.log.Warn("send channel full, OS info dropped")
+		a.countDrop("server_os_info")
 	}
 }

@@ -1,6 +1,7 @@
 // Package security provides encryption-at-rest helpers for sensitive values
-// (P1-11). AES-256-GCM with a random 12-byte nonce prepended to the ciphertext;
-// the key comes from config (ENV_ENCRYPTION_KEY, 32 bytes).
+// (P1-11). AES-256-GCM with a random 12-byte nonce prepended to the ciphertext.
+// Keys are derived via KeyFromSecret from dedicated config (ENV_ENCRYPTION_KEY)
+// or fallback JWT_SECRET.
 package security
 
 import (
@@ -14,8 +15,8 @@ import (
 )
 
 // KeyFromSecret derives a 32-byte AES-256 key from any secret string via
-// SHA-256. Used so ENV encryption shares the server's JWT_SECRET instead of
-// adding a second secret to manage. Rotating JWT_SECRET re-keys encryption.
+// SHA-256. Used for environment-variable encryption keys (from ENV_ENCRYPTION_KEY
+// or legacy JWT_SECRET).
 func KeyFromSecret(secret string) []byte {
 	sum := sha256.Sum256([]byte(secret))
 	return sum[:]
@@ -80,4 +81,29 @@ func Decrypt(encoded string, key []byte) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+// DecryptWithFallback attempts to decrypt encoded with primary key first.
+// If primary fails and legacy is provided (len == 32), it attempts legacy decryption.
+// When legacy decryption succeeds, usedLegacy is returned as true.
+//
+// Authenticated encryption (AES-GCM) guarantees that a successful legacy decryption
+// is proof the ciphertext was encrypted under the legacy key; it cannot be produced
+// by corruption or accidental collisions.
+func DecryptWithFallback(encoded string, primary, legacy []byte) (plaintext string, usedLegacy bool, err error) {
+	plaintext, err = Decrypt(encoded, primary)
+	if err == nil {
+		return plaintext, false, nil
+	}
+
+	if len(legacy) == 0 {
+		return "", false, fmt.Errorf("primary decryption failed: %w", err)
+	}
+
+	legacyPlaintext, legacyErr := Decrypt(encoded, legacy)
+	if legacyErr == nil {
+		return legacyPlaintext, true, nil
+	}
+
+	return "", false, fmt.Errorf("decryption failed with primary (%v) and legacy (%v)", err, legacyErr)
 }
