@@ -42,7 +42,21 @@ if ! GH_USER="$(gh api user --jq .login 2>/dev/null)"; then
 fi
 GH_USER="$(printf '%s' "$GH_USER" | tr -d '[:space:]')"
 [ -n "$GH_USER" ] || { echo "error: could not determine active GitHub account (empty login); expected '${EXPECTED_GH_USER}'. Refusing to publish." >&2; exit 1; }
-[ "$GH_USER" = "$EXPECTED_GH_USER" ] || { echo "error: active GitHub account is '${GH_USER}', expected '${EXPECTED_GH_USER}'. Run 'gh auth switch -u ${EXPECTED_GH_USER}' and retry. Refusing to publish." >&2; exit 1; }
+# Mismatch is recoverable without a human: the expected account's token is
+# already in gh's keyring, so adopt it for this run only. GH_TOKEN wins over the
+# active account, and the switch is process-scoped — the machine-wide active
+# account is left alone. --no-refresh keeps gh from rewriting ~/.config/gh,
+# so adopting a token cannot change what the next interactive command uses;
+# an expired token fails closed here instead. Fails closed when no stored
+# token exists.
+if [ "$GH_USER" != "$EXPECTED_GH_USER" ]; then
+  if ADOPTED_TOKEN="$(gh auth token --no-refresh -u "$EXPECTED_GH_USER" 2>/dev/null)" && [ -n "$ADOPTED_TOKEN" ]; then
+    export GH_TOKEN="$ADOPTED_TOKEN"
+    echo "== gh identity: active account is '${GH_USER}'; adopted '${EXPECTED_GH_USER}' token for this run =="
+    GH_USER="$EXPECTED_GH_USER"
+  fi
+fi
+[ "$GH_USER" = "$EXPECTED_GH_USER" ] || { echo "error: active GitHub account is '${GH_USER}', expected '${EXPECTED_GH_USER}', and no usable stored token for '${EXPECTED_GH_USER}' could be adopted (run 'gh auth login' or 'gh auth refresh -u ${EXPECTED_GH_USER}' once, then retry). Refusing to publish." >&2; exit 1; }
 
 cd "$(dirname "$0")/.."   # repo root
 REPO_ROOT="$PWD"
@@ -163,14 +177,22 @@ cd "$OUT"
 sha256sum horizonx-*.tar.gz > SHA256SUMS
 sha256sum -c SHA256SUMS | tail -4
 
-# Sign SHA256SUMS with minisign. Fail closed: a release without a signature
-# would silently ship unsigned, which is exactly the trust gap this fixes —
-# so abort unless the operator holds the secret key. The key password is
-# prompted on a TTY, acceptable because releases are cut locally by hand
-# (release.sh is not run by CI — CI is non-functional on this repo).
-MINISIGN_SECRET_KEY="${MINISIGN_SECRET_KEY:-$HOME/.minisign/horizonx.key}"
-[ -f "$MINISIGN_SECRET_KEY" ] || { echo "error: minisign secret key not found at $MINISIGN_SECRET_KEY — generate one with 'minisign -G -p horizonx.pub -s horizonx.key' and retry. Refusing to publish unsigned." >&2; exit 1; }
-minisign -S -s "$MINISIGN_SECRET_KEY" -m SHA256SUMS
+# Sign SHA256SUMS with minisign. Fail closed on a publish run: a release
+# without a signature would silently ship unsigned, which is exactly the trust
+# gap this fixes — so abort unless the operator holds the secret key.
+#
+# NOT run under --dry-run. Dry-run publishes nothing, and minisign can only
+# read its password from a TTY (`get_password()`), so requiring the key here
+# made the whole verify path impossible for any non-interactive caller — an
+# agent could never get past it. Verification still fails closed on a real
+# publish, and the signature is what that path must produce.
+if [ -n "$DRY_RUN" ]; then
+  echo "  SHA256SUMS verified; signature skipped (--dry-run publishes nothing)"
+else
+  MINISIGN_SECRET_KEY="${MINISIGN_SECRET_KEY:-$HOME/.minisign/horizonx.key}"
+  [ -f "$MINISIGN_SECRET_KEY" ] || { echo "error: minisign secret key not found at $MINISIGN_SECRET_KEY — generate one with 'minisign -G -p horizonx.pub -s horizonx.key' and retry. Refusing to publish unsigned." >&2; exit 1; }
+  minisign -S -s "$MINISIGN_SECRET_KEY" -m SHA256SUMS
+fi
 
 for pair in "${TARGETS[@]}"; do
   set -- $pair
